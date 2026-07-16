@@ -27,6 +27,7 @@
     "sync": "node scripts/sync-upstream.js",
     "sync:installed:x64": "node scripts/sync-upstream.js --installed-x64",
     "test:latest-models": "node scripts/test-latest-model-patch.js",
+    "test:dedicated-chat": "node scripts/test-dedicated-chat-mode-patch.js",
     "check-update": "node scripts/check-update.js",
     "bump-version": "node scripts/bump-version.js",
     "rebuild:native": "electron-rebuild"

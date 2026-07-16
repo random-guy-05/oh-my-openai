@@ -17,6 +17,7 @@ const PATCHES = [
   "patch-devtools.js",
   "patch-fast-mode.js",
   "patch-latest-models.js",
+  "patch-dedicated-chat-mode.js",
   "patch-side-by-side-scheme.js",
   "patch-plugin-auth.js",
   "patch-updater.js",
@@ -29,8 +30,6 @@ function main() {
   const extra = args.filter((a) => a.startsWith("--"));
   const passArgs = [...(platform ? [platform] : []), ...extra];
 
-  let failed = 0;
-
   for (const script of PATCHES) {
     const scriptPath = path.join(__dirname, script);
     const label = script.replace(".js", "");
@@ -40,12 +39,12 @@ function main() {
       execFileSync("node", [scriptPath, ...passArgs], { stdio: "inherit" });
     } catch (e) {
       console.error(`[x] ${label} failed (exit ${e.status})`);
-      failed++;
+      console.error("[x] Stopping immediately to avoid compounding a partial patch state");
+      process.exit(1);
     }
   }
 
-  console.log(`\n== Summary: ${PATCHES.length - failed}/${PATCHES.length} succeeded ==`);
-  if (failed > 0) process.exit(1);
+  console.log(`\n== Summary: ${PATCHES.length}/${PATCHES.length} succeeded ==`);
 }
 
 main();

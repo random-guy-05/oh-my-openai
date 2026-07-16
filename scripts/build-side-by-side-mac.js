@@ -202,7 +202,7 @@ function main() {
 
   const version = plistValue(sourceInfo, "CFBundleShortVersionString");
   const build = plistValue(sourceInfo, "CFBundleVersion");
-  const customBuild = /^\d+$/.test(build) ? `${build}.2` : build;
+  const customBuild = /^\d+$/.test(build) ? `${build}.6` : build;
   const sourceCliHash = sha256(sourceCli);
   const outputRoot = path.join(OUT_DIR, "side-by-side-mac-x64");
   const runtimeOutputRoot = path.join(OUT_DIR, "side-by-side-runtime-mac-x64");
