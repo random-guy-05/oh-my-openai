@@ -15,6 +15,8 @@
     "build": "npm run build:mac-arm64",
     "build:mac-arm64": "node scripts/build-from-upstream.js --platform mac-arm64",
     "build:mac-x64": "node scripts/build-from-upstream.js --platform mac-x64",
+    "check:source:mac-x64": "node scripts/build-from-upstream.js --platform mac-x64 --check-source",
+    "build:side-by-side:x64": "node scripts/build-side-by-side-mac.js",
     "build:mac": "npm run build:mac-arm64 && npm run build:mac-x64",
     "build:win-x64": "node scripts/build-from-upstream.js --platform win",
     "build:win": "npm run build:win-x64",
@@ -23,6 +25,8 @@
     "build:linux": "npm run build:linux-x64 && npm run build:linux-arm64",
     "build:all": "npm run build:mac && npm run build:win && npm run build:linux",
     "sync": "node scripts/sync-upstream.js",
+    "sync:installed:x64": "node scripts/sync-upstream.js --installed-x64",
+    "test:latest-models": "node scripts/test-latest-model-patch.js",
     "check-update": "node scripts/check-update.js",
     "bump-version": "node scripts/bump-version.js",
     "rebuild:native": "electron-rebuild"

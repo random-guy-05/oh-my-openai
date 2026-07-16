@@ -16,6 +16,8 @@ const PATCHES = [
   "patch-copyright.js",
   "patch-devtools.js",
   "patch-fast-mode.js",
+  "patch-latest-models.js",
+  "patch-side-by-side-scheme.js",
   "patch-plugin-auth.js",
   "patch-updater.js",
   "patch-archive-delete.js",

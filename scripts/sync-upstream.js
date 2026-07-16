@@ -6,7 +6,7 @@
  *   src/{platform}/
  *     _asar/              Extracted app.asar content (patch target)
  *     app.asar.unpacked/  Native modules (kept as-is from upstream)
- *     codex|codex.exe     CLI binary (will be replaced by @cometix/codex)
+ *     codex|codex.exe     Official CLI binary from the upstream application
  *     rg|rg.exe           ripgrep binary (kept from upstream)
  *     plugins/            Bundled plugins
  *     native/             Platform native modules
@@ -14,6 +14,7 @@
  *
  * Usage:
  *   node scripts/sync-upstream.js [--force] [--skip-mac] [--skip-win]
+ *   node scripts/sync-upstream.js --installed-x64 [--installed-app /Applications/ChatGPT.app]
  */
 
 const https = require("https");
@@ -21,7 +22,8 @@ const tls = require("tls");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const crypto = require("crypto");
+const { execFileSync, execSync } = require("child_process");
 
 // TLS certs for MS delivery CDN
 const certsDir = path.join(__dirname, "certs");
@@ -45,6 +47,14 @@ const FORCE = args.includes("--force");
 const CHECK_ONLY = args.includes("--check-only");
 const SKIP_MAC = args.includes("--skip-mac");
 const SKIP_WIN = args.includes("--skip-win");
+const INSTALLED_X64 = args.includes("--installed-x64");
+const INSTALLED_APP_INDEX = args.indexOf("--installed-app");
+const INSTALLED_APP = INSTALLED_APP_INDEX >= 0
+  ? args[INSTALLED_APP_INDEX + 1]
+  : process.env.CODEX_UPSTREAM_APP || "/Applications/ChatGPT.app";
+
+const OPENAI_BUNDLE_ID = "com.openai.codex";
+const OPENAI_TEAM_ID = "2DC432GLL2";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -117,6 +127,110 @@ function countFiles(dir) {
     else n++;
   }
   return n;
+}
+
+function sha256File(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function readPlistValue(plistPath, key) {
+  return execFileSync("/usr/bin/plutil", ["-extract", key, "raw", plistPath], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function readMachOArchitectures(binaryPath) {
+  return execFileSync("/usr/bin/lipo", ["-archs", binaryPath], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim().split(/\s+/).filter(Boolean);
+}
+
+function verifyOfficialOpenAIApp(appPath) {
+  const requirement = `identifier "${OPENAI_BUNDLE_ID}" and anchor apple generic and certificate leaf[subject.OU] = "${OPENAI_TEAM_ID}"`;
+  // Validate the complete upstream resource seal and every nested code object
+  // before accepting the installed application as build input.
+  execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", `-R=${requirement}`, appPath], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function inspectInstalledX64App(appPath) {
+  if (!appPath || !fs.statSync(appPath, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`Installed upstream app not found: ${appPath || "<missing --installed-app value>"}`);
+  }
+
+  const infoPlist = path.join(appPath, "Contents", "Info.plist");
+  const resourcesDir = path.join(appPath, "Contents", "Resources");
+  const asarPath = path.join(resourcesDir, "app.asar");
+  const codexPath = path.join(resourcesDir, "codex");
+  if (!fs.existsSync(infoPlist) || !fs.existsSync(asarPath) || !fs.existsSync(codexPath)) {
+    throw new Error(`${appPath} is missing Info.plist, app.asar, or the bundled codex CLI`);
+  }
+
+  const bundleIdentifier = readPlistValue(infoPlist, "CFBundleIdentifier");
+  if (bundleIdentifier !== OPENAI_BUNDLE_ID) {
+    throw new Error(`Unexpected bundle identifier ${bundleIdentifier}; expected ${OPENAI_BUNDLE_ID}`);
+  }
+
+  const executableName = readPlistValue(infoPlist, "CFBundleExecutable");
+  const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
+  if (!fs.existsSync(executablePath)) throw new Error(`Main executable not found: ${executablePath}`);
+
+  const executableArchitectures = readMachOArchitectures(executablePath);
+  const codexArchitectures = readMachOArchitectures(codexPath);
+  if (!executableArchitectures.includes("x86_64") || !codexArchitectures.includes("x86_64")) {
+    throw new Error(`Installed app is not an Intel build (app=${executableArchitectures.join(",")}, codex=${codexArchitectures.join(",")})`);
+  }
+
+  verifyOfficialOpenAIApp(appPath);
+  execFileSync("/usr/bin/codesign", ["--verify", "--strict", codexPath], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  return {
+    appPath,
+    asarPath,
+    build: readPlistValue(infoPlist, "CFBundleVersion"),
+    bundleIdentifier,
+    codexPath,
+    executableArchitectures,
+    resourcesDir,
+    version: readPlistValue(infoPlist, "CFBundleShortVersionString"),
+  };
+}
+
+function writeSourceMetadata(destDir, source) {
+  const metadata = {
+    sourceKind: source.sourceKind,
+    sourceAppName: path.basename(source.appPath),
+    bundleIdentifier: source.bundleIdentifier,
+    version: source.version,
+    build: source.build,
+    architecture: "x86_64",
+    appAsarSha256: sha256File(source.asarPath),
+    codexSha256: sha256File(source.codexPath),
+  };
+  fs.writeFileSync(path.join(destDir, ".upstream-source.json"), JSON.stringify(metadata, null, 2) + "\n");
+}
+
+function syncInstalledMacX64(appPath, destDir) {
+  console.log("\n-- macOS-x64 (installed app snapshot)");
+  const source = inspectInstalledX64App(path.resolve(appPath));
+  console.log(`   version: ${source.version} (build ${source.build})`);
+
+  const extractDir = path.join(TEMP_DIR, "x64-extract");
+  const snapshotApp = path.join(extractDir, path.basename(source.appPath));
+  clearDir(extractDir);
+  console.log(`   [snapshot] ${source.appPath} -> ${snapshotApp}`);
+  execFileSync("/usr/bin/ditto", [source.appPath, snapshotApp], { stdio: "pipe" });
+
+  const snapshot = inspectInstalledX64App(snapshotApp);
+  snapshot.sourceKind = "installed-app-snapshot";
+  assembleOutput(snapshot.resourcesDir, destDir, "macOS-x64 installed snapshot");
+  writeSourceMetadata(destDir, snapshot);
+  return snapshot;
 }
 
 // ─── Version detection ──────────────────────────────────────────
@@ -267,6 +381,28 @@ function saveVersions(v) {
 async function main() {
   console.log("== Codex upstream sync ==\n");
   fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+  if (INSTALLED_X64) {
+    if (CHECK_ONLY) {
+      const source = inspectInstalledX64App(path.resolve(INSTALLED_APP));
+      console.log(`   mac-x64: ${source.version} (build ${source.build})`);
+      console.log("\n== Check only, installed app is valid ==");
+      return;
+    }
+
+    const source = syncInstalledMacX64(INSTALLED_APP, path.join(SRC_DIR, "mac-x64"));
+    const saved = loadVersions();
+    saved["mac-x64"] = {
+      version: source.version,
+      build: source.build,
+      source: source.sourceKind,
+      checkedAt: new Date().toISOString(),
+    };
+    saveVersions(saved);
+    console.log("\n== Done ==");
+    console.log(`   mac-x64: ${source.version}`);
+    return;
+  }
 
   const results = {};
 
