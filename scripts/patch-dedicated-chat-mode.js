@@ -17,7 +17,8 @@ const { parse } = require("acorn");
 const { relPath, SRC_DIR } = require("./patch-util");
 
 const SUPPORTED_PLATFORM = "mac-x64";
-const PAGE_MARKER = "codex-rebuild:native-chat-mode-v13";
+const PAGE_MARKER = "codex-rebuild:native-chat-mode-v14";
+const PAGE_MARKER_V13 = "codex-rebuild:native-chat-mode-v13";
 const PAGE_MARKER_V12 = "codex-rebuild:native-chat-mode-v12";
 const PAGE_MARKER_V11 = "codex-rebuild:native-chat-mode-v11";
 const PAGE_MARKER_V10 = "codex-rebuild:native-chat-mode-v10";
@@ -94,8 +95,20 @@ const SAFE_FKE_PROJECT_DISPLAY =
   "t[67]!==u.gizmo.display?.emoji||t[68]!==u.gizmo.display?.theme||t[69]!==Ce?(we=(0,sL.jsx)(rI,{className:`icon-xs`,color:u.gizmo.display?.theme,fallbackIcon:Ce,icon:u.gizmo.display?.emoji}),t[67]=u.gizmo.display?.emoji,t[68]=u.gizmo.display?.theme,t[69]=Ce,t[70]=we)";
 const UNSAFE_CHAT_HOME_GATE =
   "let a=xy().status,o=Q(VS);if(i)return null;if((o??a)!==`allowed`)return(0,g0.jsx)(I1,{});";
-const SAFE_CHAT_HOME_GATE =
+const SAFE_CHAT_HOME_GATE_V13 =
   "let a=xy().status,o=Q(VS)??a;if(i)return null;if(o===`loading`)return null;if(o!==`allowed`)return(0,g0.jsx)(I1,{});";
+// Do not block forever on ChatGPT access `loading` — that left users on a blank/fallback
+// shell with no conversation list. Only hard-stop on explicit denial.
+const SAFE_CHAT_HOME_GATE =
+  "let a=xy().status,o=Q(VS)??a;if(i)return null;if(o===`denied`)return(0,g0.jsx)(I1,{});";
+const JUE_ACCESS_GATE_SOURCE =
+  "function JUe(){let e=(0,m0.c)(2),t=xy().status,n=Q(VS),r=Q(GT);if((n??t)===`allowed`&&r){let t;return e[0]===Symbol.for(`react.memo_cache_sentinel`)?(t=(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{})}),e[0]=t):t=e[0],t}let i;return e[1]===Symbol.for(`react.memo_cache_sentinel`)?(i=(0,g0.jsx)(I1,{}),e[1]=i):i=e[1],i}";
+const JUE_ACCESS_GATE_REPLACEMENT =
+  "function JUe(){let e=(0,m0.c)(2),t=xy().status,n=Q(VS),r=Q(GT);if((n??t)===`denied`){let t;return e[0]===Symbol.for(`react.memo_cache_sentinel`)?(t=(0,g0.jsx)(I1,{}),e[0]=t):t=e[0],t}let i;return e[1]===Symbol.for(`react.memo_cache_sentinel`)?(i=(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{})}),e[1]=i):i=e[1],i}";
+const YUE_LOADING_GATE_SOURCE =
+  "function YUe(){let e=(0,m0.c)(2),t=xy().status,n=Q(VS)??t;if(n===`loading`)return null;if(n===`denied`){let t;return e[0]===Symbol.for(`react.memo_cache_sentinel`)?(t=(0,g0.jsx)(Ni,{to:`/`,replace:!0}),e[0]=t):t=e[0],t}let r;return e[1]===Symbol.for(`react.memo_cache_sentinel`)?(r=(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(w0,{})}),e[1]=r):r=e[1],r}";
+const YUE_LOADING_GATE_REPLACEMENT =
+  "function YUe(){let e=(0,m0.c)(2),t=xy().status,n=Q(VS)??t;if(n===`denied`){let t;return e[0]===Symbol.for(`react.memo_cache_sentinel`)?(t=(0,g0.jsx)(Ni,{to:`/`,replace:!0}),e[0]=t):t=e[0],t}let r;return e[1]===Symbol.for(`react.memo_cache_sentinel`)?(r=(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(w0,{})}),e[1]=r):r=e[1],r}";
 const UNSAFE_PROJECT_TITLE =
   "function Jke(e){return e.gizmo.display.name.trim()||e.gizmo.id}";
 const SAFE_PROJECT_TITLE =
@@ -364,7 +377,7 @@ function alignChatUiWithWork(source, bundlePath) {
   let next = source;
   let changed = false;
 
-  for (const legacy of [PAGE_MARKER_V8, PAGE_MARKER_V9, PAGE_MARKER_V10, PAGE_MARKER_V11, PAGE_MARKER_V12]) {
+  for (const legacy of [PAGE_MARKER_V8, PAGE_MARKER_V9, PAGE_MARKER_V10, PAGE_MARKER_V11, PAGE_MARKER_V12, PAGE_MARKER_V13]) {
     if (next.includes(legacy)) {
       next = replaceExactly(next, legacy, PAGE_MARKER, `Chat page marker from ${legacy}`);
       changed = true;
@@ -498,6 +511,18 @@ function hardenNativeChatPage(source, bundlePath) {
     next = replaceExactly(next, UNSAFE_CHAT_HOME_GATE, SAFE_CHAT_HOME_GATE, "Chat home loading gate");
     changed = true;
   }
+  if (next.includes(SAFE_CHAT_HOME_GATE_V13)) {
+    next = replaceExactly(next, SAFE_CHAT_HOME_GATE_V13, SAFE_CHAT_HOME_GATE, "Chat home no longer waits forever on loading");
+    changed = true;
+  }
+  if (next.includes(JUE_ACCESS_GATE_SOURCE)) {
+    next = replaceExactly(next, JUE_ACCESS_GATE_SOURCE, JUE_ACCESS_GATE_REPLACEMENT, "Work home mounts during ChatGPT access loading");
+    changed = true;
+  }
+  if (next.includes(YUE_LOADING_GATE_SOURCE)) {
+    next = replaceExactly(next, YUE_LOADING_GATE_SOURCE, YUE_LOADING_GATE_REPLACEMENT, "YUe no longer blanks on ChatGPT access loading");
+    changed = true;
+  }
   if (next.includes(UNSAFE_PROJECT_TITLE)) {
     next = replaceExactly(next, UNSAFE_PROJECT_TITLE, SAFE_PROJECT_TITLE, "safe ChatGPT project title");
     changed = true;
@@ -508,8 +533,11 @@ function hardenNativeChatPage(source, bundlePath) {
   if (next.includes("e.gizmo.display.name.trim()")) {
     throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.name unsafely`);
   }
-  if (next.includes(UNSAFE_CHAT_HOME_GATE)) {
-    throw new Error(`${relPath(bundlePath)} Chat home still treats loading as an error`);
+  if (next.includes(UNSAFE_CHAT_HOME_GATE) || next.includes(SAFE_CHAT_HOME_GATE_V13)) {
+    throw new Error(`${relPath(bundlePath)} Chat home still blocks on ChatGPT access loading`);
+  }
+  if (next.includes(JUE_ACCESS_GATE_SOURCE) || next.includes(YUE_LOADING_GATE_SOURCE)) {
+    throw new Error(`${relPath(bundlePath)} still blocks Work/Chat surfaces on ChatGPT access loading`);
   }
   return { source: next, changed };
 }
@@ -517,6 +545,7 @@ function hardenNativeChatPage(source, bundlePath) {
 function patchPage(source, bundlePath) {
   if (
     source.includes(PAGE_MARKER) ||
+    source.includes(PAGE_MARKER_V13) ||
     source.includes(PAGE_MARKER_V12) ||
     source.includes(PAGE_MARKER_V11) ||
     source.includes(PAGE_MARKER_V10) ||
@@ -531,6 +560,7 @@ function patchPage(source, bundlePath) {
       source.includes(PAGE_MARKER_V10) ||
       source.includes(PAGE_MARKER_V11) ||
       source.includes(PAGE_MARKER_V12) ||
+      source.includes(PAGE_MARKER_V13) ||
       source.includes(CHAT_MODE_SELECT_V11) ||
       source.includes(SIDEBAR_CLICK_SOURCE) ||
       source.includes("sidebarMode:CDRChatMode?`chat`") ||
@@ -542,7 +572,10 @@ function patchPage(source, bundlePath) {
       source.includes(CHAT_MODE_SELECT_V9) ||
       source.includes(CHAT_MODE_SELECT_V10) ||
       source.includes("sessionStorage.getItem(`cdr-product-mode`)") ||
-      source.includes("localStorage.removeItem(`cdr-product-mode`)")
+      source.includes("localStorage.removeItem(`cdr-product-mode`)") ||
+      source.includes(SAFE_CHAT_HOME_GATE_V13) ||
+      source.includes(JUE_ACCESS_GATE_SOURCE) ||
+      source.includes(YUE_LOADING_GATE_SOURCE)
     ) {
       const aligned = alignChatUiWithWork(next, bundlePath);
       next = aligned.source;
@@ -879,6 +912,8 @@ function verifyPage(source, bundlePath) {
     SAFE_OL_PROJECT_DISPLAY,
     SAFE_FKE_PROJECT_DISPLAY,
     SAFE_CHAT_HOME_GATE,
+    JUE_ACCESS_GATE_REPLACEMENT,
+    YUE_LOADING_GATE_REPLACEMENT,
     SAFE_PROJECT_TITLE,
   ];
   for (const item of required) {
@@ -896,6 +931,10 @@ function verifyPage(source, bundlePath) {
     "sessionStorage.getItem(`cdr-product-mode`)",
     CHAT_MODE_SELECT_V11,
     "CDRChatNavigate(`/chat?mode=chat`);return}try{localStorage.removeItem(`cdr-product-mode`)",
+    SAFE_CHAT_HOME_GATE_V13,
+    JUE_ACCESS_GATE_SOURCE,
+    YUE_LOADING_GATE_SOURCE,
+    "if(o===`loading`)return null;if(o!==`allowed`)",
   ]) {
     if (source.includes(forbidden)) {
       throw new Error(`${relPath(bundlePath)} still forks Chat chrome away from Work: ${forbidden}`);
@@ -907,8 +946,11 @@ function verifyPage(source, bundlePath) {
   if (source.includes("e.gizmo.display.name.trim()")) {
     throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.name unsafely`);
   }
-  if (source.includes(UNSAFE_CHAT_HOME_GATE)) {
-    throw new Error(`${relPath(bundlePath)} Chat home still treats loading as an error`);
+  if (source.includes(UNSAFE_CHAT_HOME_GATE) || source.includes(SAFE_CHAT_HOME_GATE_V13)) {
+    throw new Error(`${relPath(bundlePath)} Chat home still blocks on ChatGPT access loading`);
+  }
+  if (source.includes(JUE_ACCESS_GATE_SOURCE) || source.includes(YUE_LOADING_GATE_SOURCE)) {
+    throw new Error(`${relPath(bundlePath)} still blocks Work/Chat surfaces on ChatGPT access loading`);
   }
   if (source.includes("persist:codex-chatgpt-live") || source.includes("CodexDedicatedChatSurface")) {
     throw new Error(`${relPath(bundlePath)} still contains legacy webview Chat code`);
@@ -1019,6 +1061,7 @@ function locateTargets(platform = SUPPORTED_PLATFORM) {
   if (!fs.existsSync(assets)) throw new Error(`${platform}: extracted webview assets are missing`);
   const page = findOne(assets, (source) =>
     source.includes(PAGE_MARKER) ||
+    source.includes(PAGE_MARKER_V13) ||
     source.includes(PAGE_MARKER_V12) ||
     source.includes(PAGE_MARKER_V11) ||
     source.includes(PAGE_MARKER_V10) ||

@@ -377,8 +377,9 @@ assertIncludes(chatHome, "children:(0,g0.jsx)(T0,{chatMode:!0},\"chat:\"+(n??\"a
 assertIncludes(chatHome, "{accountId:e}=u_()", "account-keyed Chat home");
 assertIncludes(chatHome, "if(i)return null", "two-phase Chat home account gate");
 assertIncludes(chatHome, "o=Q(VS)??a", "Chat home prefers store status");
-assertIncludes(chatHome, "if(o===`loading`)return null", "Chat home waits while loading");
-assertIncludes(chatHome, "if(o!==`allowed`)return(0,g0.jsx)(I1,{})", "Chat home keeps denied fallback");
+assertIncludes(chatHome, "if(o===`denied`)return(0,g0.jsx)(I1,{})", "Chat home only hard-stops on denied");
+assert.ok(!chatHome.includes("if(o===`loading`)return null"), "Chat home must not wait forever on loading");
+assert.ok(!chatHome.includes("if(o!==`allowed`)"), "Chat home must not require allowed before mount");
 assert.ok(!chatHome.includes("if((o??a)!==`allowed`)"), "Chat home must not treat loading as an error");
 assertIncludes(chatHome, "t.removeQueries({type:`inactive`})", "Chat home inactive cache purge");
 assertIncludes(chatHome, "t.resetQueries({type:`active`})", "Chat home active observer reset");
