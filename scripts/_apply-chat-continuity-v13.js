@@ -2,6 +2,7 @@
 "use strict";
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
@@ -54,6 +55,53 @@ for (const dest of LIVE) {
   fs.copyFileSync(packed, dest);
   console.log("installed", dest);
   console.log("backup", bak);
+}
+
+// Replacing app.asar invalidates the outer ad-hoc seal. Without re-signing,
+// CodexLauncher treats every launch as a failed integrity check and spends
+// minutes reinstalling/verifying the ~2GB payload (which also fails).
+const BUNDLES = [
+  path.join(process.env.HOME, "Library/Application Support/CodexDesktop-Rebuild/Codex.app"),
+  "/Applications/Codex.app/Contents/Resources/Codex.payload",
+];
+function extractEntitlements(bundle, entitlementsPath) {
+  let entitlements;
+  try {
+    entitlements = execFileSync(
+      "/usr/bin/codesign",
+      ["--display", "--entitlements", ":-", bundle],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    entitlements = `${error.stdout || ""}`;
+  }
+  if (!entitlements) throw new Error(`could not extract entitlements for ${bundle}`);
+  fs.writeFileSync(entitlementsPath, entitlements);
+  try {
+    execFileSync("/usr/bin/plutil", ["-lint", entitlementsPath], { stdio: "ignore" });
+  } catch {
+    const xmlPath = `${entitlementsPath}.xml`;
+    execFileSync("/usr/bin/plutil", ["-convert", "xml1", "-o", xmlPath, entitlementsPath], {
+      stdio: "ignore",
+    });
+    fs.renameSync(xmlPath, entitlementsPath);
+    execFileSync("/usr/bin/plutil", ["-lint", entitlementsPath], { stdio: "ignore" });
+  }
+}
+
+for (const bundle of BUNDLES) {
+  if (!fs.existsSync(bundle)) continue;
+  const entitlements = path.join(os.tmpdir(), `codex-v13-entitlements-${Date.now()}.plist`);
+  extractEntitlements(bundle, entitlements);
+  console.log("re-signing", bundle);
+  execFileSync(
+    "/usr/bin/codesign",
+    ["--force", "--sign", "-", "--timestamp=none", "--options", "runtime", "--entitlements", entitlements, bundle],
+    { stdio: "inherit" },
+  );
+  execFileSync("/usr/bin/codesign", ["--verify", "--strict", bundle], { stdio: "inherit" });
+  fs.unlinkSync(entitlements);
+  console.log("signature ok", bundle);
 }
 
 console.log("done");
