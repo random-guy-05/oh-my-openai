@@ -1,8 +1,8 @@
 /**
  * Post-build patch: Update copyright text
  *
- * Uses AST to locate `setAboutPanelOptions({ copyright: "(c) OpenAI" })`
- * and replace the copyright string with a custom value.
+ * Uses AST to locate either `setAboutPanelOptions({ copyright: "(c) OpenAI" })`
+ * or the newer About-window HTML footer and replace the copyright string.
  *
  * Usage:
  *   node scripts/patch-copyright.js [platform]   # Apply patch (unix/win/omit=both)
@@ -19,6 +19,8 @@ const { locateBundles, relPath } = require("./patch-util");
 
 const OLD_COPYRIGHT = "\u00A9 OpenAI"; // (c) OpenAI
 const NEW_COPYRIGHT = "\u00A9 OpenAI \u00B7 Cometix Space"; // (c) OpenAI . Cometix Space
+const OLD_COPYRIGHT_HTML = `<div class="copyright">${OLD_COPYRIGHT}</div>`;
+const NEW_COPYRIGHT_HTML = `<div class="copyright">${NEW_COPYRIGHT}</div>`;
 
 // ──────────────────────────────────────────────
 //  AST walker
@@ -46,6 +48,22 @@ function walk(node, visitor) {
 function collectPatches(ast, source) {
   const patches = [];
   walk(ast, (node) => {
+    // Newer builds render the About window from an HTML template instead of
+    // passing a copyright property to Electron's native About panel.
+    if (node.type === "TemplateElement") {
+      const templateSource = source.slice(node.start, node.end);
+      const offset = templateSource.indexOf(OLD_COPYRIGHT_HTML);
+      if (offset !== -1) {
+        patches.push({
+          start: node.start + offset,
+          end: node.start + offset + OLD_COPYRIGHT_HTML.length,
+          replacement: NEW_COPYRIGHT_HTML,
+          original: OLD_COPYRIGHT_HTML,
+        });
+      }
+      return;
+    }
+
     if (node.type !== "Property") return;
     const keyName =
       node.key.type === "Identifier"

@@ -9,8 +9,8 @@
  *   _setStatus(g, v) { this.loadingStatus = g, ... }
  *   -> inject console logger block at method body head
  *
- * Target file: statsig-*.js chunk (moved out of index-*.js in newer builds)
- * Fallback: index-*.js (older builds)
+ * Target file: whichever renderer chunk structurally contains the Statsig
+ * _setStatus method and values_updated event (chunk names change per release).
  *
  * Usage:
  *   node scripts/patch-statsig-logger.js [platform]   # Apply patch (unix/win/omit=both)
@@ -19,7 +19,7 @@
 const fs = require("fs");
 const path = require("path");
 const { parse } = require("acorn");
-const { locateBundles, relPath } = require("./patch-util");
+const { relPath, SRC_DIR } = require("./patch-util");
 
 // ──────────────────────────────────────────────
 //  AST walker
@@ -137,25 +137,29 @@ function collectPatches(ast, source) {
 }
 
 // ──────────────────────────────────────────────
-//  Bundle location: try statsig-*.js first, fall back to index-*.js
+//  Bundle location
 // ──────────────────────────────────────────────
 
 function locateTargets(platform) {
-  // Try statsig chunk first (newer builds)
-  let bundles = locateBundles({
-    dir: "assets",
-    pattern: /^statsig-.*\.js$/,
-    platform,
-  });
-
-  if (bundles.length > 0) return bundles;
-
-  // Fallback to index bundle (older builds)
-  return locateBundles({
-    dir: "assets",
-    pattern: /^index-.*\.js$/,
-    platform,
-  });
+  const requested = platform === "unix"
+    ? ["mac-arm64", "mac-x64"]
+    : platform
+      ? [platform]
+      : ["mac-arm64", "mac-x64", "win"];
+  const targets = [];
+  for (const item of requested) {
+    const assetsDir = path.join(SRC_DIR, item, "_asar", "webview", "assets");
+    if (!fs.existsSync(assetsDir)) continue;
+    for (const filename of fs.readdirSync(assetsDir)) {
+      if (!filename.endsWith(".js")) continue;
+      const bundlePath = path.join(assetsDir, filename);
+      const source = fs.readFileSync(bundlePath, "utf-8");
+      if (source.includes("_setStatus") && source.includes("values_updated")) {
+        targets.push({ platform: item, path: bundlePath });
+      }
+    }
+  }
+  return targets;
 }
 
 // ──────────────────────────────────────────────
@@ -165,12 +169,14 @@ function locateTargets(platform) {
 function main() {
   const args = process.argv.slice(2);
   const isCheck = args.includes("--check");
-  const platform = args.find((a) => a === "unix" || a === "win");
+  const platform = args.find((a) =>
+    ["mac-arm64", "mac-x64", "unix", "win"].includes(a),
+  );
 
   const bundles = locateTargets(platform);
 
   if (bundles.length === 0) {
-    console.error("[x] No statsig or index bundle found");
+    console.error("[x] No Statsig status bundle found");
     process.exit(1);
   }
 

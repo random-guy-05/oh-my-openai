@@ -57,6 +57,7 @@ function verifyElectronBootstrap(code) {
 
 function main() {
   const args = process.argv.slice(2);
+  const isCheck = args.includes("--check");
   const platform = args.find((a) =>
     ["mac-arm64", "mac-x64", "win"].includes(a),
   );
@@ -68,12 +69,12 @@ function main() {
 
   const bundles = locateBundles({
     dir: "build",
-    pattern: /^bootstrap\.js$/,
+    pattern: /^bootstrap(?:-[^.]+)?\.js$/,
     platform: "mac-x64",
   });
 
   if (bundles.length === 0) {
-    console.log("  [skip] mac-x64 bootstrap.js not found");
+    console.log("  [skip] mac-x64 bootstrap bundle not found");
     return;
   }
 
@@ -93,6 +94,14 @@ function main() {
       continue;
     }
 
+    if (isCheck) {
+      console.log(
+        `  [?] ${relPath(bundle.path)}: would inject ${SWITCH_NAME}`,
+      );
+      patched++;
+      continue;
+    }
+
     fs.writeFileSync(bundle.path, INJECT_LINE + "\n" + code);
     console.log(
       `  [ok] ${relPath(bundle.path)}: injected ${SWITCH_NAME}`,
@@ -100,7 +109,7 @@ function main() {
     patched++;
   }
 
-  console.log(`  [done] ${patched} file(s) patched`);
+  console.log(`  [done] ${patched} file(s) ${isCheck ? "patchable" : "patched"}`);
 }
 
 main();

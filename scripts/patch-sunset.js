@@ -4,9 +4,8 @@
  * Codex uses a Statsig gate to control version sunsetting.
  * When the gate returns true, a full-screen "Update Required" overlay blocks the UI.
  *
- * AST match: find functions containing the sunset i18n key "appSunset",
- * then locate gate checker calls identifier(`numericString`) within them,
- * and replace with !1 (false).
+ * AST match: identify the sunset UI component, then replace only the numeric
+ * gate call used as the condition of the branch that renders that component.
  *
  * Usage:
  *   node scripts/patch-sunset.js [platform]   # Apply patch (unix/win/omit=both)
@@ -15,7 +14,7 @@
 const fs = require("fs");
 const path = require("path");
 const { parse } = require("acorn");
-const { locateBundles, relPath } = require("./patch-util");
+const { relPath, SRC_DIR } = require("./patch-util");
 
 // ──────────────────────────────────────────────
 //  AST walker
@@ -44,6 +43,7 @@ function walk(node, visitor, parent) {
 
 // Structural markers for sunset functions (i18n keys present in the sunset UI)
 const SUNSET_MARKERS = ["appSunset", "app.sunset", "sunset"];
+const PATCH_MARKER = "codex-rebuild:sunset-disabled";
 
 function getLiteralValue(node) {
   if (!node) return null;
@@ -57,45 +57,99 @@ function getLiteralValue(node) {
   return null;
 }
 
-function collectPatches(ast, source) {
-  const allPatches = [];
+function functionBindingName(node, parent) {
+  if (node.id?.type === "Identifier") return node.id.name;
+  if (
+    parent?.type === "VariableDeclarator" &&
+    parent.init === node &&
+    parent.id?.type === "Identifier"
+  ) {
+    return parent.id.name;
+  }
+  return null;
+}
 
-  walk(ast, (node) => {
+function branchRendersSunset(node, source, sunsetComponents) {
+  if (SUNSET_MARKERS.some((marker) => source.slice(node.start, node.end).includes(marker))) {
+    return true;
+  }
+  let found = false;
+  walk(node, (child) => {
+    if (child.type === "Identifier" && sunsetComponents.has(child.name)) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+function isNumericGateCall(node) {
+  if (node?.type !== "CallExpression") return false;
+  if (node.callee?.type !== "Identifier" || node.arguments?.length !== 1) return false;
+  const value = getLiteralValue(node.arguments[0]);
+  return typeof value === "string" && /^\d{6,}$/.test(value);
+}
+
+function isDisabledTest(node) {
+  return (
+    (node?.type === "UnaryExpression" &&
+      node.operator === "!" &&
+      node.argument?.type === "Literal" &&
+      node.argument.value === 1) ||
+    (node?.type === "Literal" && node.value === false)
+  );
+}
+
+function collectGateStates(ast, source) {
+  const states = [];
+  const sunsetComponents = new Set();
+
+  walk(ast, (node, parent) => {
     if (
       node.type !== "FunctionDeclaration" &&
       node.type !== "FunctionExpression" &&
       node.type !== "ArrowFunctionExpression"
-    )
+    ) {
       return;
+    }
+    if (!source.slice(node.start, node.end).includes("appSunset.title")) return;
+    const name = functionBindingName(node, parent);
+    if (name) sunsetComponents.add(name);
+  });
 
-    const funcSrc = source.slice(node.start, node.end);
-    // Structural match: function must contain a sunset-related i18n key
-    if (!SUNSET_MARKERS.some((m) => funcSrc.includes(m))) return;
+  walk(ast, (node) => {
+    if (node.type !== "IfStatement" && node.type !== "ConditionalExpression") return;
+    if (!branchRendersSunset(node.consequent, source, sunsetComponents)) return;
+    if (!isNumericGateCall(node.test) && !isDisabledTest(node.test)) return;
 
-    // Within this function, find gate calls: identifier(`numericString`)
-    walk(node, (child) => {
-      if (child.type !== "CallExpression") return;
-      if (child.callee?.type !== "Identifier") return;
-      if (child.arguments?.length !== 1) return;
-
-      const argVal = getLiteralValue(child.arguments[0]);
-      if (!argVal || !/^\d{6,}$/.test(argVal)) return;
-
-      const callSrc = source.slice(child.start, child.end);
-      if (callSrc === "!1") return;
-
-      if (!allPatches.some((x) => x.start === child.start)) {
-        allPatches.push({
-          start: child.start,
-          end: child.end,
-          replacement: "!1",
-          original: callSrc,
-        });
-      }
+    states.push({
+      start: node.test.start,
+      end: node.test.end,
+      disabled: isDisabledTest(node.test),
+      original: source.slice(node.test.start, node.test.end),
     });
   });
 
-  return allPatches;
+  return states;
+}
+
+function locateTargets(platform) {
+  const requested = platform
+    ? [platform]
+    : ["mac-arm64", "mac-x64", "win"];
+  const targets = [];
+  for (const item of requested) {
+    const assetsDir = path.join(SRC_DIR, item, "_asar", "webview", "assets");
+    if (!fs.existsSync(assetsDir)) continue;
+    for (const filename of fs.readdirSync(assetsDir)) {
+      if (!filename.endsWith(".js")) continue;
+      const bundlePath = path.join(assetsDir, filename);
+      const source = fs.readFileSync(bundlePath, "utf-8");
+      if (source.includes("appSunset.title") && source.includes("defaultMessage")) {
+        targets.push({ platform: item, path: bundlePath });
+      }
+    }
+  }
+  return targets;
 }
 
 // ──────────────────────────────────────────────
@@ -107,18 +161,14 @@ function main() {
   const isCheck = args.includes("--check");
   const platform = args.find((a) => ["mac-arm64", "mac-x64", "win"].includes(a));
 
-  const bundles = locateBundles({
-    dir: "assets",
-    pattern: /^index-.*\.js$/,
-    platform,
-  });
+  const bundles = locateTargets(platform);
 
   if (bundles.length === 0) {
-    console.error("[x] No index bundle found");
+    console.error("[x] No sunset UI bundle found");
     process.exit(1);
   }
 
-  for (const bundle of bundles) {
+  const analyses = bundles.map((bundle) => {
     console.log(`\n-- [${bundle.platform}] ${relPath(bundle.path)}`);
     const source = fs.readFileSync(bundle.path, "utf-8");
     console.log(`   size: ${(source.length / 1024 / 1024).toFixed(1)} MB`);
@@ -127,35 +177,43 @@ function main() {
     const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
     console.log(`   parse: ${Date.now() - t0}ms`);
 
-    const patches = collectPatches(ast, source);
+    const states = collectGateStates(ast, source);
+    if (states.length !== 1) {
+      throw new Error(
+        `${relPath(bundle.path)}: expected exactly one sunset gate, found ${states.length}`,
+      );
+    }
+    return { bundle, source, state: states[0] };
+  });
 
-    if (patches.length === 0) {
-      if (!SUNSET_MARKERS.some((m) => source.includes(m))) {
-        console.log("   [!] No sunset markers found in bundle");
-      } else {
-        console.log("   [ok] Sunset gate already disabled or no gate call found");
-      }
+  for (const { bundle, source, state } of analyses) {
+    if (state.disabled) {
+      console.log(
+        source.includes(PATCH_MARKER)
+          ? "   [ok] Sunset gate already disabled and marked"
+          : "   [ok] Sunset gate already disabled",
+      );
       continue;
     }
-
     if (isCheck) {
-      console.log(`   [?] Matches: ${patches.length}`);
-      for (const p of patches) {
-        console.log(`     > offset ${p.start}: ${p.original} -> ${p.replacement}`);
-      }
+      console.log(`   [?] offset ${state.start}: ${state.original} -> !1`);
       continue;
     }
 
-    patches.sort((a, b) => b.start - a.start);
-
-    let code = source;
-    for (const p of patches) {
-      console.log(`   * offset ${p.start}: ${p.original} -> ${p.replacement}`);
-      code = code.slice(0, p.start) + p.replacement + code.slice(p.end);
+    console.log(`   * offset ${state.start}: ${state.original} -> !1`);
+    const replacement = `!1/* ${PATCH_MARKER} */`;
+    const code = source.slice(0, state.start) + replacement + source.slice(state.end);
+    const verifiedAst = parse(code, { ecmaVersion: "latest", sourceType: "module" });
+    const verifiedStates = collectGateStates(verifiedAst, code);
+    if (
+      verifiedStates.length !== 1 ||
+      !verifiedStates[0].disabled ||
+      !code.includes(PATCH_MARKER)
+    ) {
+      throw new Error(`${relPath(bundle.path)}: sunset patch verification failed`);
     }
-
     fs.writeFileSync(bundle.path, code, "utf-8");
-    console.log(`   [ok] Sunset gate disabled: ${patches.length} gate calls -> !1`);
+    console.log("   [ok] Sunset gate disabled and structurally verified");
   }
 }
 

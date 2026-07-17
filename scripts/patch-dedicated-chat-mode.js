@@ -1,38 +1,24 @@
 #!/usr/bin/env node
 /**
- * Add a dedicated Chat mode beside Codex and ChatGPT Work.
+ * Promote the native ChatGPT client already shipped in the official Intel app
+ * into a third Codex / ChatGPT Work / Chat product mode.
  *
- * The renderer keeps the native Codex/Work shell mounted and overlays a
- * retained chatgpt.com webview. The main process owns authentication,
- * navigation policy, permissions, and hardening for one exact persistent
- * partition. Every edit is fail-closed and the resulting bundles are parsed
- * and structurally verified before either file is written.
+ * Chat remains on the official non-TPP ChatGPT transport and server-side
+ * conversation IDs. This patch changes renderer routing and presentation only:
+ * it does not mirror, migrate, create, rename, archive, or delete chats.
  *
- * Usage:
- *   node scripts/patch-dedicated-chat-mode.js [mac-arm64|mac-x64|win|unix]
- *   node scripts/patch-dedicated-chat-mode.js mac-x64 --check
+ * Supported upstream: macOS Intel 26.707.91948 (build 5440).
  */
 const fs = require("fs");
 const path = require("path");
 const { parse } = require("acorn");
 const { relPath, SRC_DIR } = require("./patch-util");
 
-const ALL_PLATFORMS = ["mac-arm64", "mac-x64", "win"];
-const LEGACY_RENDERER_MARKER = "codex-rebuild:dedicated-chat-mode";
-const LEGACY_MAIN_MARKER = "codex-rebuild:chatgpt-live-webview";
-const V2_RENDERER_MARKER = "codex-rebuild:dedicated-chat-mode-v2";
-const V2_MAIN_MARKER = "codex-rebuild:chatgpt-live-webview-v2";
-const V3_RENDERER_MARKER = "codex-rebuild:dedicated-chat-mode-v3";
-const V3_MAIN_MARKER = "codex-rebuild:chatgpt-live-webview-v3";
-const V4_RENDERER_MARKER = "codex-rebuild:dedicated-chat-mode-v4";
-const V4_MAIN_MARKER = "codex-rebuild:chatgpt-live-webview-v4";
-const V5_RENDERER_MARKER = "codex-rebuild:dedicated-chat-mode-v5";
-const V5_MAIN_MARKER = "codex-rebuild:chatgpt-live-webview-v5";
-const V6_RENDERER_MARKER = "codex-rebuild:dedicated-chat-mode-v6";
-const V6_MAIN_MARKER = "codex-rebuild:chatgpt-live-webview-v6";
-const RENDERER_MARKER = "codex-rebuild:dedicated-chat-mode-v7";
-const MAIN_MARKER = "codex-rebuild:chatgpt-live-webview-v7";
-const CHAT_PARTITION = "persist:codex-chatgpt-live";
+const SUPPORTED_PLATFORM = "mac-x64";
+const PAGE_MARKER = "codex-rebuild:native-chat-mode-v8";
+const HOME_MARKER = "codex-rebuild:native-chat-home-v8";
+const CSS_MARKER = "codex-rebuild:native-chat-theme-v8";
+const CHAT_HOME_ROUTE = "/chat?mode=chat";
 
 function countOccurrences(source, needle) {
   if (needle.length === 0) throw new Error("Cannot count an empty anchor");
@@ -84,763 +70,532 @@ function walk(node, visitor) {
 function findFunction(ast, name, bundlePath) {
   const matches = [];
   walk(ast, (node) => {
-    if (node.type === "FunctionDeclaration" && node.id?.name === name) {
-      matches.push(node);
-    }
+    if (node.type === "FunctionDeclaration" && node.id?.name === name) matches.push(node);
   });
   if (matches.length !== 1) {
-    throw new Error(
-      `${relPath(bundlePath)} expected one function ${name}, found ${matches.length}`,
-    );
+    throw new Error(`${relPath(bundlePath)} expected one function ${name}, found ${matches.length}`);
   }
   return matches[0];
 }
 
-function applyPatches(source, patches) {
-  let result = source;
-  for (const patch of [...patches].sort((a, b) => b.start - a.start)) {
-    result = result.slice(0, patch.start) + patch.replacement + result.slice(patch.end);
-  }
-  return result;
+function replaceFunction(source, name, replacement, bundlePath) {
+  const ast = parseBundle(source, bundlePath);
+  const node = findFunction(ast, name, bundlePath);
+  return source.slice(0, node.start) + replacement + source.slice(node.end);
 }
 
-function fsyncDirectory(directory, { required = false } = {}) {
-  let descriptor;
-  try {
-    descriptor = fs.openSync(directory, "r");
-    fs.fsyncSync(descriptor);
-  } catch (error) {
-    if (required) throw error;
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-  }
+function transformFunction(source, name, transform, bundlePath) {
+  const ast = parseBundle(source, bundlePath);
+  const node = findFunction(ast, name, bundlePath);
+  const previous = source.slice(node.start, node.end);
+  const next = transform(previous);
+  if (next === previous) throw new Error(`${relPath(bundlePath)} ${name} transform changed no bytes`);
+  return source.slice(0, node.start) + next + source.slice(node.end);
 }
 
-function stageAtomicFile(filePath, content, suffix) {
-  const tempPath = `${filePath}.dedicated-chat-${suffix}.tmp`;
-  const mode = fs.statSync(filePath).mode;
+function writeDurable(filePath, content, flags, mode) {
   let descriptor;
   try {
-    descriptor = fs.openSync(tempPath, "wx", mode);
+    descriptor = fs.openSync(filePath, flags, mode);
     fs.writeFileSync(descriptor, content, "utf8");
     fs.fsyncSync(descriptor);
-  } catch (error) {
-    try { fs.unlinkSync(tempPath); } catch {}
-    throw error;
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-  }
-  return tempPath;
-}
-
-function writeDurableNew(filePath, content, mode = 0o600) {
-  let descriptor;
-  try {
-    descriptor = fs.openSync(filePath, "wx", mode);
-    fs.writeFileSync(descriptor, content, "utf8");
-    fs.fsyncSync(descriptor);
-  } catch (error) {
-    try { fs.unlinkSync(filePath); } catch {}
-    throw error;
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
   }
 }
 
-function transactionJournalPath(transactionRoot) {
-  return path.join(transactionRoot, ".dedicated-chat-transaction.json");
+function fsyncDirectory(directory) {
+  const descriptor = fs.openSync(directory, "r");
+  try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
 }
 
-function recoverAtomicTransaction(transactionRoot) {
-  const journalPath = transactionJournalPath(transactionRoot);
+function transactionPath(root) {
+  return path.join(root, ".native-chat-transaction.json");
+}
+
+function recoverAtomicTransaction(root) {
+  const journalPath = transactionPath(root);
   if (!fs.existsSync(journalPath)) return false;
   const journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+  const rootPrefix = `${path.resolve(root)}${path.sep}`;
   if (journal?.version !== 1 || !Array.isArray(journal.entries) || journal.entries.length === 0) {
-    throw new Error(`Invalid dedicated Chat transaction journal: ${journalPath}`);
+    throw new Error(`Invalid native Chat transaction journal: ${journalPath}`);
   }
-  const rootPrefix = `${path.resolve(transactionRoot)}${path.sep}`;
   for (const entry of journal.entries) {
     if (
-      typeof entry?.path !== "string" ||
-      typeof entry?.backupPath !== "string" ||
+      typeof entry.path !== "string" ||
+      typeof entry.backup !== "string" ||
       !path.resolve(entry.path).startsWith(rootPrefix) ||
-      !path.resolve(entry.backupPath).startsWith(rootPrefix) ||
-      !fs.existsSync(entry.path) ||
-      !fs.existsSync(entry.backupPath)
+      !path.resolve(entry.backup).startsWith(rootPrefix) ||
+      !fs.existsSync(entry.backup)
     ) {
-      throw new Error(`Unrecoverable dedicated Chat transaction entry in ${journalPath}`);
+      throw new Error(`Unrecoverable native Chat transaction entry: ${journalPath}`);
     }
   }
-  const nonce = `${process.pid}-${Date.now()}-recovery`;
-  for (let index = 0; index < journal.entries.length; index += 1) {
-    const entry = journal.entries[index];
-    const previous = fs.readFileSync(entry.backupPath, "utf8");
-    const staged = stageAtomicFile(entry.path, previous, `${nonce}-${index}`);
-    fs.renameSync(staged, entry.path);
-    fsyncDirectory(path.dirname(entry.path), { required: true });
+  for (const entry of journal.entries) {
+    const temporary = `${entry.path}.native-chat-recovery-${process.pid}`;
+    writeDurable(temporary, fs.readFileSync(entry.backup, "utf8"), "wx", fs.statSync(entry.backup).mode);
+    fs.renameSync(temporary, entry.path);
+    fsyncDirectory(path.dirname(entry.path));
   }
   fs.unlinkSync(journalPath);
-  fsyncDirectory(transactionRoot, { required: true });
+  fsyncDirectory(root);
   for (const entry of journal.entries) {
-    try { fs.unlinkSync(entry.backupPath); } catch {}
-  }
-  for (const directory of new Set(journal.entries.map((entry) => path.dirname(entry.backupPath)))) {
-    fsyncDirectory(directory, { required: true });
+    fs.unlinkSync(entry.backup);
+    fsyncDirectory(path.dirname(entry.backup));
   }
   return true;
 }
 
 function atomicReplaceEntries(entries, { transactionRoot } = {}) {
   if (entries.length === 0) return;
-  if (transactionRoot == null) {
-    throw new Error("atomicReplaceEntries requires a transactionRoot");
-  }
+  if (transactionRoot == null) throw new Error("atomicReplaceEntries requires transactionRoot");
   recoverAtomicTransaction(transactionRoot);
+  const rootResolved = path.resolve(transactionRoot);
+  const rootReal = fs.realpathSync(rootResolved);
+  const lexicalPrefix = `${rootResolved}${path.sep}`;
+  const realPrefix = `${rootReal}${path.sep}`;
+  const seenTargets = new Set();
+  const prepared = entries.map((entry, index) => {
+    if (
+      entry == null ||
+      typeof entry.path !== "string" ||
+      typeof entry.previous !== "string" ||
+      typeof entry.next !== "string" ||
+      typeof entry.verify !== "function"
+    ) {
+      throw new Error(`Invalid native Chat transaction entry at index ${index}`);
+    }
+    const target = path.resolve(entry.path);
+    if (!target.startsWith(lexicalPrefix)) {
+      throw new Error(`Native Chat transaction target escapes its root: ${entry.path}`);
+    }
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error(`Native Chat transaction target must be a regular file: ${entry.path}`);
+    }
+    const targetReal = fs.realpathSync(target);
+    if (!targetReal.startsWith(realPrefix) || seenTargets.has(targetReal)) {
+      throw new Error(`Native Chat transaction target is outside its root or duplicated: ${entry.path}`);
+    }
+    seenTargets.add(targetReal);
+    if (fs.readFileSync(target, "utf8") !== entry.previous) {
+      throw new Error(`Native Chat transaction target changed before staging: ${entry.path}`);
+    }
+    return { ...entry, path: target };
+  });
   const nonce = `${process.pid}-${Date.now()}`;
   const staged = [];
-  const journalPath = transactionJournalPath(transactionRoot);
-  let journalPublished = false;
-  let journalResolved = false;
+  const journalPath = transactionPath(transactionRoot);
   try {
-    for (let index = 0; index < entries.length; index += 1) {
-      const entry = entries[index];
-      const tempPath = stageAtomicFile(entry.path, entry.next, `${nonce}-${index}`);
-      entry.verify(fs.readFileSync(tempPath, "utf8"), entry.path);
-      const backupPath = `${entry.path}.dedicated-chat-${nonce}.backup`;
-      writeDurableNew(backupPath, entry.previous, fs.statSync(entry.path).mode);
-      fsyncDirectory(path.dirname(backupPath), { required: true });
-      staged.push({ ...entry, tempPath, backupPath });
+    for (let index = 0; index < prepared.length; index += 1) {
+      const entry = prepared[index];
+      const temporary = `${entry.path}.native-chat-${nonce}-${index}.tmp`;
+      const backup = `${entry.path}.native-chat-${nonce}-${index}.backup`;
+      const mode = fs.statSync(entry.path).mode;
+      const stagedEntry = { ...entry, temporary, backup };
+      staged.push(stagedEntry);
+      writeDurable(temporary, entry.next, "wx", mode);
+      entry.verify(fs.readFileSync(temporary, "utf8"), entry.path);
+      writeDurable(backup, entry.previous, "wx", mode);
+      fsyncDirectory(path.dirname(backup));
     }
-    const journal = {
-      version: 1,
-      createdAt: new Date().toISOString(),
-      entries: staged.map(({ path: filePath, backupPath }) => ({ path: filePath, backupPath })),
-    };
+    for (const entry of prepared) {
+      if (fs.readFileSync(entry.path, "utf8") !== entry.previous) {
+        throw new Error(`Native Chat transaction target changed during staging: ${entry.path}`);
+      }
+    }
     const journalTemp = `${journalPath}.${nonce}.tmp`;
-    writeDurableNew(journalTemp, JSON.stringify(journal));
+    writeDurable(journalTemp, JSON.stringify({
+      version: 1,
+      entries: staged.map(({ path: filePath, backup }) => ({ path: filePath, backup })),
+    }), "wx", 0o600);
     fs.renameSync(journalTemp, journalPath);
-    journalPublished = true;
-    fsyncDirectory(transactionRoot, { required: true });
+    fsyncDirectory(transactionRoot);
     for (const entry of staged) {
-      fs.renameSync(entry.tempPath, entry.path);
-      fsyncDirectory(path.dirname(entry.path), { required: true });
+      fs.renameSync(entry.temporary, entry.path);
+      fsyncDirectory(path.dirname(entry.path));
     }
-    for (const entry of staged) {
-      entry.verify(fs.readFileSync(entry.path, "utf8"), entry.path);
-    }
+    for (const entry of staged) entry.verify(fs.readFileSync(entry.path, "utf8"), entry.path);
     fs.unlinkSync(journalPath);
-    fsyncDirectory(transactionRoot, { required: true });
-    journalResolved = true;
-    for (const entry of staged) fs.unlinkSync(entry.backupPath);
-    for (const directory of new Set(staged.map((entry) => path.dirname(entry.backupPath)))) {
-      fsyncDirectory(directory, { required: true });
+    fsyncDirectory(transactionRoot);
+    for (const entry of staged) {
+      fs.unlinkSync(entry.backup);
+      fsyncDirectory(path.dirname(entry.backup));
     }
   } catch (error) {
     if (fs.existsSync(journalPath)) {
-      try {
-        recoverAtomicTransaction(transactionRoot);
-        journalResolved = true;
-      } catch (rollbackError) {
-        throw new AggregateError([error, rollbackError], "Patch failed and journal recovery was incomplete");
+      try { recoverAtomicTransaction(transactionRoot); }
+      catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "Native Chat patch and rollback both failed");
       }
     }
     throw error;
   } finally {
     for (const entry of staged) {
-      try { fs.unlinkSync(entry.tempPath); } catch {}
-      // A failed directory fsync after journal unlink can make that journal
-      // reappear after a crash. Preserve its only recoverable backups until
-      // the unlink has crossed the required durability barrier.
-      if (!journalPublished || journalResolved) {
-        try { fs.unlinkSync(entry.backupPath); } catch {}
+      try { fs.unlinkSync(entry.temporary); } catch {}
+      if (!fs.existsSync(journalPath)) {
+        try { fs.unlinkSync(entry.backup); } catch {}
       }
     }
   }
 }
 
-const SELECTOR_SOURCE = String.raw`function XDe({mode:e,onModeSelect:t}){let n=Tn(),r=e===\`chat\`?\`Chat\`:e===\`codex\`?n.formatMessage(HF.codex):n.formatMessage({id:\`sidebarElectron.productMode.chatGptWork.plainText\`,defaultMessage:\`ChatGPT Work\`,description:\`Plain-text ChatGPT Work mode name for the accessible sidebar mode selector label\`}),i=e===\`chat\`?(0,VF.jsx)(\`span\`,{className:\`truncate font-openai-sans font-semibold\`,children:(0,VF.jsx)(Z,{id:\`sidebarElectron.productMode.chat\`,defaultMessage:\`Chat\`,description:\`Chat option in the sidebar mode selector\`})}):e===\`work\`?(0,VF.jsx)(Z,{...HF.chatGptWork,values:{chatGpt:eOe,work:$De}}):(0,VF.jsx)(\`span\`,{className:\`truncate font-openai-sans font-semibold\`,children:(0,VF.jsx)(Z,{...HF.codex})}),a=(0,VF.jsxs)(uu,{allowShrink:!0,"aria-label":n.formatMessage({id:\`sidebarElectron.productMode.trigger\`,defaultMessage:\`Switch mode, current mode: {mode}\`,description:\`Accessible label for the Codex, Work, and Chat mode selector\`},{mode:r}),className:\`group -ml-2 h-8 min-w-0 rounded-xl px-2 !text-[17px] !leading-6 font-medium\`,color:\`ghostActive\`,children:[i,(0,VF.jsx)(vp,{className:\`icon-2xs shrink-0 text-token-input-placeholder-foreground opacity-0 group-hover:opacity-100 group-data-[state=open]:opacity-100\`})]}),o=(0,VF.jsx)(Xf.Item,{className:\`py-2.5 text-base\`,RightIcon:e===\`work\`?Wu:void 0,SubText:(0,VF.jsx)(\`span\`,{className:\`text-token-description-foreground\`,children:(0,VF.jsx)(Z,{id:\`sidebarElectron.productMode.work.description.recommended\`,defaultMessage:\`Create, learn, and explore\`,description:\`Description beneath the ChatGPT Work option in the sidebar mode selector\`})}),onSelect:()=>t(\`work\`),children:(0,VF.jsx)(Z,{...HF.chatGptWork,values:{chatGpt:QDe,work:ZDe}})}),s=(0,VF.jsx)(Xf.Item,{className:\`py-2.5 text-base\`,RightIcon:e===\`codex\`?Wu:void 0,SubText:(0,VF.jsx)(\`span\`,{className:\`text-sm text-token-description-foreground\`,children:(0,VF.jsx)(Z,{id:\`sidebarElectron.productMode.codex.description.developer\`,defaultMessage:\`Build, debug, and ship\`,description:\`Description beneath the Codex option in the sidebar mode selector\`})}),onSelect:()=>t(\`codex\`),children:(0,VF.jsx)(\`span\`,{className:\`font-openai-sans\`,children:(0,VF.jsx)(Z,{...HF.codex})})}),c=(0,VF.jsx)(Xf.Item,{className:\`py-2.5 text-base\`,RightIcon:e===\`chat\`?Wu:void 0,SubText:(0,VF.jsx)(\`span\`,{className:\`text-sm text-token-description-foreground\`,children:(0,VF.jsx)(Z,{id:\`sidebarElectron.productMode.chat.description\`,defaultMessage:\`Your synced ChatGPT conversations and projects\`,description:\`Description beneath the Chat option in the sidebar mode selector\`})}),onSelect:()=>t(\`chat\`),children:(0,VF.jsx)(\`span\`,{className:\`font-openai-sans\`,children:(0,VF.jsx)(Z,{id:\`sidebarElectron.productMode.chat\`,defaultMessage:\`Chat\`,description:\`Chat option in the sidebar mode selector\`})})});return(0,VF.jsxs)(tm,{align:\`start\`,contentClassName:\`p-1.5\`,contentWidth:\`menuWide\`,sideOffset:4,triggerButton:a,children:[o,s,c]})}`.replaceAll("\\`", "`");
+const SELECTOR_SOURCE = String.raw`function ROe({mode:e,onModeSelect:t}){let n=Xf(),r=e===\`chat\`?\`Chat\`:e===\`codex\`?n.formatMessage(eI.codex):n.formatMessage({id:\`sidebarElectron.productMode.chatGptWork.plainText\`,defaultMessage:\`ChatGPT Work\`,description:\`Plain-text ChatGPT Work mode name for the accessible sidebar mode selector label\`}),i=e===\`chat\`?(0,$F.jsx)(\`span\`,{className:\`truncate font-openai-sans font-semibold\`,children:(0,$F.jsx)(c,{id:\`sidebarElectron.productMode.chat\`,defaultMessage:\`Chat\`,description:\`Chat option in the product mode selector\`})}):e===\`work\`?(0,$F.jsx)(c,{...eI.chatGptWork,values:{chatGpt:HOe,work:VOe}}):(0,$F.jsx)(\`span\`,{className:\`truncate font-openai-sans font-semibold\`,children:(0,$F.jsx)(c,{...eI.codex})}),a=(0,$F.jsxs)(hl,{allowShrink:!0,"aria-label":n.formatMessage({id:\`sidebarElectron.productMode.trigger\`,defaultMessage:\`Switch mode, current mode: {mode}\`,description:\`Accessible label for the Codex, Work, and Chat mode selector\`},{mode:r}),className:\`group -ml-2 h-8 min-w-0 rounded-xl px-2 !text-[17px] !leading-6 font-medium\`,color:\`ghostActive\`,children:[i,(0,$F.jsx)(sy,{className:\`icon-2xs shrink-0 text-token-input-placeholder-foreground opacity-0 group-hover:opacity-100 group-data-[state=open]:opacity-100\`})]}),o=(0,$F.jsx)(T_.Item,{className:\`py-2.5 text-base\`,RightIcon:e===\`work\`?Vd:void 0,SubText:(0,$F.jsx)(\`span\`,{className:\`text-token-description-foreground\`,children:(0,$F.jsx)(c,{id:\`sidebarElectron.productMode.work.description.recommended\`,defaultMessage:\`Create, learn, and explore\`,description:\`Description beneath the ChatGPT Work option\`})}),onSelect:()=>t(\`work\`),children:(0,$F.jsx)(c,{...eI.chatGptWork,values:{chatGpt:BOe,work:zOe}})}),s=(0,$F.jsx)(T_.Item,{className:\`py-2.5 text-base\`,RightIcon:e===\`codex\`?Vd:void 0,SubText:(0,$F.jsx)(\`span\`,{className:\`text-sm text-token-description-foreground\`,children:(0,$F.jsx)(c,{id:\`sidebarElectron.productMode.codex.description.developer\`,defaultMessage:\`Build, debug, and ship\`,description:\`Description beneath the Codex option\`})}),onSelect:()=>t(\`codex\`),children:(0,$F.jsx)(\`span\`,{className:\`font-openai-sans\`,children:(0,$F.jsx)(c,{...eI.codex})})}),l=(0,$F.jsx)(T_.Item,{className:\`py-2.5 text-base\`,RightIcon:e===\`chat\`?Vd:void 0,SubText:(0,$F.jsx)(\`span\`,{className:\`text-sm text-token-description-foreground\`,children:(0,$F.jsx)(c,{id:\`sidebarElectron.productMode.chat.description\`,defaultMessage:\`Your synced ChatGPT conversations and projects\`,description:\`Description beneath the Chat option\`})}),onSelect:()=>t(\`chat\`),children:(0,$F.jsx)(\`span\`,{className:\`font-openai-sans\`,children:(0,$F.jsx)(c,{id:\`sidebarElectron.productMode.chat\`,defaultMessage:\`Chat\`,description:\`Chat option in the product mode selector\`})})});return(0,$F.jsxs)(iv,{align:\`start\`,contentClassName:\`p-1.5\`,contentWidth:\`menuWide\`,sideOffset:4,triggerButton:a,children:[o,s,l]})}`.replaceAll("\\`", "`");
 
-const CHAT_SURFACE_SOURCE = String.raw`/* ${RENDERER_MARKER} */function CodexDedicatedChatSurface({active:e}){let t=Hn(q),n=(0,az.useRef)(null),[r,i]=(0,az.useState)(e),[a,o]=(0,az.useState)(\`loading\`);(0,az.useEffect)(()=>{e&&i(!0)},[e]),(0,az.useEffect)(()=>{if(!r)return;let e=n.current;if(e==null)return;let t=()=>o(\`loading\`),r=()=>{try{String(e.getURL?.()??\`\`).startsWith(\`https://chatgpt.com\`)&&o(\`ready\`)}catch{}},i=t=>{t.errorCode!==-3&&o(\`error\`)},a=()=>o(\`error\`);return e.addEventListener(\`did-start-loading\`,t),e.addEventListener(\`did-stop-loading\`,r),e.addEventListener(\`did-finish-load\`,r),e.addEventListener(\`did-fail-load\`,i),e.addEventListener(\`render-process-gone\`,a),()=>{e.removeEventListener(\`did-start-loading\`,t),e.removeEventListener(\`did-stop-loading\`,r),e.removeEventListener(\`did-finish-load\`,r),e.removeEventListener(\`did-fail-load\`,i),e.removeEventListener(\`render-process-gone\`,a)}},[r]);if(!r)return null;let s=e=>{if(e===\`chat\`)return;ooe(t,e===\`work\`?Zm:zoe),t.set(CodexDedicatedChatMode,!1)},c=()=>{o(\`loading\`);try{n.current?.reload()}catch{o(\`error\`)}};return(0,mz.jsxs)(\`section\`,{"aria-hidden":e?void 0:!0,"aria-modal":e?!0:void 0,"data-codex-dedicated-chat":\`true\`,role:e?\`dialog\`:void 0,style:{position:\`fixed\`,inset:0,zIndex:2147483000,display:\`flex\`,flexDirection:\`column\`,background:\`var(--main-surface-primary, #fff)\`,visibility:e?\`visible\`:\`hidden\`,pointerEvents:e?\`auto\`:\`none\`,opacity:e?1:0},children:[(0,mz.jsx)(\`header\`,{className:\`draggable flex h-toolbar w-full shrink-0 items-center border-b border-token-border bg-token-main-surface-primary pe-2\`,style:{paddingLeft:\`78px\`,minHeight:\`48px\`},children:(0,mz.jsx)(\`div\`,{className:\`no-drag min-w-0\`,children:(0,mz.jsx)(XDe,{mode:\`chat\`,onModeSelect:s})})}),(0,mz.jsxs)(\`div\`,{className:\`relative min-h-0 min-w-0 flex-1 overflow-hidden bg-token-main-surface-primary\`,children:[(0,mz.jsx)(\`webview\`,{ref:n,partition:\`${CHAT_PARTITION}\`,src:\`about:blank\`,className:\`block h-full w-full bg-token-main-surface-primary\`,style:{height:\`100%\`,width:\`100%\`}}),a!==\`ready\`?(0,mz.jsx)(\`div\`,{className:\`absolute inset-0 flex items-center justify-center bg-token-main-surface-primary\`,children:a===\`error\`?(0,mz.jsxs)(\`div\`,{className:\`flex max-w-md flex-col items-center gap-3 px-6 text-center\`,children:[(0,mz.jsx)(\`div\`,{className:\`text-base font-semibold\`,children:\`ChatGPT could not load\`}),(0,mz.jsx)(\`div\`,{className:\`text-sm text-token-description-foreground\`,children:\`Check your connection, then try again.\`}),(0,mz.jsx)(uu,{color:\`secondary\`,onClick:c,children:\`Try again\`})]}):(0,mz.jsx)(\`div\`,{className:\`text-sm text-token-description-foreground\`,children:\`Loading ChatGPT…\`})}):null]})]})}`.replaceAll("\\`", "`");
+const NEW_CHAT_SOURCE = String.raw`function NOe({showSearchNavItem:e,chatMode:t}){let n=Cn(),r=t?(0,XF.jsx)(Dw,{icon:OC,onClick:()=>{n(\`${CHAT_HOME_ROUTE}\`)},label:(0,XF.jsx)(c,{id:\`sidebarElectron.newChat\`,defaultMessage:\`New chat\`,description:\`Starts a new ChatGPT chat from the sidebar\`}),className:\`group\`}):(0,XF.jsx)(POe,{}),i=e?(0,XF.jsx)(yOe,{}):null;return(0,XF.jsxs)(PC,{children:[r,i]})}`.replaceAll("\\`", "`");
 
-const WRAPPER_SOURCE = String.raw`function WAe(){let e=X(CodexDedicatedChatMode);return(0,mz.jsxs)(mz.Fragment,{children:[(0,mz.jsx)(\`div\`,{inert:e?\`\`:void 0,"aria-hidden":e?!0:void 0,style:{display:e?\`none\`:\`contents\`},children:(0,mz.jsx)(CodexNativeShell,{})}),(0,mz.jsx)(CodexDedicatedChatSurface,{active:e})]})}`.replaceAll("\\`", "`");
+const PROJECT_CHAT_ROW_SOURCE = 'function Uke(e){let{activeConversationId:n,activeServerConversationId:r,item:i,chatMode:CDRChatMode=!1}=e,CDRChatRoute=e=>CDRChatMode?`${e}${e.includes(`?`)?`&`:`?`}mode=chat`:e;switch(i.kind){case`optimistic`:{let e=i.conversationId,r=CDRChatRoute(dt(i.conversationId));return(0,sL.jsx)(tL,{activeConversationId:n,conversationId:e,isGrouped:!0,route:r})}case`server`:{let e=i.conversation,a=i.conversation.is_starred===!0,o=CDRChatRoute(dt(i.conversation.id));return(0,sL.jsx)(nL,{activeConversationId:n,activeServerConversationId:r,conversation:e,isGrouped:!0,isPinned:a,route:o})}}}';
 
-const CHAT_SURFACE_SOURCE_V2 = String.raw`/* ${RENDERER_MARKER} */function CodexDedicatedChatSurface({active:e}){let t=Hn(q),{accountId:n}=VC(),r=(0,az.useRef)(null),[i,a]=(0,az.useState)(e),[o,s]=(0,az.useState)({kind:\`loading\`,generation:0});(0,az.useEffect)(()=>{e&&a(!0)},[e]),(0,az.useEffect)(()=>{if(!i)return;let e=r.current;if(e==null)return;let t=o.generation,n=()=>s(e=>e.generation===t?{...e,kind:\`loading\`}:e),i=()=>{try{String(e.getURL?.()??\`\`).startsWith(\`https://chatgpt.com\`)&&s(e=>e.generation===t&&e.kind!==\`error\`?{...e,kind:\`ready\`}:e)}catch{}},a=e=>{e.isMainFrame===!0&&e.errorCode!==-3&&s(e=>e.generation===t?{...e,kind:\`error\`}:e)},c=()=>s(e=>e.generation===t?{...e,kind:\`error\`}:e);return e.addEventListener(\`did-start-loading\`,n),e.addEventListener(\`did-stop-loading\`,i),e.addEventListener(\`did-finish-load\`,i),e.addEventListener(\`did-fail-load\`,a),e.addEventListener(\`render-process-gone\`,c),e.addEventListener(\`destroyed\`,c),i(),()=>{e.removeEventListener(\`did-start-loading\`,n),e.removeEventListener(\`did-stop-loading\`,i),e.removeEventListener(\`did-finish-load\`,i),e.removeEventListener(\`did-fail-load\`,a),e.removeEventListener(\`render-process-gone\`,c),e.removeEventListener(\`destroyed\`,c)}},[i,o.generation]);if(!i)return null;let c=e=>{if(e===\`chat\`)return;try{ooe(t,e===\`work\`?Zm:zoe)}finally{t.set(CodexDedicatedChatMode,!1)}},l=()=>s(e=>({kind:\`loading\`,generation:e.generation+1}));return(0,mz.jsxs)(\`section\`,{"aria-hidden":e?void 0:!0,"aria-modal":e?!0:void 0,"data-codex-dedicated-chat":\`true\`,role:e?\`dialog\`:void 0,style:{position:\`fixed\`,inset:0,zIndex:2147483000,display:\`flex\`,flexDirection:\`column\`,background:\`var(--main-surface-primary, #fff)\`,visibility:e?\`visible\`:\`hidden\`,pointerEvents:e?\`auto\`:\`none\`,opacity:e?1:0},children:[(0,mz.jsx)(\`header\`,{className:\`draggable flex h-toolbar w-full shrink-0 items-center border-b border-token-border bg-token-main-surface-primary pe-2\`,style:{paddingLeft:\`78px\`,minHeight:\`48px\`},children:(0,mz.jsx)(\`div\`,{className:\`no-drag min-w-0\`,children:(0,mz.jsx)(XDe,{mode:\`chat\`,onModeSelect:c})})}),(0,mz.jsxs)(\`div\`,{className:\`relative min-h-0 min-w-0 flex-1 overflow-hidden bg-token-main-surface-primary\`,children:[(0,mz.jsx)(\`webview\`,{ref:r,key:(n??\`\`)+\`:\`+o.generation,partition:\`${CHAT_PARTITION}\`,src:\`about:blank\`,"data-codex-chat-account-id":n??\`\`,className:\`block h-full w-full bg-token-main-surface-primary\`,style:{height:\`100%\`,width:\`100%\`}}),o.kind!==\`ready\`?(0,mz.jsx)(\`div\`,{className:\`absolute inset-0 flex items-center justify-center bg-token-main-surface-primary\`,children:o.kind===\`error\`?(0,mz.jsxs)(\`div\`,{className:\`flex max-w-md flex-col items-center gap-3 px-6 text-center\`,children:[(0,mz.jsx)(\`div\`,{className:\`text-base font-semibold\`,children:\`ChatGPT could not load\`}),(0,mz.jsx)(\`div\`,{className:\`text-sm text-token-description-foreground\`,children:\`Check your connection, then try again.\`}),(0,mz.jsx)(uu,{color:\`secondary\`,onClick:l,children:\`Try again\`})]}):(0,mz.jsx)(\`div\`,{className:\`text-sm text-token-description-foreground\`,children:\`Loading ChatGPT…\`})}):null]})]})}`.replaceAll("\\`", "`");
+const CHAT_HOME_WRAPPER = String.raw`/* ${PAGE_MARKER} */function CDRChatHome(){let{accountId:e}=u_(),t=Yc(),[n,r]=(0,h0.useState)(e),i=n!==e;(0,h0.useLayoutEffect)(()=>{i&&(t.removeQueries({type:\`inactive\`}),void t.resetQueries({type:\`active\`}),r(e))},[e,i,t]);let a=xy().status,o=Q(VS);if(i)return null;if((o??a)!==\`allowed\`)return(0,g0.jsx)(I1,{});return(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{chatMode:!0},"chat:"+(n??"anonymous"))})}`.replaceAll("\\`", "`");
 
-const WRAPPER_SOURCE_V2 = String.raw`function WAe(){let e=X(CodexDedicatedChatMode);return(0,mz.jsxs)(mz.Fragment,{children:[(0,mz.jsx)(\`div\`,{inert:e?\`\`:void 0,"aria-hidden":e?!0:void 0,style:{display:\`contents\`,visibility:e?\`hidden\`:\`visible\`,pointerEvents:e?\`none\`:\`auto\`},children:(0,mz.jsx)(CodexNativeShell,{})}),(0,mz.jsx)(CodexDedicatedChatSurface,{active:e})]})}`.replaceAll("\\`", "`");
+const CHAT_THEME = `\n/* ${CSS_MARKER} */\n` +
+  `:root[data-codex-product-mode=\"chat\"].electron-light{` +
+  `--color-background-surface:#f8f5ff;--vscode-sideBar-background:#eee8ff;` +
+  `--color-token-main-surface-primary:#f8f5ff;--color-token-side-bar-background:#eee8ff;` +
+  `--color-token-bg-primary:#eee8ff;--color-token-bg-secondary:#e6ddff;` +
+  `--color-background-accent:#7657d6;--color-background-accent-hover:#6848c8}` +
+  `:root[data-codex-product-mode=\"chat\"].electron-dark{` +
+  `--color-background-surface:#181421;--vscode-sideBar-background:#211a2f;` +
+  `--color-token-main-surface-primary:#181421;--color-token-side-bar-background:#211a2f;` +
+  `--color-token-bg-primary:#211a2f;--color-token-bg-secondary:#2a2140;` +
+  `--color-background-accent:#9d83f1;--color-background-accent-hover:#ad98f4}` +
+  `\n`;
 
-const MAIN_PERMISSION_SOURCE_V2 = String.raw`function CDR_CHAT_PERMISSION(e,t,n,r={}){if(t!==\`clipboard-sanitized-write\`)return!1;let i=r.requestingUrl??n??(e!=null&&!e.isDestroyed()?e.getURL():null);return MR(i)&&(r.embeddingOrigin==null||MR(r.embeddingOrigin))&&(r.securityOrigin==null||MR(r.securityOrigin))&&(e==null||!e.isDestroyed()&&MR(e.getURL()))}`.replaceAll("\\`", "`");
-const MAIN_HARDEN_SOURCE_V2 = String.raw`function CDR_CHAT_HARDEN(e,t){e.partition=CDR_CHAT_PARTITION,e.src=\`about:blank\`,delete e.preload,delete e.allowpopups,delete e.disablewebsecurity,delete e.webpreferences,t.session=CDR_CHAT_SESSION(),delete t.preload,Object.assign(t,{sandbox:!0,devTools:!1,nodeIntegration:!1,nodeIntegrationInSubFrames:!1,nodeIntegrationInWorker:!1,contextIsolation:!0,webSecurity:!0,allowRunningInsecureContent:!1,webviewTag:!1,plugins:!1,disablePopups:!0,spellcheck:!0})}`.replaceAll("\\`", "`");
-const MAIN_AUTH_SOURCE_V2 = String.raw`async function CDR_CHAT_AUTHENTICATE(e,t,n){await wR({accountId:n,getAuthToken:t,session:e.session,targetUrl:CDR_CHAT_HOME,webContents:e})}`.replaceAll("\\`", "`");
-const MAIN_INSTALL_SOURCE_V2 = String.raw`function CDR_CHAT_INSTALL({getAuthToken:e,owner:t}){let n=null,r=null,i=null,a=!1,o=(e,o,s)=>{if(!CDR_CHAT_PARAMS(s))return;if(a||n!=null||i!=null&&!i.isDestroyed()||s.src!==\`about:blank\`){e.preventDefault();return}try{let e=typeof s[\`data-codex-chat-account-id\`]===\`string\`&&s[\`data-codex-chat-account-id\`].length>0?s[\`data-codex-chat-account-id\`]:null;CDR_CHAT_HARDEN(s,o),n={accountId:e},r=setTimeout(()=>{n=null,r=null},3e4)}catch(t){e.preventDefault(),CDR_CHAT_LOG().warning(\`Rejected ChatGPT webview during hardening\`,{safe:{},sensitive:{error:t}})}},s=(t,o)=>{if(!CDR_CHAT_CONTENTS(o))return;let s=n;if(a||s==null||i!=null&&!i.isDestroyed()){o.isDestroyed()||o.close();return}n=null,r!=null&&clearTimeout(r),r=null,i=o;let l=CDR_CHAT_LOCK_NAVIGATION(o);o.once(\`destroyed\`,()=>{l(),i===o&&(i=null)}),CDR_CHAT_AUTHENTICATE(o,e,s.accountId).catch(e=>{CDR_CHAT_LOG().warning(\`Failed ChatGPT webview auth handoff\`,{safe:{},sensitive:{error:e}}),o.isDestroyed()||o.close()})},l=()=>{a||(a=!0,r!=null&&clearTimeout(r),t.removeListener(\`will-attach-webview\`,o),t.removeListener(\`did-attach-webview\`,s),t.removeListener(\`destroyed\`,l),i!=null&&!i.isDestroyed()&&i.close())};return t.on(\`will-attach-webview\`,o),t.on(\`did-attach-webview\`,s),t.on(\`destroyed\`,l),l}`.replaceAll("\\`", "`");
-
-const CHAT_SURFACE_SOURCE_V4 = CHAT_SURFACE_SOURCE_V2
-  .replace('"data-codex-chat-account-id":n??``,', "");
-const CHAT_SURFACE_SOURCE_V5 = CHAT_SURFACE_SOURCE_V4
-  .replace("i=()=>{try{String(e.getURL?.()", "u=()=>{try{String(e.getURL?.()")
-  .replaceAll("did-stop-loading`,i)", "did-stop-loading`,u)")
-  .replaceAll("did-finish-load`,i)", "did-finish-load`,u)")
-  .replace("),i(),()=>{", "),u(),()=>{");
-const CHAT_MENU_CLEARANCE_STYLE = `.codex-chat-mode-header:has(button[data-state="open"]){min-height:220px!important;align-items:flex-start;padding-top:8px}body:has([data-codex-dedicated-chat][role="dialog"])>div:has(>[role="menu"]){z-index:2147483647!important}`;
-const CHAT_SURFACE_SOURCE_V7 = CHAT_SURFACE_SOURCE_V5.replace(
-  "children:[(0,mz.jsx)(`header`,{className:`draggable flex",
-  `children:[(0,mz.jsx)(\`style\`,{children:\`${CHAT_MENU_CLEARANCE_STYLE}\`}),(0,mz.jsx)(\`header\`,{className:\`codex-chat-mode-header draggable flex`,
-);
-const MAIN_ACCOUNT_SOURCE_V3 = String.raw`function CDR_CHAT_ACCOUNT_ID(e){let t=e.split(\`.\`)[1];if(t==null)return null;try{let e=JSON.parse(Buffer.from(t,\`base64url\`).toString(\`utf8\`)),n=e?.[\`https://api.openai.com/auth\`],r=n?.chatgpt_account_id??n?.account_id;return typeof r===\`string\`&&r.length>0?r:null}catch{return null}}`.replaceAll("\\`", "`");
-const MAIN_AUTH_SOURCE_V3 = String.raw`async function CDR_CHAT_AUTHENTICATE(e,t){let n=await OR(t),r=CDR_CHAT_ACCOUNT_ID(n);await wR({accountId:r,getAuthToken:()=>Promise.resolve(n),session:e.session,targetUrl:CDR_CHAT_HOME,webContents:e})}`.replaceAll("\\`", "`");
-const MAIN_INSTALL_SOURCE_V3 = String.raw`function CDR_CHAT_INSTALL({getAuthToken:e,owner:t}){let n=!1,r=null,i=null,a=!1,o=(e,o,s)=>{if(!CDR_CHAT_PARAMS(s))return;if(a||n||i!=null&&!i.isDestroyed()||s.src!==\`about:blank\`){e.preventDefault();return}try{CDR_CHAT_HARDEN(s,o),n=!0,r=setTimeout(()=>{n=!1,r=null},3e4)}catch(t){e.preventDefault(),CDR_CHAT_LOG().warning(\`Rejected ChatGPT webview during hardening\`,{safe:{},sensitive:{error:t}})}},s=(t,o)=>{if(!CDR_CHAT_CONTENTS(o))return;if(a||!n||i!=null&&!i.isDestroyed()){o.isDestroyed()||o.close();return}n=!1,r!=null&&clearTimeout(r),r=null,i=o;let s=CDR_CHAT_LOCK_NAVIGATION(o);o.once(\`destroyed\`,()=>{s(),i===o&&(i=null)}),CDR_CHAT_AUTHENTICATE(o,e).catch(e=>{CDR_CHAT_LOG().warning(\`Failed ChatGPT webview auth handoff\`,{safe:{},sensitive:{error:e}}),o.isDestroyed()||o.close()})},l=()=>{a||(a=!0,r!=null&&clearTimeout(r),t.removeListener(\`will-attach-webview\`,o),t.removeListener(\`did-attach-webview\`,s),t.removeListener(\`destroyed\`,l),i!=null&&!i.isDestroyed()&&i.close())};return t.on(\`will-attach-webview\`,o),t.on(\`did-attach-webview\`,s),t.on(\`destroyed\`,l),l}`.replaceAll("\\`", "`");
-
-const MAIN_INSERTION = String.raw`
-/* ${MAIN_MARKER} */
-const CDR_CHAT_PARTITION=\`${CHAT_PARTITION}\`,CDR_CHAT_HOME=\`${"${hR}"}/\`,CDR_CHAT_LOG=r.a(\`chatgpt-live-webview\`),CDR_CHAT_CONFIGURED_SESSIONS=new WeakSet;
-function CDR_CHAT_PARAMS(e){return e.partition===CDR_CHAT_PARTITION}
-function CDR_CHAT_CONTENTS(e){return e.session===c.session.fromPartition(CDR_CHAT_PARTITION)}
-function CDR_CHAT_PERMISSION(e,t,n,r={}){if(t!==\`clipboard-sanitized-write\`&&t!==\`media\`)return!1;let i=r.requestingUrl??n??(e!=null&&!e.isDestroyed()?e.getURL():null);return MR(i)&&(r.embeddingOrigin==null||MR(r.embeddingOrigin))&&(r.securityOrigin==null||MR(r.securityOrigin))&&(e==null||!e.isDestroyed()&&MR(e.getURL()))}
-function CDR_CHAT_SESSION(){let e=c.session.fromPartition(CDR_CHAT_PARTITION);return CDR_CHAT_CONFIGURED_SESSIONS.has(e)||(e.setPermissionCheckHandler((e,t,n,r)=>CDR_CHAT_PERMISSION(e,t,n,r)),e.setPermissionRequestHandler((e,t,n,r)=>n(CDR_CHAT_PERMISSION(e,t,r?.requestingUrl,r))),e.webRequest.onBeforeRequest((e,t)=>t({cancel:e.resourceType===\`mainFrame\`&&e.url!==\`about:blank\`&&!MR(e.url)})),CDR_CHAT_CONFIGURED_SESSIONS.add(e)),e}
-function CDR_CHAT_HARDEN(e,t){e.partition=CDR_CHAT_PARTITION,e.src=\`about:blank\`,delete e.preload,delete e.allowpopups,delete e.disablewebsecurity,delete e.webpreferences,t.session=CDR_CHAT_SESSION(),delete t.preload,Object.assign(t,{sandbox:!0,devTools:!0,nodeIntegration:!1,nodeIntegrationInSubFrames:!1,nodeIntegrationInWorker:!1,contextIsolation:!0,webSecurity:!0,allowRunningInsecureContent:!1,webviewTag:!1,plugins:!1,disablePopups:!0,spellcheck:!0})}
-function CDR_CHAT_LOCK_NAVIGATION(e){let t=(t,n,r=!0)=>{r&&n!==\`about:blank\`&&!MR(n)&&t.preventDefault()},n=e=>t(e,e.url,e.isMainFrame),r=(e,n)=>t(e,e.url??n),i=(e,n)=>t(e,e.url??n);return e.on(\`will-frame-navigate\`,n),e.on(\`will-navigate\`,r),e.on(\`will-redirect\`,i),e.setWindowOpenHandler(({url:t})=>(MR(t)?e.loadURL(t).catch(e=>{CDR_CHAT_LOG().warning(\`Failed same-origin ChatGPT popup navigation\`,{safe:{},sensitive:{error:e}})}):Qz(t)&&LA({request:{openTarget:\`external-browser\`,url:t}}).catch(e=>{CDR_CHAT_LOG().warning(\`Failed external ChatGPT link\`,{safe:{},sensitive:{error:e}})}),{action:\`deny\`})),()=>{e.isDestroyed()||(e.removeListener(\`will-frame-navigate\`,n),e.removeListener(\`will-navigate\`,r),e.removeListener(\`will-redirect\`,i))}}
-async function CDR_CHAT_AUTHENTICATE(e,t){await kR(e,await OR(t)),e.isDestroyed()||await e.loadURL(CDR_CHAT_HOME)}
-function CDR_CHAT_INSTALL({getAuthToken:e,owner:t}){let n=!1,r=null,i=null,a=!1,o=(e,o,s)=>{if(!CDR_CHAT_PARAMS(s))return;if(a||n||i!=null&&!i.isDestroyed()||s.src!==\`about:blank\`){e.preventDefault();return}try{CDR_CHAT_HARDEN(s,o),n=!0,r=setTimeout(()=>{n=!1,r=null},1e4)}catch(t){e.preventDefault(),CDR_CHAT_LOG().warning(\`Rejected ChatGPT webview during hardening\`,{safe:{},sensitive:{error:t}})}},s=(t,o)=>{if(!CDR_CHAT_CONTENTS(o))return;if(a||!n||i!=null&&!i.isDestroyed()){o.isDestroyed()||o.close();return}n=!1,r!=null&&clearTimeout(r),r=null,i=o;let s=CDR_CHAT_LOCK_NAVIGATION(o);o.once(\`destroyed\`,()=>{s(),i===o&&(i=null)}),CDR_CHAT_AUTHENTICATE(o,e).catch(e=>{CDR_CHAT_LOG().warning(\`Failed ChatGPT webview auth handoff\`,{safe:{},sensitive:{error:e}}),o.isDestroyed()||o.close()})},l=()=>{a||(a=!0,r!=null&&clearTimeout(r),t.removeListener(\`will-attach-webview\`,o),t.removeListener(\`did-attach-webview\`,s),t.removeListener(\`destroyed\`,l),i!=null&&!i.isDestroyed()&&i.close())};return t.on(\`will-attach-webview\`,o),t.on(\`did-attach-webview\`,s),t.on(\`destroyed\`,l),l}
-`.replaceAll("\\`", "`");
-
-function replaceFunctions(source, bundlePath, replacements) {
-  const ast = parseBundle(source, bundlePath);
-  const patches = [];
-  for (const [name, replacement] of Object.entries(replacements)) {
-    const node = findFunction(ast, name, bundlePath);
-    patches.push({ start: node.start, end: node.end, replacement });
+function patchPage(source, bundlePath) {
+  if (source.includes(PAGE_MARKER)) {
+    verifyPage(source, bundlePath);
+    return { source, changed: false };
   }
-  return applyPatches(source, patches);
-}
-
-function upgradeRenderer(source, bundlePath, previousMarker) {
-  const withoutLegacyMarker = replaceExactly(
-    source,
-    `/* ${previousMarker} */`,
-    "",
-    `${relPath(bundlePath)} previous renderer marker`,
-  );
-  const code = replaceFunctions(withoutLegacyMarker, bundlePath, {
-    CodexDedicatedChatSurface: CHAT_SURFACE_SOURCE_V7,
-    WAe: WRAPPER_SOURCE_V2,
-  });
-  verifyRenderer(code, bundlePath);
-  return code;
-}
-
-function installCurrentMainFunctions(source, bundlePath, { previousMarker = null } = {}) {
-  let code = replaceFunctions(source, bundlePath, {
-    CDR_CHAT_PERMISSION: MAIN_PERMISSION_SOURCE_V2,
-    CDR_CHAT_HARDEN: MAIN_HARDEN_SOURCE_V2,
-    CDR_CHAT_AUTHENTICATE: MAIN_AUTH_SOURCE_V3,
-    CDR_CHAT_INSTALL: MAIN_INSTALL_SOURCE_V3,
-  });
-  if (code.includes("function CDR_CHAT_ACCOUNT_ID(")) {
-    code = replaceFunctions(code, bundlePath, {
-      CDR_CHAT_ACCOUNT_ID: MAIN_ACCOUNT_SOURCE_V3,
-    });
-  } else {
-    const ast = parseBundle(code, bundlePath);
-    const params = findFunction(ast, "CDR_CHAT_PARAMS", bundlePath);
-    code = code.slice(0, params.end) + MAIN_ACCOUNT_SOURCE_V3 + code.slice(params.end);
+  for (const legacy of [
+    "codex-rebuild:dedicated-chat-mode-v7",
+    "persist:codex-chatgpt-live",
+    "CodexDedicatedChatSurface",
+  ]) {
+    if (source.includes(legacy)) {
+      throw new Error(`${relPath(bundlePath)} contains legacy webview Chat code; resync upstream first`);
+    }
   }
-  if (previousMarker != null) {
-    code = replaceExactly(
-      code,
-      previousMarker,
-      MAIN_MARKER,
-      `${relPath(bundlePath)} previous main marker`,
+  for (const name of ["ROe", "NOe", "MOe", "mje", "IAe", "eAe", "OL", "Fke", "Uke", "JUe"]) {
+    findFunction(parseBundle(source, bundlePath), name, bundlePath);
+  }
+  let code = replaceFunction(source, "ROe", SELECTOR_SOURCE, bundlePath);
+  code = replaceFunction(code, "NOe", NEW_CHAT_SOURCE, bundlePath);
+  code = replaceFunction(code, "Uke", PROJECT_CHAT_ROW_SOURCE, bundlePath);
+
+  code = transformFunction(code, "MOe", (body) => {
+    let next = body;
+    next = replaceExactly(next, "b?(0,XF.jsx)", "r!==`chat`&&b?(0,XF.jsx)", "Chat Library visibility");
+    next = replaceExactly(next, "_&&v!==`project`?(0,XF.jsx)(FOe", "r!==`chat`&&_&&v!==`project`?(0,XF.jsx)(FOe", "Chat Projects nav visibility");
+    next = replaceExactly(next, "t&&(r===`codex`||l)?", "t&&r!==`chat`&&(r===`codex`||l)?", "Chat Skills visibility");
+    next = replaceExactly(next, "x?(0,XF.jsx)(yf", "r!==`chat`&&x?(0,XF.jsx)(yf", "Chat Pull Requests visibility");
+    next = replaceExactly(next, "_?null:(0,XF.jsx)(hOe", "r===`chat`||_?null:(0,XF.jsx)(hOe", "Chat fallback Projects visibility");
+    next = replaceExactly(next, "(0,XF.jsx)(fOe,{})", "r===`chat`?null:(0,XF.jsx)(fOe,{})", "Chat external tool nav visibility");
+    next = replaceExactly(next, "r===`codex`&&n?(0,XF.jsx)(cOe,{}):null", "null", "standalone Quick Chat row removal");
+    return next;
+  }, bundlePath);
+
+  code = transformFunction(code, "mje", (body) => {
+    let next = replaceExactly(
+      body,
+      "a=md(X),{accountId:o}=u_(),",
+      "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatMode=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`;(0,rz.useEffect)(()=>{let e=document.documentElement;return CDRChatMode?e.setAttribute(`data-codex-product-mode`,`chat`):e.removeAttribute(`data-codex-product-mode`),()=>{e.removeAttribute(`data-codex-product-mode`)}},[CDRChatMode]);let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ",
+      "Chat route state",
     );
-  }
-  return code;
-}
+    next = replaceExactly(next, "I=j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`", "I=CDRChatMode?`chat`:(j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`)", "Chat selected mode");
+    next = replaceExactly(
+      next,
+      "let B=z,V;t[16]!==i||t[17]!==r?(V=(0,iz.jsx)(MOe,{chatGptProjectCrudStatus:void 0,desktopNavItemsEnabled:i,quickChatEnabled:r,sidebarMode:`codex`}),t[16]=i,t[17]=r,t[18]=V):V=t[18];",
+      "let B=z,V=(0,iz.jsx)(MOe,{chatGptProjectCrudStatus:void 0,desktopNavItemsEnabled:i,quickChatEnabled:r,sidebarMode:CDRChatMode?`chat`:`codex`});",
+      "Chat nav mode",
+    );
+    next = replaceExactly(
+      next,
+      "let ae;t[30]!==u||t[31]!==I||t[32]!==a?(ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{Iee(a,e===`work`?vf:Tr)}}),(0,iz.jsx)(vOe,{})]}):null,t[30]=u,t[31]=I,t[32]=a,t[33]=ae):ae=t[33];",
+      "let ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{if(e===`chat`){CDRChatNavigate(`/chat?mode=chat`);return}Iee(a,e===`work`?vf:Tr),CDRChatMode&&CDRChatNavigate(`/`)}}),(0,iz.jsx)(vOe,{})]}):null;",
+      "Chat mode selection",
+    );
+    next = replaceExactly(next, "K=(0,iz.jsx)(NOe,{showSearchNavItem:oe})", "K=(0,iz.jsx)(NOe,{showSearchNavItem:oe,chatMode:CDRChatMode})", "Chat new button");
+    next = replaceExactly(
+      next,
+      "let ce;t[40]!==k||t[41]!==ee?(ce=(0,iz.jsx)(IAe,{onScrolledContentUnderHeaderChange:k,scrollContainerRef:g,sidebarMode:`codex`,topContent:ee}),t[40]=k,t[41]=ee,t[42]=ce):ce=t[42];",
+      "let CDRChatSidebarNode=CDRChatMode&&CDRChatAccountChanging?null:(0,iz.jsx)(IAe,{onScrolledContentUnderHeaderChange:k,scrollContainerRef:g,sidebarMode:CDRChatMode?`chat`:`codex`,topContent:ee,chatMode:CDRChatMode},CDRChatMode?`chat:${CDRChatSettledAccount??`anonymous`}`:`codex`);",
+      "Chat history sidebar",
+    );
+    next = replaceExactly(
+      next,
+      "let le;t[43]!==ne||t[44]!==se||t[45]!==ce?(le=(0,iz.jsxs)(`nav`,{className:`sidebar-foreground-muted flex min-h-0 flex-1 flex-col`,role:`navigation`,\"aria-label\":ne,children:[se,ce]}),t[43]=ne,t[44]=se,t[45]=ce,t[46]=le):le=t[46];",
+      "let le=(0,iz.jsxs)(`nav`,{className:`sidebar-foreground-muted flex min-h-0 flex-1 flex-col`,role:`navigation`,\"aria-label\":ne,children:[se,CDRChatSidebarNode]});",
+      "Chat account-keyed navigation",
+    );
+    return next;
+  }, bundlePath);
 
-function patchRenderer(source, bundlePath) {
-  if (source.includes(RENDERER_MARKER)) {
-    verifyRenderer(source, bundlePath);
-    return { source, changed: false };
-  }
-  const previousRendererMarker = source.includes(V6_RENDERER_MARKER)
-    ? V6_RENDERER_MARKER
-    : source.includes(V5_RENDERER_MARKER)
-      ? V5_RENDERER_MARKER
-      : source.includes(V4_RENDERER_MARKER)
-        ? V4_RENDERER_MARKER
-        : source.includes(V3_RENDERER_MARKER)
-          ? V3_RENDERER_MARKER
-          : source.includes(V2_RENDERER_MARKER)
-            ? V2_RENDERER_MARKER
-            : source.includes(LEGACY_RENDERER_MARKER)
-              ? LEGACY_RENDERER_MARKER
-              : null;
-  if (previousRendererMarker != null) {
-    return {
-      source: upgradeRenderer(source, bundlePath, previousRendererMarker),
-      changed: true,
-    };
-  }
-  for (const identifier of ["CodexDedicatedChatMode", "CodexDedicatedChatSurface", "CodexNativeShell"]) {
-    if (source.includes(identifier)) {
-      throw new Error(`${relPath(bundlePath)} has an unexpected ${identifier} collision`);
-    }
-  }
+  code = transformFunction(code, "IAe", (body) => {
+    let next = replaceExactly(body, "function IAe({onScrolledContentUnderHeaderChange:e,scrollContainerRef:t,sidebarMode:n,topContent:r})", "function IAe({onScrolledContentUnderHeaderChange:e,scrollContainerRef:t,sidebarMode:n,topContent:r,chatMode:CDRChatMode=!1})", "Chat IAe prop");
+    next = replaceExactly(next, "F=l===`STEPS_PROSE`?`work`:`codex`", "F=CDRChatMode?`chat`:l===`STEPS_PROSE`?`work`:`codex`", "Chat scroll namespace");
+    next = replaceExactly(next, ",!f&&(h?T.isWorkspaceRootOptionsLoading:v))", ",!CDRChatMode&&!f&&(h?T.isWorkspaceRootOptionsLoading:v))", "Chat history loading gate");
+    next = replaceExactly(next, ",R;if(m)R=[(0,yR.jsx)(eAe,{},`unified`)];", ",R;if(CDRChatMode)R=[(0,yR.jsx)(eAe,{chatMode:!0},`chat`)];else if(m)R=[(0,yR.jsx)(eAe,{},`unified`)];", "Chat unified history branch");
+    return next;
+  }, bundlePath);
 
-  const ast = parseBundle(source, bundlePath);
-  const selector = findFunction(ast, "XDe", bundlePath);
-  const sidebar = findFunction(ast, "WDe", bundlePath);
-  const shell = findFunction(ast, "WAe", bundlePath);
-  const sidebarSource = source.slice(sidebar.start, sidebar.end);
-  const shellSource = source.slice(shell.start, shell.end);
+  code = transformFunction(code, "eAe", (body) => {
+    let next = replaceExactly(body, "function eAe(){", "function eAe({chatMode:CDRChatMode=!1}={}){", "Chat history prop");
+    next = replaceExactly(
+      next,
+      "T=(0,AL.useContext)(oC),E=Jhe({tppOnly:!0}),D=",
+      "T=(0,AL.useContext)(oC),CDRChatSource=Jhe({tppOnly:!CDRChatMode}),E=CDRChatMode?{...CDRChatSource,chatTargets:CDRChatSource.chatTargets.map(e=>({...e,route:`${e.route}?mode=chat`})),pinnedTargets:CDRChatSource.pinnedTargets.map(e=>({...e,route:`${e.route}?mode=chat`}))}:CDRChatSource,D=",
+      "non-TPP Chat history source",
+    );
+    next = replaceExactly(
+      next,
+      "...E.pinnedProjects.map(e=>({key:xE(e.gizmo.id),kind:`project`,pinned:!0,source:`chatgpt`})),...E.chatTargets.map",
+      "...E.pinnedProjects.map(e=>({key:xE(e.gizmo.id),kind:`project`,pinned:!0,source:`chatgpt`})),...E.visibleProjects.map(e=>({key:xE(e.gizmo.id),kind:`project`,pinned:!1,source:`chatgpt`})),...E.chatTargets.map",
+      "Chat project ordering",
+    );
+    next = replaceExactly(
+      next,
+      "...E.pinnedProjects.map(e=>[xE(e.gizmo.id),{source:`chatgpt`,isPinned:!0,project:e}])]),P=",
+      "...E.pinnedProjects.map(e=>[xE(e.gizmo.id),{source:`chatgpt`,isPinned:!0,project:e}]),...E.visibleProjects.map(e=>[xE(e.gizmo.id),{source:`chatgpt`,isPinned:!1,project:e}])]),P=",
+      "Chat project map",
+    );
+    next = replaceExactly(
+      next,
+      "source:`all`}),M=new Map",
+      "source:`all`});if(CDRChatMode){let e=e=>e.startsWith(`chatgpt:`);j={...j,chatKeys:[...E.visibleProjects.map(e=>xE(e.gizmo.id)),...j.chatKeys].filter(e),pinnedKeys:j.pinnedKeys.filter(e)}}let M=new Map",
+      "Chat-only history keys",
+    );
+    next = replaceExactly(next, "heading:`Tasks`", "heading:CDRChatMode?`Chats`:`Tasks`", "Chat history heading");
+    next = replaceExactly(next, "allowCodexThreadProjectDrag:!0", "allowCodexThreadProjectDrag:!CDRChatMode", "Chat drag isolation");
+    next = replaceExactly(next, "chatGptSource:E,codexProjectKindByThreadKey:k", "chatGptSource:E,chatMode:CDRChatMode,codexProjectKindByThreadKey:k", "Chat project row mode", 2);
+    next = replaceExactly(next, "te;switch(u){", "te;if(CDRChatMode)te=G;else switch(u){", "Chat-only history section");
+    return next;
+  }, bundlePath);
 
-  let patchedSidebar = replaceExactly(
-    sidebarSource,
-    "r===`codex`&&n?(0,RF.jsx)(bDe,{}):null",
-    "null",
-    `${relPath(bundlePath)} old sidebar Chat row`,
-  );
-  let renamedShell = replaceExactly(
-    shellSource,
-    "function WAe()",
-    "function CodexNativeShell()",
-    `${relPath(bundlePath)} shell declaration`,
-  );
+  code = transformFunction(code, "OL", (body) => {
+    let next = replaceExactly(body, "chatGptSource:r,codexProjectKindByThreadKey:i", "chatGptSource:r,chatMode:CDRChatMode=!1,codexProjectKindByThreadKey:i", "Chat OL prop");
+    next = replaceExactly(next, "let R;t[35]!==r||t[36]!==a||t[37]!==c||t[38]!==u||t[39]!==d||t[40]!==_||t[41]!==y?(R=", "let R=", "Chat project renderer cache start");
+    next = replaceExactly(next, "},t[35]=r,t[36]=a,t[37]=c,t[38]=u,t[39]=d,t[40]=_,t[41]=y,t[42]=R):R=t[42];", "};", "Chat project renderer cache end");
+    next = replaceExactly(next, "activeServerConversationId:r.activeServerConversationId,expandable:!0", "activeServerConversationId:r.activeServerConversationId,chatMode:CDRChatMode,expandable:!0", "Chat expandable project mode");
+    return next;
+  }, bundlePath);
 
-  let code = applyPatches(source, [
-    { start: selector.start, end: selector.end, replacement: SELECTOR_SOURCE },
-    { start: sidebar.start, end: sidebar.end, replacement: patchedSidebar },
-    {
-      start: shell.start,
-      end: shell.end,
-      replacement: `${CHAT_SURFACE_SOURCE_V7}${renamedShell}${WRAPPER_SOURCE_V2}`,
-    },
-  ]);
+  code = transformFunction(code, "Fke", (body) => {
+    let next = replaceExactly(body, "activeServerConversationId:i,expandable:a", "activeServerConversationId:i,chatMode:CDRChatMode=!1,expandable:a", "Chat Fke prop");
+    next = replaceExactly(
+      next,
+      "let s;t[52]!==n||t[53]!==i?(s=e=>(0,sL.jsx)(Uke,{activeConversationId:n,activeServerConversationId:i,item:e}),t[52]=n,t[53]=i,t[54]=s):s=t[54];",
+      "let s=e=>(0,sL.jsx)(Uke,{activeConversationId:n,activeServerConversationId:i,item:e,chatMode:CDRChatMode});",
+      "nested Chat project conversation route",
+    );
+    return next;
+  }, bundlePath);
 
+  const ju = findFunction(parseBundle(code, bundlePath), "JUe", bundlePath);
+  code = code.slice(0, ju.end) + CHAT_HOME_WRAPPER + code.slice(ju.end);
   code = replaceExactly(
     code,
-    "UF,WF=e((()=>{$(),at(),UF=Pt(q,!1)}));",
-    "UF,CodexDedicatedChatMode,WF=e((()=>{$(),at(),UF=Pt(q,!1),CodexDedicatedChatMode=Pt(q,!1)}));",
-    `${relPath(bundlePath)} dedicated Chat atom`,
+    "(0,g0.jsx)(Lt,{path:`/`,element:(0,g0.jsx)(JUe,{})}),",
+    "(0,g0.jsx)(Lt,{path:`/`,element:(0,g0.jsx)(JUe,{})}),(0,g0.jsx)(Lt,{path:`/chat`,element:(0,g0.jsx)(CDRChatHome,{})}),",
+    "Chat home route",
   );
-  code = replaceExactly(
-    code,
-    "u=Xm(`824038554`)",
-    "u=(Xm(`824038554`),!0)",
-    `${relPath(bundlePath)} product-mode feature gate`,
-  );
-  code = replaceExactly(
-    code,
-    "let k=gg(O),A=Rh(),j=br(Qe.conversationDetailMode)",
-    "let k=gg(O),CodexChatActive=X(CodexDedicatedChatMode),A=Rh(),j=br(Qe.conversationDetailMode)",
-    `${relPath(bundlePath)} Chat mode hook`,
-  );
-  code = replaceExactly(
-    code,
-    "I=j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`",
-    "I=CodexChatActive?`chat`:(j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`)",
-    `${relPath(bundlePath)} selected product mode`,
-  );
-  code = replaceExactly(
-    code,
-    "onModeSelect:e=>{ooe(a,e===`work`?Zm:zoe)}",
-    "onModeSelect:e=>{if(e===`chat`){a.set(CodexDedicatedChatMode,!0);return}a.set(CodexDedicatedChatMode,!1),ooe(a,e===`work`?Zm:zoe)}",
-    `${relPath(bundlePath)} product-mode selection callback`,
-  );
-
-  verifyRenderer(code, bundlePath);
+  verifyPage(code, bundlePath);
   return { source: code, changed: true };
 }
 
-function patchMain(source, bundlePath) {
-  if (source.includes(MAIN_MARKER)) {
-    verifyMain(source, bundlePath);
+function patchWorkHome(source, bundlePath) {
+  if (source.includes(HOME_MARKER)) {
+    verifyWorkHome(source, bundlePath);
     return { source, changed: false };
   }
-  const previousMainMarker = source.includes(V6_MAIN_MARKER)
-    ? V6_MAIN_MARKER
-    : source.includes(V5_MAIN_MARKER)
-      ? V5_MAIN_MARKER
-      : source.includes(V4_MAIN_MARKER)
-        ? V4_MAIN_MARKER
-        : source.includes(V3_MAIN_MARKER)
-          ? V3_MAIN_MARKER
-          : source.includes(V2_MAIN_MARKER)
-            ? V2_MAIN_MARKER
-            : source.includes(LEGACY_MAIN_MARKER)
-              ? LEGACY_MAIN_MARKER
-              : null;
-  if (previousMainMarker != null) {
-    const code = installCurrentMainFunctions(source, bundlePath, {
-      previousMarker: previousMainMarker,
-    });
-    verifyMain(code, bundlePath);
-    return { source: code, changed: true };
-  }
-  for (const identifier of ["CDR_CHAT_PARTITION", "CDR_CHAT_INSTALL", "CDR_CHAT_HARDEN"]) {
-    if (source.includes(identifier)) {
-      throw new Error(`${relPath(bundlePath)} has an unexpected ${identifier} collision`);
-    }
-  }
-  parseBundle(source, bundlePath);
-  let code = replaceExactly(
-    source,
-    "function MR(e){try{return new URL(e).origin===hR}catch{return!1}}",
-    `function MR(e){try{return new URL(e).origin===hR}catch{return!1}}${MAIN_INSERTION}`,
-    `${relPath(bundlePath)} ChatGPT-origin helper`,
-  );
-  code = replaceExactly(
-    code,
-    "if(n.Ba(s.partition)!=null||oz(s))return",
-    "if(n.Ba(s.partition)!=null||oz(s)||CDR_CHAT_PARAMS(s))return",
-    `${relPath(bundlePath)} Browser will-attach exclusion`,
-  );
-  code = replaceExactly(
-    code,
-    "if(Zz(n.session)||sz(n))return",
-    "if(Zz(n.session)||sz(n)||CDR_CHAT_CONTENTS(n))return",
-    `${relPath(bundlePath)} Browser did-attach exclusion`,
-  );
-  code = replaceExactly(
-    code,
-    "o===`primary`&&cz({",
-    "o===`primary`&&(cz({",
-    `${relPath(bundlePath)} primary checkout manager`,
-  );
-  code = replaceExactly(
-    code,
-    "onReturnToCodex:()=>{N.isDestroyed()||N.send(B,{type:`navigate-back`})},owner:N}))",
-    "onReturnToCodex:()=>{N.isDestroyed()||N.send(B,{type:`navigate-back`})},owner:N}),CDR_CHAT_INSTALL({getAuthToken:this.options.getChatGptWebviewAuthToken,owner:N})))",
-    `${relPath(bundlePath)} primary Chat manager install`,
-  );
-  code = installCurrentMainFunctions(code, bundlePath);
-  verifyMain(code, bundlePath);
+  let code = transformFunction(source, "j", (body) => {
+    let next = replaceExactly(body, "let{announcementStorybookOverride:i}=r", "let{announcementStorybookOverride:i,chatMode:CDRChatMode=!1}=r", "Chat home prop");
+    next = replaceExactly(
+      next,
+      "J;t[41]===s?J=t[42]:(J=e=>{s(ne(e),{replace:!0})},t[41]=s,t[42]=J);",
+      "J=e=>{s(`${ne(e)}${CDRChatMode?`?mode=chat`:``}`,{replace:!0})};",
+      "Chat submit route",
+    );
+    next = replaceExactly(next, "conversationOrigin:`tpp`", "conversationOrigin:CDRChatMode?null:`tpp`", "non-TPP Chat model source");
+    return next;
+  }, bundlePath);
+  code = replaceExactly(code, "function j(e){", `/* ${HOME_MARKER} */function j(e){`, "Chat home marker");
+  verifyWorkHome(code, bundlePath);
   return { source: code, changed: true };
 }
 
-function verifyRenderer(source, bundlePath) {
-  const ast = parseBundle(source, bundlePath);
-  for (const [marker, expected] of [[RENDERER_MARKER, 1], [CHAT_PARTITION, 1]]) {
-    const count = countOccurrences(source, marker);
-    if (count !== expected) {
-      throw new Error(`${relPath(bundlePath)} expected ${expected} ${marker}, found ${count}`);
-    }
+function patchCss(source, bundlePath) {
+  if (source.includes(CSS_MARKER)) {
+    verifyCss(source, bundlePath);
+    return { source, changed: false };
   }
-  for (const name of ["XDe", "WDe", "WAe", "CodexNativeShell", "CodexDedicatedChatSurface"]) {
+  if (!source.includes("--color-token-main-surface-primary") || !source.includes(".electron-dark")) {
+    throw new Error(`${relPath(bundlePath)} is not the expected global theme bundle`);
+  }
+  const code = source + CHAT_THEME;
+  verifyCss(code, bundlePath);
+  return { source: code, changed: true };
+}
+
+function verifyPage(source, bundlePath) {
+  const ast = parseBundle(source, bundlePath);
+  if (countOccurrences(source, PAGE_MARKER) !== 1) throw new Error(`${relPath(bundlePath)} Chat page marker invalid`);
+  for (const name of ["ROe", "NOe", "MOe", "mje", "IAe", "eAe", "OL", "Fke", "Uke", "CDRChatHome"]) {
     findFunction(ast, name, bundlePath);
   }
-  const selectorNode = findFunction(ast, "XDe", bundlePath);
-  const selectorSource = source.slice(selectorNode.start, selectorNode.end);
-  if (!selectorSource.includes("children:[o,s,c]") || !selectorSource.includes("onSelect:()=>t(`chat`)")) {
-    throw new Error(`${relPath(bundlePath)} three-way mode selector verification failed`);
-  }
-  if (!source.includes("CodexChatActive?`chat`:") || !source.includes("a.set(CodexDedicatedChatMode,!0)")) {
-    throw new Error(`${relPath(bundlePath)} dedicated Chat atom wiring verification failed`);
-  }
-  const sidebar = findFunction(ast, "WDe", bundlePath);
-  if (source.slice(sidebar.start, sidebar.end).includes("(bDe,{}")) {
-    throw new Error(`${relPath(bundlePath)} still renders the old sidebar Chat row`);
-  }
-  if (!source.includes("function bDe()")) {
-    throw new Error(`${relPath(bundlePath)} unexpectedly removed Quick Chat internals`);
-  }
-  if (source.includes("ooe(a,e===`chat`") || source.includes("ooe(t,e===`chat`")) {
-    throw new Error(`${relPath(bundlePath)} incorrectly routes Chat through conversationDetailMode`);
-  }
-  const surface = findFunction(ast, "CodexDedicatedChatSurface", bundlePath);
-  const surfaceSource = source.slice(surface.start, surface.end);
-  for (const required of [
-    `partition:\`${CHAT_PARTITION}\``,
-    "src:`about:blank`",
-    "visibility:e?`visible`:`hidden`",
-    "XDe,{mode:`chat`",
-    "generation:e.generation+1",
-    "e.isMainFrame===!0",
-  ]) {
-    if (!surfaceSource.includes(required)) {
-      throw new Error(`${relPath(bundlePath)} Chat surface is missing ${required}`);
-    }
-  }
-  for (const forbidden of ["preload:", "allowpopups", "webpreferences"] ) {
-    if (surfaceSource.includes(forbidden)) {
-      throw new Error(`${relPath(bundlePath)} Chat surface contains forbidden ${forbidden}`);
-    }
-  }
-  if (surfaceSource.includes("data-codex-chat-account-id")) {
-    throw new Error(`${relPath(bundlePath)} Chat surface contains an untrusted account transport`);
-  }
-  if (
-    !surfaceSource.includes("{accountId:n}=VC()") ||
-    !surfaceSource.includes("key:(n??``)+`:`+o.generation")
-  ) {
-    throw new Error(`${relPath(bundlePath)} Chat account-change remount verification failed`);
-  }
-  if (
-    !surfaceSource.includes("u=()=>{try{String(e.getURL?.()") ||
-    surfaceSource.includes("i=()=>{try{String(e.getURL?.()")
-  ) {
-    throw new Error(`${relPath(bundlePath)} Chat load callback shadows its state binding`);
-  }
-  if (!surfaceSource.includes(CHAT_MENU_CLEARANCE_STYLE)) {
-    throw new Error(`${relPath(bundlePath)} Chat mode selector lacks webview menu clearance`);
-  }
-  const wrapper = findFunction(ast, "WAe", bundlePath);
-  const wrapperSource = source.slice(wrapper.start, wrapper.end);
-  if (
-    wrapperSource.includes("display:e?`none`") ||
-    !wrapperSource.includes("display:`contents`") ||
-    !wrapperSource.includes("visibility:e?`hidden`:`visible`")
-  ) {
-    throw new Error(`${relPath(bundlePath)} native shell retention verification failed`);
-  }
-}
-
-function staticPropertyName(node) {
-  if (node?.type === "Identifier") return node.name;
-  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
-  return null;
-}
-
-function staticBoolean(node) {
-  if (node?.type === "Literal" && typeof node.value === "boolean") return node.value;
-  if (
-    node?.type === "UnaryExpression" &&
-    node.operator === "!" &&
-    node.argument?.type === "Literal"
-  ) {
-    return !node.argument.value;
-  }
-  return null;
-}
-
-function hardeningOptions(ast, bundlePath) {
-  const hardenNode = findFunction(ast, "CDR_CHAT_HARDEN", bundlePath);
-  const assignments = [];
-  walk(hardenNode.body, (node) => {
-    if (
-      node.type === "CallExpression" &&
-      node.callee?.type === "MemberExpression" &&
-      node.callee.object?.type === "Identifier" &&
-      node.callee.object.name === "Object" &&
-      staticPropertyName(node.callee.property) === "assign" &&
-      node.arguments?.[0]?.type === "Identifier" &&
-      node.arguments[0].name === "t" &&
-      node.arguments?.[1]?.type === "ObjectExpression"
-    ) {
-      assignments.push(node.arguments[1]);
-    }
-  });
-  if (assignments.length !== 1) {
-    throw new Error(`${relPath(bundlePath)} expected one hardening Object.assign, found ${assignments.length}`);
-  }
-  const options = new Map();
-  for (const property of assignments[0].properties) {
-    if (property.type !== "Property") continue;
-    options.set(staticPropertyName(property.key), staticBoolean(property.value));
-  }
-  return options;
-}
-
-function verifyMain(source, bundlePath) {
-  const ast = parseBundle(source, bundlePath);
-  if (countOccurrences(source, MAIN_MARKER) !== 1) {
-    throw new Error(`${relPath(bundlePath)} main marker count is not one`);
-  }
-  const harden = source.slice(
-    findFunction(ast, "CDR_CHAT_HARDEN", bundlePath).start,
-    findFunction(ast, "CDR_CHAT_HARDEN", bundlePath).end,
-  );
-  const session = source.slice(
-    findFunction(ast, "CDR_CHAT_SESSION", bundlePath).start,
-    findFunction(ast, "CDR_CHAT_SESSION", bundlePath).end,
-  );
-  const authenticate = source.slice(
-    findFunction(ast, "CDR_CHAT_AUTHENTICATE", bundlePath).start,
-    findFunction(ast, "CDR_CHAT_AUTHENTICATE", bundlePath).end,
-  );
-  if (harden !== MAIN_HARDEN_SOURCE_V2) {
-    throw new Error(`${relPath(bundlePath)} Chat hardening function differs from the audited source`);
-  }
-  if (!harden.includes("delete e.preload") || !harden.includes("delete t.preload")) {
-    throw new Error(`${relPath(bundlePath)} Chat preload deletion verification failed`);
-  }
-  const expectedOptions = new Map([
-    ["sandbox", true],
-    ["devTools", false],
-    ["nodeIntegration", false],
-    ["nodeIntegrationInSubFrames", false],
-    ["nodeIntegrationInWorker", false],
-    ["contextIsolation", true],
-    ["webSecurity", true],
-    ["allowRunningInsecureContent", false],
-    ["webviewTag", false],
-    ["plugins", false],
-    ["disablePopups", true],
-  ]);
-  const actualOptions = hardeningOptions(ast, bundlePath);
-  for (const [name, expected] of expectedOptions) {
-    if (actualOptions.get(name) !== expected) {
-      throw new Error(`${relPath(bundlePath)} Chat hardening option ${name} must be ${expected}`);
-    }
-  }
-  if (!session.includes("e.resourceType===`mainFrame`") || !session.includes("!MR(e.url)")) {
-    throw new Error(`${relPath(bundlePath)} Chat session main-frame origin guard is missing`);
-  }
-  if (authenticate !== MAIN_AUTH_SOURCE_V3) {
-    throw new Error(`${relPath(bundlePath)} Chat auth handoff verification failed`);
-  }
-  const accountNode = findFunction(ast, "CDR_CHAT_ACCOUNT_ID", bundlePath);
-  const accountSource = source.slice(accountNode.start, accountNode.end);
-  if (accountSource !== MAIN_ACCOUNT_SOURCE_V3) {
-    throw new Error(`${relPath(bundlePath)} trusted token account binding verification failed`);
-  }
-  const permissionNode = findFunction(ast, "CDR_CHAT_PERMISSION", bundlePath);
-  const permissionSource = source.slice(permissionNode.start, permissionNode.end);
-  if (permissionSource !== MAIN_PERMISSION_SOURCE_V2) {
-    throw new Error(`${relPath(bundlePath)} Chat permission allowlist verification failed`);
-  }
-  const installNode = findFunction(ast, "CDR_CHAT_INSTALL", bundlePath);
-  const installSource = source.slice(installNode.start, installNode.end);
-  if (installSource !== MAIN_INSTALL_SOURCE_V3) {
-    throw new Error(`${relPath(bundlePath)} Chat attach lifecycle verification failed`);
-  }
   const required = [
-    `CDR_CHAT_PARTITION=\`${CHAT_PARTITION}\``,
-    "||CDR_CHAT_PARAMS(s))return",
-    "||CDR_CHAT_CONTENTS(n))return",
-    "CDR_CHAT_INSTALL({getAuthToken:this.options.getChatGptWebviewAuthToken,owner:N})",
+    "onSelect:()=>t(`chat`)",
+    "path:`/chat`",
+    "Jhe({tppOnly:!CDRChatMode})",
+    "visibleProjects.map",
+    "route:`${e.route}?mode=chat`",
+    "sidebarMode:CDRChatMode?`chat`:`codex`",
+    "data-codex-product-mode",
+    "allowCodexThreadProjectDrag:!CDRChatMode",
+    "CDRChatQueryClient.removeQueries({type:`inactive`})",
+    "CDRChatQueryClient.resetQueries({type:`active`})",
+    "CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`})",
+    "CDRChatMode&&CDRChatAccountChanging?null:",
+    "CDRChatMode?`chat:${CDRChatSettledAccount??`anonymous`}`:`codex`",
+    'if(i)return null;',
+    '"chat:"+(n??"anonymous")',
+    "chatMode:CDRChatMode,expandable:!0",
+    "item:e,chatMode:CDRChatMode",
+    "CDRChatRoute=e=>CDRChatMode?",
   ];
   for (const item of required) {
-    if (!source.includes(item)) {
-      throw new Error(`${relPath(bundlePath)} Chat main-process verification missing ${item}`);
-    }
+    if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing native Chat invariant: ${item}`);
   }
-  if (countOccurrences(source, "CDR_CHAT_INSTALL({getAuthToken:this.options.getChatGptWebviewAuthToken,owner:N})") !== 1) {
-    throw new Error(`${relPath(bundlePath)} Chat manager install count is not one`);
+  if (source.includes("persist:codex-chatgpt-live") || source.includes("CodexDedicatedChatSurface")) {
+    throw new Error(`${relPath(bundlePath)} still contains legacy webview Chat code`);
+  }
+  const modeFunction = source.slice(findFunction(ast, "mje", bundlePath).start, findFunction(ast, "mje", bundlePath).end);
+  if (/Iee\([^)]*,\s*e===`chat`/.test(modeFunction)) {
+    throw new Error(`${relPath(bundlePath)} routes Chat through conversationDetailMode`);
+  }
+  if (modeFunction.includes("let ce;")) {
+    throw new Error(`${relPath(bundlePath)} shadows the Chat route hook with a sidebar cache binding`);
+  }
+  const projectRow = source.slice(findFunction(ast, "Uke", bundlePath).start, findFunction(ast, "Uke", bundlePath).end);
+  if (countOccurrences(projectRow, "CDRChatRoute(dt(") !== 2 || /\b[ei]\.route\b/.test(projectRow)) {
+    throw new Error(`${relPath(bundlePath)} nested Chat project routes are not derived safely in both row branches`);
+  }
+  const chatHome = source.slice(findFunction(ast, "CDRChatHome", bundlePath).start, findFunction(ast, "CDRChatHome", bundlePath).end);
+  if (chatHome.indexOf("if(i)return null") > chatHome.indexOf("T0")) {
+    throw new Error(`${relPath(bundlePath)} mounts Chat home before account cache isolation settles`);
+  }
+  const nav = source.slice(findFunction(ast, "MOe", bundlePath).start, findFunction(ast, "MOe", bundlePath).end);
+  if (nav.includes("r===`codex`&&n?(0,XF.jsx)(cOe")) {
+    throw new Error(`${relPath(bundlePath)} still renders the standalone Quick Chat row`);
   }
 }
 
-function platformList(requestedPlatform) {
-  const requested = requestedPlatform === "unix"
-    ? ["mac-arm64", "mac-x64"]
-    : requestedPlatform
-      ? [requestedPlatform]
-      : ALL_PLATFORMS;
-  return requested.filter((platform) =>
-    fs.existsSync(path.join(SRC_DIR, platform, "_asar")),
-  );
+function verifyWorkHome(source, bundlePath) {
+  parseBundle(source, bundlePath);
+  if (countOccurrences(source, HOME_MARKER) !== 1) throw new Error(`${relPath(bundlePath)} Chat home marker invalid`);
+  for (const item of [
+    "chatMode:CDRChatMode=!1",
+    "conversationOrigin:CDRChatMode?null:`tpp`",
+    "CDRChatMode?`?mode=chat`:``",
+  ]) {
+    if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing Chat home invariant: ${item}`);
+  }
+  if (!source.includes("onSubmitAccepted:J")) throw new Error(`${relPath(bundlePath)} Chat submit callback is disconnected`);
 }
 
-function rendererCandidate(platform) {
-  const assetsDir = path.join(SRC_DIR, platform, "_asar", "webview", "assets");
-  if (!fs.existsSync(assetsDir)) return null;
-  const candidates = [];
-  for (const filename of fs.readdirSync(assetsDir)) {
-    if (!filename.endsWith(".js")) continue;
-    const bundlePath = path.join(assetsDir, filename);
-    const source = fs.readFileSync(bundlePath, "utf8");
-    if (
-      source.includes("sidebarElectron.productMode.chatGptWork.plainText") &&
-      (source.includes("function XDe(") || source.includes(RENDERER_MARKER)) &&
-      (source.includes("function WAe(") || source.includes("function CodexNativeShell("))
-    ) {
-      candidates.push({ path: bundlePath, source });
-    }
+function verifyCss(source, bundlePath) {
+  if (countOccurrences(source, CSS_MARKER) !== 1) throw new Error(`${relPath(bundlePath)} Chat theme marker invalid`);
+  for (const item of [
+    ':root[data-codex-product-mode="chat"].electron-light',
+    ':root[data-codex-product-mode="chat"].electron-dark',
+    "--color-token-main-surface-primary",
+  ]) {
+    if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing Chat theme invariant: ${item}`);
   }
-  if (candidates.length !== 1) {
-    throw new Error(`${platform}: expected one renderer candidate, found ${candidates.length}`);
-  }
-  return candidates[0];
 }
 
-function mainCandidate(platform) {
-  const buildDir = path.join(SRC_DIR, platform, "_asar", ".vite", "build");
-  if (!fs.existsSync(buildDir)) return null;
-  const candidates = [];
-  for (const filename of fs.readdirSync(buildDir)) {
-    if (!/^main(?:-.*)?\.js$/.test(filename)) continue;
-    const bundlePath = path.join(buildDir, filename);
-    const source = fs.readFileSync(bundlePath, "utf8");
-    if (
-      source.includes("Authenticated ChatGPT webview target must be ChatGPT") &&
-      (source.includes("function aB(") || source.includes(MAIN_MARKER))
-    ) {
-      candidates.push({ path: bundlePath, source });
-    }
+function findOne(directory, predicate, label) {
+  const matches = fs.readdirSync(directory)
+    .filter((name) => name.endsWith(".js") || name.endsWith(".css"))
+    .map((name) => path.join(directory, name))
+    .filter((filePath) => predicate(fs.readFileSync(filePath, "utf8"), filePath));
+  if (matches.length !== 1) throw new Error(`${label}: expected one candidate, found ${matches.length}`);
+  return { path: matches[0], source: fs.readFileSync(matches[0], "utf8") };
+}
+
+function locateTargets(platform = SUPPORTED_PLATFORM) {
+  if (platform !== SUPPORTED_PLATFORM) {
+    throw new Error(`Native Chat mode currently supports only ${SUPPORTED_PLATFORM} 26.707.91948`);
   }
-  if (candidates.length !== 1) {
-    throw new Error(`${platform}: expected one main-process candidate, found ${candidates.length}`);
-  }
-  return candidates[0];
+  const assets = path.join(SRC_DIR, platform, "_asar", "webview", "assets");
+  if (!fs.existsSync(assets)) throw new Error(`${platform}: extracted webview assets are missing`);
+  const page = findOne(assets, (source) =>
+    source.includes(PAGE_MARKER) || (
+      source.includes("function ROe(") &&
+      source.includes("function mje(") &&
+      source.includes("sidebarElectron.productMode.chatGptWork.plainText")
+    ), `${platform} native app page`);
+  const home = findOne(assets, (source) =>
+    source.includes(HOME_MARKER) || (
+      source.includes("function j(") &&
+      source.includes("chatgptConversations.home.hero") &&
+      source.includes("conversationOrigin:`tpp`")
+    ), `${platform} Work home page`);
+  const css = findOne(assets, (source, filePath) =>
+    source.includes(CSS_MARKER) || (
+      path.basename(filePath).startsWith("app-") &&
+      source.includes("--color-token-main-surface-primary") &&
+      source.includes(".electron-dark") &&
+      source.includes("#root{height:100vh}")
+    ), `${platform} global theme`);
+  return { assets, page, home, css };
 }
 
 function main() {
   const args = process.argv.slice(2);
-  const isCheck = args.includes("--check");
-  const requestedPlatform = args.find((arg) => [...ALL_PLATFORMS, "unix"].includes(arg));
-  const platforms = platformList(requestedPlatform);
-  if (platforms.length === 0) {
-    console.log("  [skip] No extracted application sources found");
+  const requested = args.find((arg) => ["mac-x64", "mac-arm64", "win", "unix"].includes(arg));
+  const platform = requested ?? SUPPORTED_PLATFORM;
+  const checkOnly = args.includes("--check");
+  const targets = locateTargets(platform);
+  const nextPage = patchPage(targets.page.source, targets.page.path);
+  const nextHome = patchWorkHome(targets.home.source, targets.home.path);
+  const nextCss = patchCss(targets.css.source, targets.css.path);
+  for (const target of [targets.page, targets.home, targets.css]) {
+    console.log(`  [${platform}] ${relPath(target.path)}`);
+  }
+  if (!nextPage.changed && !nextHome.changed && !nextCss.changed) {
+    console.log("    [ok] native Chat mode already installed and verified");
     return;
   }
-
-  let changed = 0;
-  for (const platform of platforms) {
-    const transactionRoot = path.join(SRC_DIR, platform, "_asar");
-    if (recoverAtomicTransaction(transactionRoot)) {
-      console.log(`  [${platform}] recovered an interrupted dedicated Chat transaction`);
-    }
-    const renderer = rendererCandidate(platform);
-    const mainBundle = mainCandidate(platform);
-    if (renderer == null || mainBundle == null) {
-      throw new Error(`${platform}: renderer or main-process bundle is missing`);
-    }
-    console.log(`  [${platform}] ${relPath(renderer.path)}`);
-    console.log(`  [${platform}] ${relPath(mainBundle.path)}`);
-    const nextRenderer = patchRenderer(renderer.source, renderer.path);
-    const nextMain = patchMain(mainBundle.source, mainBundle.path);
-
-    if (!nextRenderer.changed && !nextMain.changed) {
-      console.log("    [ok] already installed and verified");
-      continue;
-    }
-    if (isCheck) {
-      console.log("    [?] dedicated Chat mode would be patched");
-      continue;
-    }
-    const entries = [];
-    if (nextRenderer.changed) {
-      entries.push({
-        path: renderer.path,
-        previous: renderer.source,
-        next: nextRenderer.source,
-        verify: verifyRenderer,
-      });
-    }
-    if (nextMain.changed) {
-      entries.push({
-        path: mainBundle.path,
-        previous: mainBundle.source,
-        next: nextMain.source,
-        verify: verifyMain,
-      });
-    }
-    atomicReplaceEntries(entries, { transactionRoot });
-    changed += 1;
-    console.log("    [ok] patched renderer + main process and verified");
+  if (checkOnly) {
+    console.log("    [?] native Chat mode would be installed");
+    return;
   }
-  console.log(`  [ok] ${isCheck ? "checked" : "patched"} ${platforms.length} platform(s); ${changed} changed`);
+  const entries = [
+    { path: targets.page.path, previous: targets.page.source, next: nextPage.source, verify: verifyPage },
+    { path: targets.home.path, previous: targets.home.source, next: nextHome.source, verify: verifyWorkHome },
+    { path: targets.css.path, previous: targets.css.source, next: nextCss.source, verify: verifyCss },
+  ];
+  atomicReplaceEntries(entries, { transactionRoot: path.join(SRC_DIR, platform, "_asar") });
+  console.log("    [ok] installed native Chat routing, history, models, and theme atomically");
 }
 
 module.exports = {
-  CHAT_PARTITION,
-  MAIN_MARKER,
-  RENDERER_MARKER,
+  CHAT_HOME_ROUTE,
+  CSS_MARKER,
+  HOME_MARKER,
+  PAGE_MARKER,
   atomicReplaceEntries,
   countOccurrences,
-  patchMain,
-  patchRenderer,
+  locateTargets,
+  patchCss,
+  patchPage,
+  patchWorkHome,
   recoverAtomicTransaction,
   replaceExactly,
-  verifyMain,
-  verifyRenderer,
+  verifyCss,
+  verifyPage,
+  verifyWorkHome,
 };
 
 if (require.main === module) main();

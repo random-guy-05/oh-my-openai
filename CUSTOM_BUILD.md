@@ -1,23 +1,28 @@
-# Intel Codex + ChatGPT Work + Chat build
+# Intel Codex + ChatGPT Work + native Chat build
 
 This branch rebuilds the current official Intel macOS application as `Codex.app`
-while preserving the bundled Codex CLI and the ChatGPT Work interface, and adds
-a dedicated live Chat mode backed by `chatgpt.com`.
+while preserving the bundled Codex CLI and ChatGPT Work interface, and adds Chat
+as a third native product mode. The supported upstream baseline is Intel app
+version `26.707.91948`.
 
 ## Current behavior
 
 - Source application: `/Applications/ChatGPT.app`
 - Required architecture: `x86_64`
-- Visible model family: `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`
-- Hidden internal models remain available to application internals.
-- ChatGPT Work features, including Chat, plugins, sites, pull requests,
-  subagents, and artifacts, are left intact.
+- Codex/Work visible model family: `gpt-5.6-sol`, `gpt-5.6-terra`, and
+  `gpt-5.6-luna`; hidden internal models remain available to app internals.
+- Chat uses the upstream-supported non-third-party models exposed by the native
+  ChatGPT model selector.
+- ChatGPT Work features, including plugins, sites, pull requests, subagents, and
+  artifacts, are left intact.
 - The Codex/ChatGPT Work selector has a third **Chat** option. The previous
   standalone Chat sidebar row is removed.
-- Chat uses the real `chatgpt.com` application and the signed-in account's
-  server-side conversation history, not a locally reimplemented chat UI.
-- Entering Chat preserves the mounted native route, task, draft, and running
-  work so returning to Codex or ChatGPT Work restores the previous state.
+- Chat navigates to the route-scoped `/chat?mode=chat` page built into the native
+  renderer, with its existing history, projects, and conversation views.
+- Existing server-side conversation IDs remain unchanged and every available
+  thread can be continued; the patch performs no chat migration or mutation.
+- Chat completions use `startCompletionStream`, separate from the Codex/Work
+  AppServer turn path and its shared usage allowance.
 - New turns fall back to Sol when a saved legacy model is no longer visible.
   Existing thread metadata is not rewritten.
 
@@ -73,63 +78,30 @@ so cold deep-link launches cannot bypass profile isolation.
 Packaged macOS builds also use Electron's single-instance lock, allowing warm
 links and Finder reopens to reuse the existing private runtime safely.
 
-## Dedicated Chat mode architecture
+## Native Chat mode architecture
 
 Chat is a third value in the existing Codex/ChatGPT Work product-mode selector,
-not another navigation row. Its renderer state is separate from the native
-conversation-detail mode used by Codex and ChatGPT Work. Selecting Chat overlays
-a full-window live surface while leaving the native React tree mounted. On exit,
-the previous native mode and route regain focus without reconstructing the task.
+not another navigation row. Selecting it navigates the same renderer to
+`/chat?mode=chat`. The `mode=chat` query value scopes the Chat-specific layout,
+accent, and tab visibility without forking or transforming conversation data.
 
-The live surface is an Electron `<webview>` created with exactly:
+The route renders the application's built-in ChatGPT history, projects, and
+conversation page. It reads the signed-in account's existing server-side data
+and retains the original conversation identifiers. Opening, continuing, or
+switching a thread uses that same record; the patch does not import, export,
+clone, migrate, rewrite, or delete chats.
 
-```text
-partition="persist:codex-chatgpt-live"
-src="about:blank"
-```
+Chat's model selector filters to upstream-supported models that are not marked
+as third-party. Sending from Chat invokes the native `startCompletionStream`
+transport. Codex and ChatGPT Work retain their AppServer turn-start transport,
+so their shared Codex usage path is not substituted for Chat's separate ChatGPT
+chat usage path.
 
-The main process recognizes that exact partition before the generic browser
-sidebar manager. It permits at most one pending or attached Chat guest per
-primary window, replaces renderer-supplied preferences with hardened values,
-and rejects a non-blank initial URL. The guest has no preload, Node integration,
-plugins, popup privilege, nested webviews, or Codex IPC bridge. It runs with
-sandboxing, context isolation, and web security enabled.
-
-The dedicated persistent partition is stored beneath:
-
-```text
-~/Library/Application Support/CodexDesktop-Rebuild/Profile
-```
-
-It is separate from the official ChatGPT app, checkout webviews, and
-`persist:codex-browser-app`. Mode changes and normal guest destruction do not
-clear it. One guest is owned by each primary Codex window, while cookies and
-server-side ChatGPT history can be shared through the dedicated partition.
-
-Authentication reuses the app's existing Codex access-token refresh and
-ChatGPT `/api/auth/link-session` handoff. Each new guest is rebound to the
-currently active Codex account rather than copying credentials or mutable
-profile files from the official ChatGPT app. The main process derives the
-authoritative account ID from the refreshed access token. The renderer's
-active-account value is used only as part of the React key that remounts the
-guest after an account switch; it is never sent as account identity. If
-authentication or guest hardening fails, attachment closes rather than falling
-back to a broader origin or privileged renderer configuration; Retry creates a
-fresh hardened guest.
-
-Main-frame navigation is restricted to `https://chatgpt.com` after the initial
-`about:blank`. Same-origin popup requests are loaded in the existing guest;
-ordinary external HTTP(S) destinations are handed to the external browser.
-Other schemes and cross-origin redirects are denied. Session permissions are
-deny-by-default and require the requesting, embedding, and security origins to
-match ChatGPT. Sanitized clipboard writes are the only intended grant. Media
-capture is denied because the guest remains mounted while hidden, preventing a
-previous camera or microphone grant from continuing invisibly in another mode.
-
-This boundary is what allows the real web conversation history to coexist with
-custom native Codex chrome without exposing filesystem or Electron privileges
-to remote content. It also means the official ChatGPT app and the rebuilt Codex
-app can remain open concurrently with independent local profiles.
+This design uses no remote-page overlay. Chat is patched entirely within the
+compiled native renderer and its existing application data flow. The separate
+install boundary remains the side-by-side launcher's unique bundle identity,
+private runtime, `CODEX_HOME`, and Electron profile; that local isolation allows
+the official ChatGPT app and rebuilt Codex app to remain open concurrently.
 
 The standalone output is written to:
 
@@ -148,8 +120,8 @@ Both bundles use the repository's original blue Codex terminal icon from
 `resources/CodexAssets.car`. The runtime restores the historical `icon` base
 name and replaces every ICNS/Dock PNG fallback plus the Alerts helper icon, so
 Finder, Dock, settings previews, and system alerts cannot select ChatGPT artwork.
-The side-by-side bundle uses a local `.2` build revision so LaunchServices
-refreshes renamed bundles and icon metadata reliably.
+The side-by-side bundle uses a local build revision so LaunchServices refreshes
+renamed bundles and icon metadata reliably.
 
 Run a non-mutating patch verification with:
 
@@ -162,11 +134,11 @@ node scripts/patch-all.js mac-x64 --check
 
 The build fails closed if the source is not an official OpenAI Intel bundle,
 the synchronized hashes do not match, the model-patch anchors change, the
-dedicated-Chat renderer or main-process anchors change, the official CLI changes,
-ASAR integrity cannot be updated, or signing verification fails. The
-side-by-side protocol and dedicated Chat patches parse affected JavaScript and
-require their security markers and structural invariants, preventing a
-marker-only check from accepting invalid code.
+native-Chat route, selector, model, or transport anchors change, the official CLI
+changes, ASAR integrity cannot be updated, or signing verification fails. The
+side-by-side protocol and native Chat patches parse affected JavaScript and
+require their markers and structural invariants, preventing a marker-only check
+from accepting invalid code.
 
 ## Frontend customization
 
@@ -188,25 +160,25 @@ For a frontend change:
 2. Register it in `scripts/patch-all.js`.
 3. Run `npm run patch -- mac-x64` and `node scripts/patch-all.js mac-x64 --check`.
 4. Run the feature regression, including `npm run test:dedicated-chat` for any
-   mode-selector, Chat guest, session, or navigation-policy change.
+   mode-selector, Chat route, model-filter, or completion-transport change.
 5. Run `npm run build:mac-x64` and `npm run build:side-by-side:x64`.
 
 The last command produces the self-contained side-by-side DMG. The launcher
 compares a deterministic full-runtime fingerprint, so a customized build
 updates the private installed runtime even when the upstream version is unchanged.
 `scripts/patch-side-by-side-scheme.js` is the reference for coordinated
-main-process and renderer edits. Dedicated Chat mode is implemented and checked
+main-process and renderer edits. Native Chat mode is implemented and checked
 by:
 
 - `scripts/patch-dedicated-chat-mode.js`
 - `scripts/test-dedicated-chat-mode-patch.js`
 
-The extracted native shell, selector, styles, and trusted toolbar can be patched.
-The page inside Chat mode is live content served by `chatgpt.com`; its original
-React source is not in this repository. The supported implementation does not
-inject JavaScript into that page or weaken its origin boundary. Consequently,
-source-level redesign of the remote ChatGPT website is not a capability of this
-rebuild, even though the local Electron integration around it is customizable.
+The extracted native shell, selector, `/chat?mode=chat` page, styles, tabs,
+history/project presentation, and model picker can be patched. The synchronized
+assets are compiled/minified generated output and are intentionally excluded
+from Git; OpenAI's original React source, component names, types, comments,
+tests, and build inputs are not present. The patch scripts are the maintainable
+customization layer and must be revalidated against each upstream build.
 
 ## Local signing notes
 

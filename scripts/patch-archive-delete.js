@@ -12,18 +12,62 @@
  * Requires @cometix/codex CLI with thread/delete support.
  */
 const fs = require("fs");
+const path = require("path");
 const acorn = require("acorn");
-const { locateBundles, relPath } = require("./patch-util");
+const { locateBundles, relPath, SRC_DIR } = require("./patch-util");
+
+function sourcePlatforms(platform) {
+  const requested = platform ? [platform] : ["mac-arm64", "mac-x64", "win"];
+  return requested.filter((item) =>
+    fs.existsSync(path.join(SRC_DIR, item, "_asar", "webview", "assets")),
+  );
+}
+
+function hasNativeArchiveDelete(platform) {
+  const platforms = sourcePlatforms(platform);
+  if (platforms.length === 0) return false;
+
+  return platforms.every((item) => {
+    const assetsDir = path.join(SRC_DIR, item, "_asar", "webview", "assets");
+    let hasRoute = false;
+    let hasControls = false;
+    for (const filename of fs.readdirSync(assetsDir)) {
+      if (!filename.endsWith(".js")) continue;
+      const source = fs.readFileSync(path.join(assetsDir, filename), "utf-8");
+      if (
+        source.includes('"delete-archived-conversation"') &&
+        source.includes('"delete-all-archived-conversations"')
+      ) {
+        hasRoute = true;
+      }
+      if (
+        source.includes("showDeleteButton") &&
+        source.includes("delete-archived-conversation")
+      ) {
+        hasControls = true;
+      }
+      if (hasRoute && hasControls) return true;
+    }
+    return false;
+  });
+}
 
 // ─── Layer 1: app-main route injection ──────────────────────────
 
-function patchAppMain(bundles) {
+function patchAppMain(bundles, checkOnly) {
   let patched = 0;
+  let resolved = 0;
   for (const bundle of bundles) {
     const code = fs.readFileSync(bundle.path, "utf-8");
 
     if (code.includes("delete-conversation")) {
+      if (!code.includes("thread/delete")) {
+        throw new Error(
+          `${relPath(bundle.path)}: delete-conversation exists without thread/delete`,
+        );
+      }
       console.log(`  [ok] ${relPath(bundle.path)}: route already patched`);
+      resolved++;
       continue;
     }
 
@@ -47,22 +91,39 @@ function patchAppMain(bundles) {
 
     const inject = `,${q}delete-conversation${q}:${wrapperFn}(async(${mgrVar},{conversationId:${cidVar}})=>{await ${mgrVar}.sendRequest(${q}thread/delete${q},{threadId:${cidVar}})})`;
     const newCode = code.slice(0, anchorEnd) + inject + code.slice(anchorEnd);
+    if (checkOnly) {
+      console.log(`  [?] ${relPath(bundle.path)}: would inject delete-conversation route (wrapper=${wrapperFn})`);
+      patched++;
+      resolved++;
+      continue;
+    }
     fs.writeFileSync(bundle.path, newCode);
     console.log(`  [ok] ${relPath(bundle.path)}: injected delete-conversation route (wrapper=${wrapperFn})`);
     patched++;
+    resolved++;
   }
-  return patched;
+  return { patched, resolved };
 }
 
 // ─── Layer 2: data-controls delete button injection ─────────────
 
-function patchDataControls(bundles) {
+function patchDataControls(bundles, checkOnly) {
   let patched = 0;
+  let resolved = 0;
   for (const bundle of bundles) {
     const code = fs.readFileSync(bundle.path, "utf-8");
 
     if (code.includes("delete-conversation")) {
+      if (
+        !code.includes("Permanently delete this conversation?") ||
+        !code.includes("archived-threads")
+      ) {
+        throw new Error(
+          `${relPath(bundle.path)}: delete-conversation exists without the archived-thread controls`,
+        );
+      }
       console.log(`  [ok] ${relPath(bundle.path)}: delete button already patched`);
+      resolved++;
       continue;
     }
 
@@ -256,41 +317,87 @@ function patchDataControls(bundles) {
     const newArray = `[${contentVar},${deleteBtn},${unarchiveBtnVar}]`;
     const newCode = code.slice(0, childrenArrayStart) + newArray + code.slice(childrenArrayEnd);
 
+    if (checkOnly) {
+      console.log(
+        `  [?] ${relPath(bundle.path)}: would inject delete button` +
+        ` (thread=${threadVar} host=${hostIdVar} qc=${queryClientVar} btn=${btnComponent})`,
+      );
+      patched++;
+      resolved++;
+      continue;
+    }
     fs.writeFileSync(bundle.path, newCode);
     console.log(
       `  [ok] ${relPath(bundle.path)}: injected delete button` +
       ` (thread=${threadVar} host=${hostIdVar} qc=${queryClientVar} btn=${btnComponent})`,
     );
     patched++;
+    resolved++;
   }
-  return patched;
+  return { patched, resolved };
 }
 
 // ─── Main ───────────────────────────────────────────────────────
 
 function main() {
   const args = process.argv.slice(2);
+  const isCheck = args.includes("--check");
   const platform = args.find((a) =>
     ["mac-arm64", "mac-x64", "win"].includes(a),
   );
 
-  console.log("  [layer 1] app-main: delete-conversation route");
-  const appMainBundles = locateBundles({
-    dir: "assets",
-    pattern: /^app-main-.*\.js$/,
-    ...(platform ? { platform } : {}),
-  });
-  const routePatched = patchAppMain(appMainBundles);
+  const platforms = sourcePlatforms(platform);
+  if (platforms.length === 0) {
+    throw new Error("No extracted renderer source found for archive-delete verification");
+  }
 
-  console.log("  [layer 2] data-controls: delete button");
-  const dataControlsBundles = locateBundles({
-    dir: "assets",
-    pattern: /^data-controls-.*\.js$/,
-    ...(platform ? { platform } : {}),
-  });
-  const btnPatched = patchDataControls(dataControlsBundles);
+  for (const item of platforms) {
+    console.log(`  [${item}]`);
+    if (hasNativeArchiveDelete(item)) {
+      console.log("  [ok] Native archived-conversation delete controls already present");
+      continue;
+    }
 
-  console.log(`  [done] routes: ${routePatched}, buttons: ${btnPatched}`);
+    const appMainBundles = locateBundles({
+      dir: "assets",
+      pattern: /^app-main-.*\.js$/,
+      platform: item,
+    });
+    const dataControlsBundles = locateBundles({
+      dir: "assets",
+      pattern: /^data-controls-.*\.js$/,
+      platform: item,
+    });
+
+    console.log("  [preflight] app-main route");
+    const routeProbe = patchAppMain(appMainBundles, true);
+    console.log("  [preflight] data-controls button");
+    const buttonProbe = patchDataControls(dataControlsBundles, true);
+    if (routeProbe.resolved !== 1 || buttonProbe.resolved !== 1) {
+      throw new Error(
+        `${item}: expected exactly one archive-delete route and button ` +
+        `(routes=${routeProbe.resolved}, buttons=${buttonProbe.resolved})`,
+      );
+    }
+
+    if (isCheck) {
+      console.log(
+        `  [done] routes patchable: ${routeProbe.patched}, ` +
+        `buttons patchable: ${buttonProbe.patched}`,
+      );
+      continue;
+    }
+
+    const routeResult = patchAppMain(appMainBundles, false);
+    const buttonResult = patchDataControls(dataControlsBundles, false);
+    if (routeResult.resolved !== 1 || buttonResult.resolved !== 1) {
+      throw new Error(`${item}: archive-delete verification changed after preflight`);
+    }
+    console.log(
+      `  [done] routes patched: ${routeResult.patched}, ` +
+      `buttons patched: ${buttonResult.patched}`,
+    );
+  }
 }
 
 main();

@@ -5,6 +5,7 @@ const {
   ALLOWED_MODELS,
   callbackPreservesHidden,
   findAllowedModelFilterCallbacks,
+  isModelSelectionBundleSource,
 } = require("./patch-latest-models");
 
 const allowlist = JSON.stringify(ALLOWED_MODELS);
@@ -50,6 +51,23 @@ assert.equal(
   matchedCallback(`model=>(model.hidden===true||${allowlist}.includes(model.model))||model.model==="gpt-5.5-codex"`),
   null,
   "additional predicate branches must not expand the visible catalog",
+);
+
+assert.equal(
+  isModelSelectionBundleSource(
+    `function resolve({userSavedModelString:a,userSavedReasoningEffort:b,listModelsData:c}){return c}`,
+    "synthetic-selection.js",
+  ),
+  true,
+  "a structurally matching resolver must identify the model-selection bundle",
+);
+assert.equal(
+  isModelSelectionBundleSource(
+    `const fields=["userSavedModelString","userSavedReasoningEffort","listModelsData"];`,
+    "synthetic-decoy.js",
+  ),
+  false,
+  "field-name constants without a resolver must not identify a bundle",
 );
 
 console.log("[ok] latest-model patch structural regression tests passed");

@@ -36,8 +36,8 @@ function walk(node, visitor) {
   }
 }
 
-function collectPatches(ast, source) {
-  const patches = [];
+function collectMethodStates(ast, source) {
+  const states = [];
 
   walk(ast, (node) => {
     // Match: Property with key being an updater method name and value being a FunctionExpression
@@ -53,19 +53,36 @@ function collectPatches(ast, source) {
     const ret = body.body[0];
     if (ret.type !== "ReturnStatement" || !ret.argument) return;
 
-    const retSrc = source.slice(ret.argument.start, ret.argument.end);
-    if (retSrc === "!1") return;
-
-    patches.push({
+    const returnSource = source.slice(ret.argument.start, ret.argument.end);
+    states.push({
       id: keyName,
       start: ret.argument.start,
       end: ret.argument.end,
-      replacement: "!1",
-      original: retSrc.length > 50 ? retSrc.slice(0, 47) + "..." : retSrc,
+      disabled:
+        returnSource === "!1" ||
+        (ret.argument.type === "Literal" && ret.argument.value === false),
+      original:
+        returnSource.length > 50
+          ? returnSource.slice(0, 47) + "..."
+          : returnSource,
     });
   });
 
-  return patches;
+  return states;
+}
+
+function verifyMethodSet(bundle, states) {
+  const counts = new Map();
+  for (const state of states) {
+    counts.set(state.id, (counts.get(state.id) || 0) + 1);
+  }
+  const missing = [...UPDATER_METHODS].filter((id) => counts.get(id) !== 1);
+  if (states.length !== UPDATER_METHODS.size || missing.length > 0) {
+    throw new Error(
+      `${relPath(bundle.path)}: updater method structure changed ` +
+      `(found=${states.map((state) => state.id).join(",") || "none"})`,
+    );
+  }
 }
 
 function locateTargets(platform) {
@@ -96,22 +113,42 @@ function locateTargets(platform) {
 
 function main() {
   const args = process.argv.slice(2);
+  const isCheck = args.includes("--check");
   const platform = args.find((a) => ["mac-arm64", "mac-x64", "win"].includes(a));
 
   const targets = locateTargets(platform);
   if (targets.length === 0) {
-    console.log("  [ok] No updater targets found");
-    return;
+    throw new Error("No updater marker bundles found");
   }
 
+  const implementations = [];
   for (const bundle of targets) {
     console.log(`  [${bundle.platform}] ${relPath(bundle.path)}`);
     const source = fs.readFileSync(bundle.path, "utf-8");
     const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
-    const patches = collectPatches(ast, source);
+    const states = collectMethodStates(ast, source);
+    if (states.length === 0) {
+      console.log("    [skip] Marker-only consumer bundle; no updater implementation");
+      continue;
+    }
+    verifyMethodSet(bundle, states);
+    implementations.push({ bundle, source, states });
+  }
 
-    if (patches.length === 0) {
-      console.log("    [ok] Already patched or no match");
+  if (implementations.length === 0) {
+    throw new Error("Updater markers were present but no complete updater implementation matched");
+  }
+
+  for (const { bundle, source, states } of implementations) {
+    console.log(`  [verify ${bundle.platform}] ${relPath(bundle.path)}`);
+    const patches = states.filter((state) => !state.disabled);
+    if (isCheck) {
+      if (patches.length === 0) {
+        console.log(`    [ok] All ${UPDATER_METHODS.size} updater methods are disabled`);
+      } else {
+        console.log(`    [?] Would disable ${patches.length} updater method(s): ` +
+          patches.map((patch) => patch.id).join(", "));
+      }
       continue;
     }
 
@@ -119,11 +156,17 @@ function main() {
     let code = source;
     for (const p of patches) {
       console.log(`    * [${p.id}] ${p.original} -> !1`);
-      code = code.slice(0, p.start) + p.replacement + code.slice(p.end);
+      code = code.slice(0, p.start) + "!1" + code.slice(p.end);
     }
 
+    const verifiedAst = parse(code, { ecmaVersion: "latest", sourceType: "module" });
+    const verifiedStates = collectMethodStates(verifiedAst, code);
+    verifyMethodSet(bundle, verifiedStates);
+    if (!verifiedStates.every((state) => state.disabled)) {
+      throw new Error(`${relPath(bundle.path)}: updater disable verification failed`);
+    }
     fs.writeFileSync(bundle.path, code, "utf-8");
-    console.log(`    [ok] ${patches.length} updater methods disabled`);
+    console.log(`    [ok] ${UPDATER_METHODS.size} updater methods verified disabled`);
   }
 }
 

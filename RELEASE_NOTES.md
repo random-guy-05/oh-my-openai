@@ -1,4 +1,4 @@
-# Codex Intel 26.707.72221 — custom build 5307.2
+# Codex Intel 26.707.91948 — custom build 5440
 
 This release packages the customized side-by-side Intel macOS application.
 
@@ -10,6 +10,7 @@ This release packages the customized side-by-side Intel macOS application.
 - Isolated profile and `CODEX_HOME`
 - Simultaneous operation with the official ChatGPT app
 - ChatGPT Work interface and structural latest-model patch
+- Dedicated Chat mode
 - Atomic private-runtime updates without deleting user data
 
 ## Install
@@ -24,7 +25,7 @@ The build is ad-hoc signed and is not Apple-notarized.
 ## Integrity
 
 ```text
-4574b210784a80c7ec9fc0b8c1b6ae514b2e7c94901beeb86d06527d402c5365  Codex-Intel-x64.dmg
+d244b1d061242c56d5569667eed41bb70f9761eb5f0120ae533b8c2e3c0ca155  Codex-Intel-x64.dmg
 ```
 
-The source used for this release is commit `e947751` plus this release metadata.
+Built from the local `CodexDesktop-Rebuild-Current` tree at version `26.707.91948` (build `5440`).

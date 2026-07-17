@@ -26,23 +26,9 @@ const BROKEN_LAUNCHER_REGISTRATION =
 const ORIGINAL_SINGLE_INSTANCE = "return t?!e:!1";
 const UNIQUE_SINGLE_INSTANCE = "return t/* codex-rebuild:force-single-instance */";
 const MAC_PLATFORMS = ["mac-arm64", "mac-x64"];
-const RENDERER_PREFIXES = [
-  "header-",
-  "app-initial~app-main~quick-chat-window-page~chatgpt-conversation-page-",
-];
 
 function occurrences(source, value) {
   return source.split(value).length - 1;
-}
-
-function exactlyOneFile(directory, predicate, label) {
-  const matches = fs.readdirSync(directory)
-    .filter(predicate)
-    .map((name) => path.join(directory, name));
-  if (matches.length !== 1) {
-    throw new Error(label + ": expected exactly one file, found " + matches.length);
-  }
-  return matches[0];
 }
 
 function targetFiles(platform) {
@@ -64,15 +50,17 @@ function targetFiles(platform) {
   if (build.length !== 5) {
     throw new Error(platform + " build bundles: expected 5 protocol files, found " + build.length);
   }
-  const renderer = RENDERER_PREFIXES.map((prefix) => exactlyOneFile(
-    assetsDirectory,
-    (name) => {
-      if (!name.startsWith(prefix) || !name.endsWith(".js")) return false;
+  const renderer = fs.readdirSync(assetsDirectory)
+    .filter((name) => name.endsWith(".js"))
+    .filter((name) => {
       const source = fs.readFileSync(path.join(assetsDirectory, name), "utf8");
       return source.includes(ORIGINAL_URL) || source.includes(UNIQUE_URL);
-    },
-    platform + " renderer bundle " + prefix,
-  ));
+    })
+    .sort()
+    .map((name) => path.join(assetsDirectory, name));
+  if (renderer.length === 0) {
+    throw new Error(platform + " renderer bundles: no protocol files found");
+  }
   return { build, renderer };
 }
 
@@ -128,10 +116,6 @@ function patchPlatform(platform, checkOnly) {
       if (checkOnly) throw error;
     }
   }
-  if (checkOnly) {
-    throw new Error(platform + ": unique deep-link scheme is not installed");
-  }
-
   const rendererSources = files.renderer.map((file) => fs.readFileSync(file, "utf8"));
   const combinedRenderer = rendererSources.join("\n");
   const structure = {
@@ -166,6 +150,11 @@ function patchPlatform(platform, checkOnly) {
   if (!freshStructure && !upgradeStructure) {
     throw new Error(platform + ": upstream deep-link structure changed: " +
       JSON.stringify(structure));
+  }
+  if (checkOnly) {
+    console.log("[?] " + platform +
+      ": upstream deep-link structure matched; would install codex-rebuild://");
+    return;
   }
 
   files.build.forEach((file, index) => {

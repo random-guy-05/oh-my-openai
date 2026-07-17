@@ -424,6 +424,17 @@ function platformList(requestedPlatform) {
   );
 }
 
+function isModelSelectionBundleSource(source, bundlePath = "<model-selection-candidate>") {
+  if (
+    !source.includes("userSavedModelString") ||
+    !source.includes("userSavedReasoningEffort") ||
+    !source.includes("listModelsData")
+  ) {
+    return false;
+  }
+  return findModelSettingsResolvers(parseBundle(source, bundlePath)).length > 0;
+}
+
 function candidateBundles(platform) {
   const assetsDir = path.join(SRC_DIR, platform, "_asar", "webview", "assets");
   const bridge = [];
@@ -436,11 +447,7 @@ function candidateBundles(platform) {
     if (source.includes("list-models-for-host") && source.includes("model/list")) {
       bridge.push({ path: bundlePath, source });
     }
-    if (
-      source.includes("userSavedModelString") &&
-      source.includes("userSavedReasoningEffort") &&
-      source.includes("listModelsData")
-    ) {
+    if (isModelSelectionBundleSource(source, bundlePath)) {
       selection.push({ path: bundlePath, source });
     }
   }
@@ -535,4 +542,5 @@ module.exports = {
   callbackHasExactAllowedFilterShape,
   callbackPreservesHidden,
   findAllowedModelFilterCallbacks,
+  isModelSelectionBundleSource,
 };

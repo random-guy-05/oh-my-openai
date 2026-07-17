@@ -6,8 +6,8 @@
  *   "version": "26.325.21211"
  *   "codexBuildNumber": "1255"
  *
- * This script copies those into the root package.json and prints the version
- * to stdout for CI capture.
+ * This script copies the upstream version, build, flavor, and Sparkle metadata
+ * into the root package.json and prints the version to stdout for CI capture.
  *
  * Usage:
  *   node scripts/bump-version.js           # Update package.json and print version
@@ -20,8 +20,14 @@ const ROOT_PKG = path.join(__dirname, "..", "package.json");
 const SRC_DIR = path.join(__dirname, "..", "src");
 
 function findUpstreamPkg() {
-  for (const plat of ["unix", "win"]) {
-    const p = path.join(SRC_DIR, plat, "package.json");
+  const candidates = [
+    ["mac-x64", "_asar", "package.json"],
+    ["mac-arm64", "_asar", "package.json"],
+    ["unix", "package.json"],
+    ["win", "package.json"],
+  ];
+  for (const segments of candidates) {
+    const p = path.join(SRC_DIR, ...segments);
     if (fs.existsSync(p)) return p;
   }
   // Legacy fallback
@@ -35,7 +41,7 @@ function main() {
 
   const upstreamPath = findUpstreamPkg();
   if (!upstreamPath) {
-    console.error("[x] No upstream package.json found in src/{unix,win}/");
+    console.error("[x] No upstream package.json found in extracted source");
     process.exit(1);
   }
 
@@ -62,8 +68,15 @@ function main() {
   const oldVersion = rootPkg.version;
 
   rootPkg.version = version;
-  if (buildNumber) {
-    rootPkg.codexBuildNumber = buildNumber;
+  for (const key of [
+    "codexBuildNumber",
+    "codexBuildFlavor",
+    "codexSparkleFeedUrl",
+    "codexSparklePublicKey",
+  ]) {
+    if (typeof upstream[key] === "string" && upstream[key].length > 0) {
+      rootPkg[key] = upstream[key];
+    }
   }
 
   fs.writeFileSync(ROOT_PKG, JSON.stringify(rootPkg, null, 2) + "\n");

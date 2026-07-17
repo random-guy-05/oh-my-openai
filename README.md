@@ -1,11 +1,11 @@
 # Oh My OpenAI
 
-A customizable Intel macOS build of the current OpenAI desktop experience,
-packaged as **Codex.app** with the original blue Codex terminal-cloud icon.
-It uses an isolated profile and bundle identity, so it can run beside the
-official **ChatGPT.app** without sharing mutable databases, cookies, or session
-state. Its product-mode selector provides Codex, ChatGPT Work, and a dedicated
-live Chat surface backed by the real `chatgpt.com` web application.
+A customizable Intel macOS build of the OpenAI desktop experience, packaged as
+**Codex.app** with the original blue Codex terminal-cloud icon. It uses an
+isolated profile and bundle identity, so it can run beside the official
+**ChatGPT.app** without sharing mutable local databases or session state. Its
+native product-mode selector provides Codex, ChatGPT Work, and Chat as three
+first-class modes in the same desktop renderer.
 
 ## Download
 
@@ -28,14 +28,15 @@ Security.
 - A native Intel launcher named `Codex`.
 - An isolated private runtime that can stay open with ChatGPT.
 - The exact historical Codex adaptive icon catalog and fallback artwork.
-- Structural frontend patches for model selection, dedicated Chat mode, and
+- Structural frontend patches for model selection, native Chat routing, and
   side-by-side behavior.
 - Manual and scheduled GitHub Actions builds.
 
-Generated app bundles, downloaded upstream sources, local profiles,
-authentication files, and `node_modules` are intentionally excluded from Git.
-Prebuilt DMGs are distributed through GitHub Releases instead of repository
-history.
+Generated app bundles, the synchronized compiled/minified upstream application,
+local profiles, authentication files, and `node_modules` are intentionally
+excluded from Git. The repository contains the reproducible patch and packaging
+toolchain, not OpenAI's original React/TypeScript source tree. Prebuilt DMGs are
+distributed through GitHub Releases instead of repository history.
 
 ## Install the prebuilt DMG
 
@@ -54,46 +55,35 @@ Codex stores its private runtime and data under:
 
 ## Codex, ChatGPT Work, and Chat
 
-The existing product-mode selector has three choices:
+The native product-mode selector has three choices:
 
 - **Codex** keeps the native coding-oriented task experience.
 - **ChatGPT Work** keeps the native create, learn, and explore experience.
-- **Chat** opens the real `chatgpt.com` interface as a dedicated full-window
-  live surface, including conversations synchronized by the signed-in account.
+- **Chat** opens the built-in ChatGPT history, projects, and conversation page
+  at the route-scoped URL `/chat?mode=chat`.
 
 Chat is part of the Codex/ChatGPT Work selector; it is not a separate sidebar
-destination. The old standalone Chat sidebar row is removed so there is one
-unambiguous way to enter the live web experience.
+destination. Its route applies a distinct Chat accent and can remove
+coding-specific tabs without changing the underlying conversations.
 
-Switching to Chat does not tear down or navigate away from the native Codex
-renderer. The native route, selected task, drafts, scroll position, and running
-work stay mounted behind the Chat surface. Returning to Codex or ChatGPT Work
-restores that state instead of starting a new local session.
+The Chat page uses the desktop application's existing ChatGPT conversation and
+project data. It preserves server-side conversation identifiers, so existing
+threads remain in the same history and can be continued normally. The patch does
+not copy, migrate, rewrite, delete, or otherwise mutate chats.
 
-### Chat data and security boundary
+### Chat models and usage path
 
-- Chat runs in the dedicated persistent Electron partition
-  `persist:codex-chatgpt-live` inside the rebuild's isolated profile.
-- The partition preserves the live Chat login between mode changes and app
-  restarts, but it is not shared with the official ChatGPT app or the Codex
-  browser-use partition.
-- The guest starts at `about:blank`; the main process links the existing Codex
-  account session and then loads only the `https://chatgpt.com` origin. The
-  authoritative account ID is derived from the refreshed access token; the
-  renderer's active-account value is used only to remount the guest after an
-  account switch and is never transported as identity.
-- The remote page receives no Codex preload, Node.js access, filesystem access,
-  nested webviews, or `electronBridge` IPC. Context isolation, sandboxing, and
-  web security remain enabled.
-- Cross-origin main-frame navigation is denied. Normal external links open in
-  the user's external browser instead of inheriting the Chat guest's session.
-- Permission handling is deny-by-default and origin checked. Sanitized
-  clipboard writes are supported. Microphone/camera capture is denied in this
-  retained guest so it cannot continue invisibly after switching modes.
+- Chat exposes the upstream-supported, non-third-party ChatGPT models in its own
+  model selector.
+- Chat completions use the native `startCompletionStream` path rather than the
+  Codex AppServer turn-start path used by Codex and ChatGPT Work.
+- That transport separation keeps Chat on the ChatGPT chat usage allowance while
+  Codex and ChatGPT Work continue to use their shared Codex usage allowance.
+- Changing modes or models never rewrites existing thread metadata.
 
-The live conversation list and messages come from ChatGPT's servers. Local
-profile isolation protects the official app's mutable state; it does not create
-a second copy of server-side conversations.
+There is no remote-page overlay or second chat store. Chat is a native route in
+the same compiled renderer, while the side-by-side application profile remains
+locally isolated from the separately installed official ChatGPT app.
 
 ## Build it yourself
 
@@ -101,7 +91,8 @@ Requirements:
 
 - An Intel Mac
 - Node.js 24 or newer
-- The current official ChatGPT app in `/Applications/ChatGPT.app`
+- The official Intel ChatGPT app version `26.707.91948` in
+  `/Applications/ChatGPT.app`
 - Xcode Command Line Tools
 
 ```sh
@@ -127,16 +118,17 @@ npm run check:source:mac-x64
 node scripts/patch-all.js mac-x64 --check
 ```
 
-The dedicated Chat implementation and its structural regression test live in:
+The native Chat implementation and its structural regression test live in:
 
 - `scripts/patch-dedicated-chat-mode.js`
 - `scripts/test-dedicated-chat-mode-patch.js`
 
-After changing either the renderer integration or main-process guest policy,
-run the aggregate patch check and `npm run test:dedicated-chat` before building
-the DMG. A release smoke test should also switch Codex > Chat > ChatGPT Work,
-verify that the native task state survives, restart the app to verify the
-isolated Chat session, and keep the official ChatGPT app open at the same time.
+After changing the mode selector, Chat route, model filtering, or completion
+transport, run the aggregate patch check and `npm run test:dedicated-chat` before
+building the DMG. A release smoke test should switch Codex > Chat > ChatGPT Work,
+continue an existing ChatGPT thread, verify projects and history are unchanged,
+confirm the Chat model selector and completion path, restart the app, and keep
+the official ChatGPT app open at the same time.
 
 ## Customize the frontend
 
@@ -166,14 +158,13 @@ Use these implementations as references:
 - `scripts/test-latest-model-patch.js`
 - `launcher/CodexLauncher.m`
 
-Structural patches can customize the extracted native renderer, the mode
-selector, and the trusted local chrome around Chat. The contents of the live
-Chat surface are served by `chatgpt.com`; this repository does not contain that
-website's React source. DOM injection or broad security-policy relaxation is
-intentionally not used, so arbitrary source-level customization of the remote
-ChatGPT interface is outside the supported scope. Reconstructing readable code
-from a compiled bundle is useful for targeted patches, but it is not equivalent
-to possessing OpenAI's original application source.
+Structural patches can customize the extracted native renderer, including the
+product selector, `/chat?mode=chat` layout, Chat accent, visible tabs, history and
+project presentation, and model selector. These files are compiled/minified
+upstream output and are regenerated by synchronization; they are excluded from
+Git and are not OpenAI's original source. Reconstructing readable code from a
+compiled bundle is useful for targeted patches, but it is not equivalent to
+possessing OpenAI's original application source.
 
 For the full architecture, signing, icon, update, and profile-isolation details,
 see [CUSTOM_BUILD.md](CUSTOM_BUILD.md).
