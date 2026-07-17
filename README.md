@@ -64,9 +64,19 @@ The native product-mode selector has three choices:
 
 Chat is part of the Codex/ChatGPT Work selector; it is not a separate sidebar
 destination. Chat reuses the same Work chrome (sidebar, history layout, projects,
-and home). The only intentional differences are the model selector and usage
-path: Chat uses non-TPP ChatGPT models / ChatGPT usage, while Work uses TPP /
-Codex usage.
+and home). Chat history includes both ChatGPT and Codex threads/projects. Mode
+switches stay on the open conversation: Chat↔Work only flip sticky mode and
+usage origin; Codex↔Chat/Work use an automatic bidirectional thread map.
+
+Chat’s model picker is forced to expose Sol High, Sol Medium, 5.5 Instant,
+GPT-5.4, and o3. New ChatGPT chats use the ChatGPT completion path. Opening a
+Codex/local thread in Chat or Work seeds recent turns into ChatGPT (or opens the
+mapped conversation) and auto-submits once. In Codex mode, mapped ChatGPT rows
+resolve back to `/local/:id`. Very long Codex history is truncated in the seed;
+the AppServer thread remains the Codex source of truth until further sync.
+
+Sites is available from Work and Chat chrome (not only Codex), and the Sites
+access gate is unlocked in the catalog patch.
 
 The Chat page uses the desktop application's existing ChatGPT conversation and
 project data. It preserves server-side conversation identifiers, so existing
@@ -75,13 +85,16 @@ not copy, migrate, rewrite, delete, or otherwise mutate chats.
 
 ### Chat models and usage path
 
-- Chat exposes the upstream-supported, non-third-party ChatGPT models in its own
-  model selector.
-- Chat completions use the native `startCompletionStream` path rather than the
-  Codex AppServer turn-start path used by Codex and ChatGPT Work.
-- That transport separation keeps Chat on the ChatGPT chat usage allowance while
-  Codex and ChatGPT Work continue to use their shared Codex usage allowance.
-- Changing modes or models never rewrites existing thread metadata.
+- Chat’s picker always includes Sol High, Sol Medium, 5.5 Instant, GPT-5.4, and
+  o3 (merged on top of the server catalog).
+- New ChatGPT chats use `startCompletionStream` (ChatGPT usage).
+- Chat sticky mode forces origin `null`; Work sticky mode forces origin `tpp`.
+- Opening a Codex/local thread in Chat or Work continues on ChatGPT via
+  `cdr-thread-map` (migrated from `cdr-codex-chatgpt-map`) with transcript seed
+  + auto-submit on first cross-open.
+- In Codex mode, mapped ChatGPT history rows open `/local/:id`.
+- Changing modes never rewrites existing thread metadata; Codex↔ChatGPT is
+  seed-on-first-cross, not live dual-write.
 
 There is no remote-page overlay or second chat store. Chat is a native route in
 the same compiled renderer, while the side-by-side application profile remains
@@ -194,4 +207,5 @@ binary or making the repository public.
 - [OpenAI Codex](https://github.com/openai/codex) — Codex CLI
 - [Haleclipse/CodexDesktop-Rebuild](https://github.com/Haleclipse/CodexDesktop-Rebuild) — upstream cross-platform rebuild
 - [Electron Forge](https://www.electronforge.io/) — packaging toolchain
+
 

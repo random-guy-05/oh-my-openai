@@ -3,10 +3,11 @@
  * Promote the native ChatGPT client already shipped in the official Intel app
  * into a third Codex / ChatGPT Work / Chat product mode.
  *
- * Chat and ChatGPT Work share the same Work chrome (sidebar, history layout,
- * projects, home). The only intentional differences are:
- *   - Chat uses non-TPP ChatGPT models / ChatGPT usage
- *   - Work uses TPP / Codex usage
+ * Chat and ChatGPT Work share the same Work chrome and the same ChatGPT
+ * conversation IDs. Mode switches stay on the open thread; Chat uses origin
+ * null (ChatGPT usage) and Work uses origin tpp. Codex/local threads opened
+ * under Chat or Work auto-map to ChatGPT with seeded context; Codex mode can
+ * reverse-map back to /local/:id.
  *
  * Supported upstream: macOS Intel 26.707.91948 (build 5440).
  */
@@ -16,11 +17,71 @@ const { parse } = require("acorn");
 const { relPath, SRC_DIR } = require("./patch-util");
 
 const SUPPORTED_PLATFORM = "mac-x64";
-const PAGE_MARKER = "codex-rebuild:native-chat-mode-v9";
+const PAGE_MARKER = "codex-rebuild:native-chat-mode-v13";
+const PAGE_MARKER_V12 = "codex-rebuild:native-chat-mode-v12";
+const PAGE_MARKER_V11 = "codex-rebuild:native-chat-mode-v11";
+const PAGE_MARKER_V10 = "codex-rebuild:native-chat-mode-v10";
+const PAGE_MARKER_V9 = "codex-rebuild:native-chat-mode-v9";
 const PAGE_MARKER_V8 = "codex-rebuild:native-chat-mode-v8";
-const HOME_MARKER = "codex-rebuild:native-chat-home-v8";
+const HOME_MARKER = "codex-rebuild:native-chat-home-v13";
+const HOME_MARKER_V12 = "codex-rebuild:native-chat-home-v12";
+const HOME_MARKER_V8 = "codex-rebuild:native-chat-home-v8";
+const OPEN_THREAD_MARKER = "codex-rebuild:chat-codex-handoff-v13";
+const OPEN_THREAD_MARKER_V12 = "codex-rebuild:chat-codex-handoff-v12";
+const ORIGIN_MARKER = "codex-rebuild:chat-origin-v13";
+const ORIGIN_MARKER_V12 = "codex-rebuild:chat-origin-v12";
 const CSS_MARKER = "codex-rebuild:native-chat-theme-v8";
+
+const THREAD_MAP_HELPERS = `function CDRReadThreadMap(){let m={byLocal:{},byChat:{}};try{let cur=JSON.parse(localStorage.getItem(\`cdr-thread-map\`)||\`{}\`);if(cur&&typeof cur===\`object\`){m.byLocal=cur.byLocal&&typeof cur.byLocal===\`object\`?cur.byLocal:{};m.byChat=cur.byChat&&typeof cur.byChat===\`object\`?cur.byChat:{}}let old=JSON.parse(localStorage.getItem(\`cdr-codex-chatgpt-map\`)||\`{}\`);if(old&&typeof old===\`object\`){for(let[k,v]of Object.entries(old)){if(typeof k===\`string\`&&typeof v===\`string\`){if(!m.byLocal[k])m.byLocal[k]=v;if(!m.byChat[v])m.byChat[v]=k}}} }catch{}return m}function CDRWriteThreadMap(localKey,chatId){if(!localKey||!chatId)return;try{let m=CDRReadThreadMap();m.byLocal[localKey]=chatId;m.byChat[chatId]=localKey;localStorage.setItem(\`cdr-thread-map\`,JSON.stringify(m));let old=JSON.parse(localStorage.getItem(\`cdr-codex-chatgpt-map\`)||\`{}\`);old[localKey]=chatId;localStorage.setItem(\`cdr-codex-chatgpt-map\`,JSON.stringify(old))}catch{}}function CDRProductMode(){try{return localStorage.getItem(\`cdr-product-mode\`)}catch{return null}}function CDRBuildCodexSeed(e,t){try{let p=mt(t);if(p?.kind===\`local\`){let k=e.get(Li,p.threadId),snap=k!=null?e.get(Mn,k):null,turns=snap?.turns||snap?.items||snap?.history||[],lines=[];if(Array.isArray(turns)){for(let turn of turns.slice(-12)){let texts=[];let items=Array.isArray(turn?.items)?turn.items:Array.isArray(turn)?turn:[turn];for(let item of items){if(!item||typeof item!==\`object\`)continue;for(let key of[\`text\`,\`content\`,\`agentMessage\`,\`userMessage\`,\`message\`]){let val=item[key];if(typeof val===\`string\`&&val.trim())texts.push(val.trim());else if(Array.isArray(val))for(let c of val){if(typeof c===\`string\`&&c.trim())texts.push(c.trim());else if(c&&typeof c.text===\`string\`&&c.text.trim())texts.push(c.text.trim())}}}if(texts.length)lines.push(texts.join(\`\\n\`).slice(0,1200))}if(lines.length)return \`Continuing this Codex thread. Prior context:\\n\\n\`+lines.join(\`\\n\\n---\\n\\n\`).slice(0,12000)+\`\\n\\nPlease continue from here.\`}}}catch{}return \`Continue Codex thread \${t}. Use prior project context and proceed.\`}`;
+
+const OPEN_THREAD_SOURCE =
+  "function Tc(e,t,n,r){Ec(e,t);let i=mn(t);if(i!=null){n(i);return}r(S(t))}";
+const OPEN_THREAD_V12 =
+  "function Tc(e,t,n,r){/* codex-rebuild:chat-codex-handoff-v12 */if((()=>{try{return localStorage.getItem(`cdr-product-mode`)===`chat`}catch{return!1}})()){let CDRMapped=null;try{CDRMapped=JSON.parse(localStorage.getItem(`cdr-codex-chatgpt-map`)||`{}`)[t]||null}catch{}if(CDRMapped){r(`/work/conversation/${encodeURIComponent(CDRMapped)}?mode=chat`);return}r(`/chat?mode=chat`,{state:{prefillPrompt:`Continue this Codex thread in ChatGPT.`,cdrContinueThreadKey:t}});return}Ec(e,t);let i=mn(t);if(i!=null){n(i);return}r(S(t))}";
+const OPEN_THREAD_REPLACEMENT =
+  `function Tc(e,t,n,r){/* ${OPEN_THREAD_MARKER} */${THREAD_MAP_HELPERS};let CDRMode=CDRProductMode();if(CDRMode===\`chat\`||CDRMode===\`work\`){let map=CDRReadThreadMap(),mapped=map.byLocal[t]||null;if(mapped){r(\`/work/conversation/\${encodeURIComponent(mapped)}\${CDRMode===\`chat\`?\`?mode=chat\`:\`\`}\`);return}(async()=>{try{Ec(e,t)}catch{}let seed=CDRBuildCodexSeed(e,t),home=CDRMode===\`chat\`?\`/chat?mode=chat\`:\`/\`;r(home,{state:{prefillPrompt:seed,cdrContinueThreadKey:t,cdrAutoSubmit:!0}})})();return}Ec(e,t);let i=mn(t);if(i!=null){n(i);return}r(S(t))}`;
+
+const KM_ORIGIN_SOURCE =
+  "m=t.conversationOrigin===void 0?e.get(yl,u):t.conversationOrigin";
+const KM_ORIGIN_V12 =
+  "m=((o)=>{/* codex-rebuild:chat-origin-v12 */try{if(localStorage.getItem(`cdr-product-mode`)===`chat`&&o===`tpp`)return null}catch{}return o})(t.conversationOrigin===void 0?e.get(yl,u):t.conversationOrigin)";
+const KM_ORIGIN_REPLACEMENT =
+  `m=((o)=>{/* ${ORIGIN_MARKER} */try{let mode=localStorage.getItem(\`cdr-product-mode\`);if(mode===\`chat\`)return null;if(mode===\`work\`)return \`tpp\`}catch{}return o})(t.conversationOrigin===void 0?e.get(yl,u):t.conversationOrigin)`;
+const LP_ORIGIN_SOURCE = "f=n===void 0?e.get(yl,t):n";
+const LP_ORIGIN_V12 =
+  "f=((o)=>{try{if(localStorage.getItem(`cdr-product-mode`)===`chat`&&o===`tpp`)return null}catch{}return o})(n===void 0?e.get(yl,t):n)";
+const LP_ORIGIN_REPLACEMENT =
+  `f=((o)=>{try{let mode=localStorage.getItem(\`cdr-product-mode\`);if(mode===\`chat\`)return null;if(mode===\`work\`)return \`tpp\`}catch{}return o})(n===void 0?e.get(yl,t):n)`;
+
+const HOME_SUBMIT_SOURCE =
+  "J=e=>{s(`${ne(e)}${CDRChatMode?`?mode=chat`:``}`,{replace:!0})};";
+const HOME_SUBMIT_V12 =
+  "J=e=>{try{let CDRKey=u?.cdrContinueThreadKey;if(CDRKey){let CDRMap=JSON.parse(localStorage.getItem(`cdr-codex-chatgpt-map`)||`{}`);CDRMap[CDRKey]=e;localStorage.setItem(`cdr-codex-chatgpt-map`,JSON.stringify(CDRMap))}}catch{}s(`${ne(e)}${CDRChatMode?`?mode=chat`:``}`,{replace:!0})};";
+const HOME_SUBMIT_REPLACEMENT =
+  "J=e=>{try{let CDRKey=u?.cdrContinueThreadKey;if(CDRKey){let m={byLocal:{},byChat:{}};try{let cur=JSON.parse(localStorage.getItem(`cdr-thread-map`)||`{}`);if(cur&&typeof cur===`object`){m.byLocal=cur.byLocal&&typeof cur.byLocal===`object`?cur.byLocal:{};m.byChat=cur.byChat&&typeof cur.byChat===`object`?cur.byChat:{}}}catch{}m.byLocal[CDRKey]=e;m.byChat[e]=CDRKey;localStorage.setItem(`cdr-thread-map`,JSON.stringify(m));let old=JSON.parse(localStorage.getItem(`cdr-codex-chatgpt-map`)||`{}`);old[CDRKey]=e;localStorage.setItem(`cdr-codex-chatgpt-map`,JSON.stringify(old))}}catch{}s(`${ne(e)}${CDRChatMode?`?mode=chat`:``}`,{replace:!0})};";
+
+const HOME_AUTOSUBMIT_ANCHOR =
+  "X=(0,N.jsx)(ge,{className:`w-full`,conversationOrigin:CDRChatMode?null:`tpp`,isHomeMenu:!0,prompt:b,showError:!0,onFileDropTargetChange:W,onPromptChange:O,onUserInput:G,projectId:K,projectName:q,onSubmitAccepted:J,onProjectChange:Y})";
+const HOME_AUTOSUBMIT_REPLACEMENT =
+  "X=(0,N.jsx)(ge,{className:`w-full`,conversationOrigin:CDRChatMode?null:`tpp`,isHomeMenu:!0,prompt:b,showError:!0,autoSubmit:u?.cdrAutoSubmit===!0,onFileDropTargetChange:W,onPromptChange:O,onUserInput:G,projectId:K,projectName:q,onSubmitAccepted:J,onProjectChange:Y})";
+
+const HS_DESTRUCTURE_SOURCE =
+  "showLockdownSlashCommand:k}=e,A=a===void 0?!0:a";
+const HS_DESTRUCTURE_REPLACEMENT =
+  "showLockdownSlashCommand:k,autoSubmit:CDRAutoSubmit=!1}=e,A=a===void 0?!0:a";
+const HS_SUBMIT_ANCHOR = "t[106]=_t):_t=t[106];let vt;";
+const HS_SUBMIT_REPLACEMENT =
+  "t[106]=_t):_t=t[106];(0,vS.useEffect)(()=>{if(CDRAutoSubmit!==!0)return;let p=(typeof C==`string`&&C.trim()?C:Oe??``).trim();if(!p)return;try{let k=`cdr-auto-submitted:`+(te??`home`);if(sessionStorage.getItem(k))return;sessionStorage.setItem(k,`1`)}catch{}Promise.resolve().then(()=>_t(p))},[CDRAutoSubmit,_t,C,Oe,te]);let vt;";
+
 const CHAT_HOME_ROUTE = "/chat?mode=chat";
+const SITES_NAV_CODEX_ONLY =
+  "t&&r===`codex`&&!u?(0,XF.jsx)(yf,{electron:!0,children:(0,XF.jsx)(IOe,{})}):null";
+const SITES_NAV_WORK_AND_CODEX =
+  "t&&(r===`codex`||r===`work`)&&!u?(0,XF.jsx)(yf,{electron:!0,children:(0,XF.jsx)(IOe,{})}):null";
+const CHAT_HISTORY_KEYS_V9 =
+  "source:`all`});if(CDRChatMode){let e=e=>e.startsWith(`chatgpt:`);j={...j,chatKeys:[...E.visibleProjects.map(e=>xE(e.gizmo.id)),...j.chatKeys].filter(e),pinnedKeys:j.pinnedKeys.filter(e)}}let M=new Map";
+const CHAT_HISTORY_KEYS_V10 =
+  "source:`all`});if(CDRChatMode){j={...j,chatKeys:[...E.visibleProjects.map(e=>xE(e.gizmo.id)),...j.chatKeys]}}let M=new Map";
 
 // Chat history includes non-TPP projects that can omit gizmo.display.
 const UNSAFE_OL_PROJECT_DISPLAY =
@@ -40,6 +101,13 @@ const UNSAFE_PROJECT_TITLE =
 const SAFE_PROJECT_TITLE =
   "function Jke(e){return (e.gizmo.display?.name??``).trim()||e.gizmo.id}";
 
+const SIDEBAR_CLICK_SOURCE =
+  "z=({target:t})=>{if(t.source===`chatgpt`){r(t.target.route);return}Aw(e,t.threadKey,i,r)}";
+const SIDEBAR_CLICK_REPLACEMENT =
+  "z=({target:t})=>{if(t.source===`chatgpt`){let CDRMode=(()=>{try{return localStorage.getItem(`cdr-product-mode`)}catch{return null}})();if(CDRMode===`codex`){let cid=t.target?.conversationId,local=null;try{let m=JSON.parse(localStorage.getItem(`cdr-thread-map`)||`{}`);local=m.byChat?.[cid]||null;if(!local){let old=JSON.parse(localStorage.getItem(`cdr-codex-chatgpt-map`)||`{}`);for(let[k,v]of Object.entries(old))if(v===cid){local=k;break}}}catch{}if(local){Aw(e,local,i,r);return}}r(t.target.route);return}Aw(e,t.threadKey,i,r)}";
+
+const CHAT_MODE_SELECT_V13 =
+  "let ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{let CDRPath=CDRChatLocation.pathname||``,CDRSearch=CDRChatLocation.search||``,CDRLocalId=CDRPath.startsWith(`/local/`)?decodeURIComponent(CDRPath.slice(7).split(`?`)[0]):null,CDRChatId=CDRPath.startsWith(`/work/conversation/`)?decodeURIComponent(CDRPath.slice(20).split(`?`)[0]):null;try{localStorage.setItem(`cdr-product-mode`,e)}catch{}if(e===`chat`){if(CDRLocalId){Aw(a,CDRLocalId.includes(`:`)?CDRLocalId:`local:${CDRLocalId}`,qx(),CDRChatNavigate);return}if(CDRChatId){let sp=new URLSearchParams(CDRSearch);sp.set(`mode`,`chat`);CDRChatNavigate({pathname:CDRPath,search:`?`+sp.toString()},{replace:!0});return}if(CDRPath===`/`||CDRPath===``||CDRPath===`/chat`){CDRChatNavigate(`/chat?mode=chat`);return}CDRChatNavigate({pathname:CDRPath,search:CDRSearch.includes(`mode=chat`)?CDRSearch:`${CDRSearch?CDRSearch+`&`:`?`}mode=chat`},{replace:!0});return}Iee(a,e===`work`?vf:Tr);if(e===`work`){if(CDRLocalId){Aw(a,CDRLocalId.includes(`:`)?CDRLocalId:`local:${CDRLocalId}`,qx(),CDRChatNavigate);return}if(CDRChatId){let sp=new URLSearchParams(CDRSearch);sp.delete(`mode`);let q=sp.toString();CDRChatNavigate({pathname:CDRPath,search:q?`?`+q:``},{replace:!0});return}return}if(e===`codex`){if(CDRChatId){let local=null;try{let m=JSON.parse(localStorage.getItem(`cdr-thread-map`)||`{}`);local=m.byChat?.[CDRChatId]||null;if(!local){let old=JSON.parse(localStorage.getItem(`cdr-codex-chatgpt-map`)||`{}`);for(let[k,v]of Object.entries(old))if(v===CDRChatId){local=k;break}}}catch{}if(local){Aw(a,local,qx(),CDRChatNavigate);return}}return}}}),(0,iz.jsx)(vOe,{})]}):null;";
 function countOccurrences(source, needle) {
   if (needle.length === 0) throw new Error("Cannot count an empty anchor");
   let count = 0;
@@ -267,12 +335,22 @@ const NEW_CHAT_SOURCE = String.raw`function NOe({showSearchNavItem:e,chatMode:t}
 
 const PROJECT_CHAT_ROW_SOURCE = 'function Uke(e){let{activeConversationId:n,activeServerConversationId:r,item:i,chatMode:CDRChatMode=!1}=e,CDRChatRoute=e=>CDRChatMode?`${e}${e.includes(`?`)?`&`:`?`}mode=chat`:e;switch(i.kind){case`optimistic`:{let e=i.conversationId,r=CDRChatRoute(dt(i.conversationId));return(0,sL.jsx)(tL,{activeConversationId:n,conversationId:e,isGrouped:!0,route:r})}case`server`:{let e=i.conversation,a=i.conversation.is_starred===!0,o=CDRChatRoute(dt(i.conversation.id));return(0,sL.jsx)(nL,{activeConversationId:n,activeServerConversationId:r,conversation:e,isGrouped:!0,isPinned:a,route:o})}}}';
 
-const CHAT_HOME_WRAPPER = String.raw`/* ${PAGE_MARKER} */function CDRChatHome(){let{accountId:e}=u_(),t=Yc(),[n,r]=(0,h0.useState)(e),i=n!==e;(0,h0.useLayoutEffect)(()=>{i&&(t.removeQueries({type:\`inactive\`}),void t.resetQueries({type:\`active\`}),r(e))},[e,i,t]);${SAFE_CHAT_HOME_GATE}return(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{chatMode:!0},"chat:"+(n??"anonymous"))})}`.replaceAll("\\`", "`");
+const CHAT_HOME_WRAPPER = String.raw`/* ${PAGE_MARKER} */function CDRChatHome(){try{localStorage.setItem(\`cdr-product-mode\`,\`chat\`)}catch{}let{accountId:e}=u_(),t=Yc(),[n,r]=(0,h0.useState)(e),i=n!==e;(0,h0.useLayoutEffect)(()=>{i&&(t.removeQueries({type:\`inactive\`}),void t.resetQueries({type:\`active\`}),r(e))},[e,i,t]);${SAFE_CHAT_HOME_GATE}return(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{chatMode:!0},"chat:"+(n??"anonymous"))})}`.replaceAll("\\`", "`");
 
 const CHAT_ROUTE_STATE_V8 =
   "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatMode=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`;(0,rz.useEffect)(()=>{let e=document.documentElement;return CDRChatMode?e.setAttribute(`data-codex-product-mode`,`chat`):e.removeAttribute(`data-codex-product-mode`),()=>{e.removeAttribute(`data-codex-product-mode`)}},[CDRChatMode]);let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ";
 const CHAT_ROUTE_STATE_V9 =
   "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatMode=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`;let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ";
+const CHAT_ROUTE_STATE_V10 =
+  "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatMode=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`||(()=>{try{return sessionStorage.getItem(`cdr-product-mode`)===`chat`}catch{return!1}})();let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ";
+const CHAT_ROUTE_STATE_V11 =
+  "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatModeFromRoute=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`,CDRChatModeStored=(()=>{try{return localStorage.getItem(`cdr-product-mode`)===`chat`}catch{return!1}})(),CDRChatMode=CDRChatModeFromRoute||CDRChatModeStored;(0,rz.useEffect)(()=>{if(!CDRChatModeFromRoute)return;try{localStorage.setItem(`cdr-product-mode`,`chat`)}catch{}},[CDRChatModeFromRoute]);let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ";
+const CHAT_MODE_SELECT_V9 =
+  "let ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{if(e===`chat`){CDRChatNavigate(`/chat?mode=chat`);return}Iee(a,e===`work`?vf:Tr),CDRChatMode&&CDRChatNavigate(`/`)}}),(0,iz.jsx)(vOe,{})]}):null;";
+const CHAT_MODE_SELECT_V10 =
+  "let ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{if(e===`chat`){try{sessionStorage.setItem(`cdr-product-mode`,`chat`)}catch{}CDRChatNavigate(`/chat?mode=chat`);return}try{sessionStorage.removeItem(`cdr-product-mode`)}catch{}Iee(a,e===`work`?vf:Tr),CDRChatMode&&CDRChatNavigate(`/`)}}),(0,iz.jsx)(vOe,{})]}):null;";
+const CHAT_MODE_SELECT_V11 =
+  "let ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{if(e===`chat`){try{localStorage.setItem(`cdr-product-mode`,`chat`)}catch{}CDRChatNavigate(`/chat?mode=chat`);return}try{localStorage.removeItem(`cdr-product-mode`)}catch{}Iee(a,e===`work`?vf:Tr),CDRChatMode&&CDRChatNavigate(`/`)}}),(0,iz.jsx)(vOe,{})]}):null;";
 
 function stripChatTheme(source) {
   const marker = `\n/* ${CSS_MARKER} */`;
@@ -286,13 +364,57 @@ function alignChatUiWithWork(source, bundlePath) {
   let next = source;
   let changed = false;
 
-  if (next.includes(PAGE_MARKER_V8)) {
-    next = replaceExactly(next, PAGE_MARKER_V8, PAGE_MARKER, "Chat page marker v9");
-    changed = true;
+  for (const legacy of [PAGE_MARKER_V8, PAGE_MARKER_V9, PAGE_MARKER_V10, PAGE_MARKER_V11, PAGE_MARKER_V12]) {
+    if (next.includes(legacy)) {
+      next = replaceExactly(next, legacy, PAGE_MARKER, `Chat page marker from ${legacy}`);
+      changed = true;
+    }
   }
 
   if (next.includes(CHAT_ROUTE_STATE_V8)) {
-    next = replaceExactly(next, CHAT_ROUTE_STATE_V8, CHAT_ROUTE_STATE_V9, "remove Chat-only theme attribute");
+    next = replaceExactly(next, CHAT_ROUTE_STATE_V8, CHAT_ROUTE_STATE_V11, "Chat sticky mode from v8");
+    changed = true;
+  }
+  if (next.includes(CHAT_ROUTE_STATE_V9)) {
+    next = replaceExactly(next, CHAT_ROUTE_STATE_V9, CHAT_ROUTE_STATE_V11, "Chat sticky mode from v9");
+    changed = true;
+  }
+  if (next.includes(CHAT_ROUTE_STATE_V10)) {
+    next = replaceExactly(next, CHAT_ROUTE_STATE_V10, CHAT_ROUTE_STATE_V11, "Chat sticky mode from v10");
+    changed = true;
+  }
+  for (const [from, label] of [
+    [CHAT_MODE_SELECT_V9, "Chat mode select from v9"],
+    [CHAT_MODE_SELECT_V10, "Chat mode select from v10"],
+    [CHAT_MODE_SELECT_V11, "Chat mode select from v11"],
+  ]) {
+    if (next.includes(from)) {
+      next = replaceExactly(next, from, CHAT_MODE_SELECT_V13, label);
+      changed = true;
+    }
+  }
+  if (next.includes(SIDEBAR_CLICK_SOURCE)) {
+    next = replaceExactly(next, SIDEBAR_CLICK_SOURCE, SIDEBAR_CLICK_REPLACEMENT, "Codex reverse-map ChatGPT opens");
+    changed = true;
+  }
+  if (
+    next.includes("function CDRChatHome(){let{accountId:e}=u_()") &&
+    !next.includes("function CDRChatHome(){try{localStorage.setItem(`cdr-product-mode`,`chat`)}")
+  ) {
+    next = replaceExactly(
+      next,
+      "function CDRChatHome(){let{accountId:e}=u_()",
+      "function CDRChatHome(){try{localStorage.setItem(`cdr-product-mode`,`chat`)}catch{}let{accountId:e}=u_()",
+      "persist Chat mode on Chat home",
+    );
+    changed = true;
+  }
+  if (next.includes(CHAT_HISTORY_KEYS_V9)) {
+    next = replaceExactly(next, CHAT_HISTORY_KEYS_V9, CHAT_HISTORY_KEYS_V10, "include Codex history in Chat");
+    changed = true;
+  }
+  if (next.includes(SITES_NAV_CODEX_ONLY)) {
+    next = replaceExactly(next, SITES_NAV_CODEX_ONLY, SITES_NAV_WORK_AND_CODEX, "Sites nav in Work/Chat");
     changed = true;
   }
 
@@ -351,6 +473,12 @@ function alignChatUiWithWork(source, bundlePath) {
   if (next.includes("heading:CDRChatMode?`Chats`") || next.includes("if(CDRChatMode)te=G")) {
     throw new Error(`${relPath(bundlePath)} still forks Chat history layout away from Work`);
   }
+  if (next.includes("e.startsWith(`chatgpt:`)") && next.includes("pinnedKeys:j.pinnedKeys.filter(e)")) {
+    throw new Error(`${relPath(bundlePath)} still hides Codex threads from Chat history`);
+  }
+  if (next.includes(SITES_NAV_CODEX_ONLY)) {
+    throw new Error(`${relPath(bundlePath)} still hides Sites outside Codex mode`);
+  }
 
   return { source: next, changed };
 }
@@ -387,13 +515,46 @@ function hardenNativeChatPage(source, bundlePath) {
 }
 
 function patchPage(source, bundlePath) {
-  if (source.includes(PAGE_MARKER) || source.includes(PAGE_MARKER_V8)) {
+  if (
+    source.includes(PAGE_MARKER) ||
+    source.includes(PAGE_MARKER_V12) ||
+    source.includes(PAGE_MARKER_V11) ||
+    source.includes(PAGE_MARKER_V10) ||
+    source.includes(PAGE_MARKER_V9) ||
+    source.includes(PAGE_MARKER_V8)
+  ) {
     let next = source;
     let changed = false;
-    if (source.includes(PAGE_MARKER_V8) || source.includes("sidebarMode:CDRChatMode?`chat`") || source.includes("data-codex-product-mode")) {
+    if (
+      source.includes(PAGE_MARKER_V8) ||
+      source.includes(PAGE_MARKER_V9) ||
+      source.includes(PAGE_MARKER_V10) ||
+      source.includes(PAGE_MARKER_V11) ||
+      source.includes(PAGE_MARKER_V12) ||
+      source.includes(CHAT_MODE_SELECT_V11) ||
+      source.includes(SIDEBAR_CLICK_SOURCE) ||
+      source.includes("sidebarMode:CDRChatMode?`chat`") ||
+      source.includes("data-codex-product-mode") ||
+      source.includes(CHAT_HISTORY_KEYS_V9) ||
+      source.includes(SITES_NAV_CODEX_ONLY) ||
+      source.includes(CHAT_ROUTE_STATE_V9) ||
+      source.includes(CHAT_ROUTE_STATE_V10) ||
+      source.includes(CHAT_MODE_SELECT_V9) ||
+      source.includes(CHAT_MODE_SELECT_V10) ||
+      source.includes("sessionStorage.getItem(`cdr-product-mode`)") ||
+      source.includes("localStorage.removeItem(`cdr-product-mode`)")
+    ) {
       const aligned = alignChatUiWithWork(next, bundlePath);
       next = aligned.source;
       changed = changed || aligned.changed;
+    }
+    if (next.includes(CHAT_MODE_SELECT_V11)) {
+      next = replaceExactly(next, CHAT_MODE_SELECT_V11, CHAT_MODE_SELECT_V13, "non-destructive mode switch v13");
+      changed = true;
+    }
+    if (next.includes(SIDEBAR_CLICK_SOURCE)) {
+      next = replaceExactly(next, SIDEBAR_CLICK_SOURCE, SIDEBAR_CLICK_REPLACEMENT, "Codex reverse-map ChatGPT opens");
+      changed = true;
     }
     const hardened = hardenNativeChatPage(next, bundlePath);
     next = hardened.source;
@@ -418,15 +579,18 @@ function patchPage(source, bundlePath) {
   code = replaceFunction(code, "Uke", PROJECT_CHAT_ROW_SOURCE, bundlePath);
 
   // Keep Work nav chrome identical in Chat — only remove the standalone Quick Chat row.
+  // Sites is upstream Codex-only; also show it in Work (and therefore Chat).
   code = transformFunction(code, "MOe", (body) => {
-    return replaceExactly(body, "r===`codex`&&n?(0,XF.jsx)(cOe,{}):null", "null", "standalone Quick Chat row removal");
+    let next = replaceExactly(body, "r===`codex`&&n?(0,XF.jsx)(cOe,{}):null", "null", "standalone Quick Chat row removal");
+    next = replaceExactly(next, SITES_NAV_CODEX_ONLY, SITES_NAV_WORK_AND_CODEX, "Sites nav in Work/Chat");
+    return next;
   }, bundlePath);
 
   code = transformFunction(code, "mje", (body) => {
     let next = replaceExactly(
       body,
       "a=md(X),{accountId:o}=u_(),",
-      CHAT_ROUTE_STATE_V9,
+      CHAT_ROUTE_STATE_V11,
       "Chat route state",
     );
     next = replaceExactly(next, "I=j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`", "I=CDRChatMode?`chat`:(j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`)", "Chat selected mode");
@@ -439,7 +603,7 @@ function patchPage(source, bundlePath) {
     next = replaceExactly(
       next,
       "let ae;t[30]!==u||t[31]!==I||t[32]!==a?(ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{Iee(a,e===`work`?vf:Tr)}}),(0,iz.jsx)(vOe,{})]}):null,t[30]=u,t[31]=I,t[32]=a,t[33]=ae):ae=t[33];",
-      "let ae=u?(0,iz.jsxs)(`div`,{className:`ml-2 flex items-center`,children:[(0,iz.jsx)(ROe,{mode:I,onModeSelect:e=>{if(e===`chat`){CDRChatNavigate(`/chat?mode=chat`);return}Iee(a,e===`work`?vf:Tr),CDRChatMode&&CDRChatNavigate(`/`)}}),(0,iz.jsx)(vOe,{})]}):null;",
+      CHAT_MODE_SELECT_V13,
       "Chat mode selection",
     );
     next = replaceExactly(next, "K=(0,iz.jsx)(NOe,{showSearchNavItem:oe})", "K=(0,iz.jsx)(NOe,{showSearchNavItem:oe,chatMode:CDRChatMode})", "Chat new button");
@@ -489,12 +653,15 @@ function patchPage(source, bundlePath) {
     next = replaceExactly(
       next,
       "source:`all`}),M=new Map",
-      "source:`all`});if(CDRChatMode){let e=e=>e.startsWith(`chatgpt:`);j={...j,chatKeys:[...E.visibleProjects.map(e=>xE(e.gizmo.id)),...j.chatKeys].filter(e),pinnedKeys:j.pinnedKeys.filter(e)}}let M=new Map",
-      "Chat-only history keys",
+      "source:`all`});if(CDRChatMode){j={...j,chatKeys:[...E.visibleProjects.map(e=>xE(e.gizmo.id)),...j.chatKeys]}}let M=new Map",
+      "Chat history includes Codex + ChatGPT keys",
     );
     // Keep Work's "Tasks" heading and section switch — identical chrome.
     next = replaceExactly(next, "allowCodexThreadProjectDrag:!0", "allowCodexThreadProjectDrag:!CDRChatMode", "Chat drag isolation");
     next = replaceExactly(next, "chatGptSource:E,codexProjectKindByThreadKey:k", "chatGptSource:E,chatMode:CDRChatMode,codexProjectKindByThreadKey:k", "Chat project row mode", 2);
+    if (next.includes(SIDEBAR_CLICK_SOURCE)) {
+      next = replaceExactly(next, SIDEBAR_CLICK_SOURCE, SIDEBAR_CLICK_REPLACEMENT, "Codex reverse-map ChatGPT opens");
+    }
     return next;
   }, bundlePath);
 
@@ -533,24 +700,130 @@ function patchPage(source, bundlePath) {
 }
 
 function patchWorkHome(source, bundlePath) {
-  if (source.includes(HOME_MARKER)) {
-    verifyWorkHome(source, bundlePath);
-    return { source, changed: false };
+  let code = source;
+  let changed = false;
+  for (const legacy of [HOME_MARKER_V8, HOME_MARKER_V12]) {
+    if (code.includes(legacy) && !code.includes(HOME_MARKER)) {
+      code = replaceExactly(code, legacy, HOME_MARKER, `Chat home marker from ${legacy}`);
+      changed = true;
+    }
   }
-  let code = transformFunction(source, "j", (body) => {
-    let next = replaceExactly(body, "let{announcementStorybookOverride:i}=r", "let{announcementStorybookOverride:i,chatMode:CDRChatMode=!1}=r", "Chat home prop");
-    next = replaceExactly(
-      next,
-      "J;t[41]===s?J=t[42]:(J=e=>{s(ne(e),{replace:!0})},t[41]=s,t[42]=J);",
-      "J=e=>{s(`${ne(e)}${CDRChatMode?`?mode=chat`:``}`,{replace:!0})};",
-      "Chat submit route",
-    );
-    next = replaceExactly(next, "conversationOrigin:`tpp`", "conversationOrigin:CDRChatMode?null:`tpp`", "non-TPP Chat model source");
+  if (
+    code.includes(HOME_MARKER) &&
+    code.includes(HOME_SUBMIT_REPLACEMENT) &&
+    code.includes(HOME_AUTOSUBMIT_REPLACEMENT) &&
+    code.includes("conversationOrigin:CDRChatMode?null:`tpp`") &&
+    code.includes("cdr-thread-map")
+  ) {
+    verifyWorkHome(code, bundlePath);
+    return { source: code, changed };
+  }
+
+  code = transformFunction(code, "j", (body) => {
+    let next = body;
+    if (!next.includes("chatMode:CDRChatMode=!1")) {
+      next = replaceExactly(
+        next,
+        "let{announcementStorybookOverride:i}=r",
+        "let{announcementStorybookOverride:i,chatMode:CDRChatMode=!1}=r",
+        "Chat home prop",
+      );
+    }
+    if (next.includes("J;t[41]===s?J=t[42]:(J=e=>{s(ne(e),{replace:!0})},t[41]=s,t[42]=J);")) {
+      next = replaceExactly(
+        next,
+        "J;t[41]===s?J=t[42]:(J=e=>{s(ne(e),{replace:!0})},t[41]=s,t[42]=J);",
+        HOME_SUBMIT_REPLACEMENT,
+        "Chat submit route with bidirectional map",
+      );
+    }
+    if (next.includes(HOME_SUBMIT_SOURCE)) {
+      next = replaceExactly(next, HOME_SUBMIT_SOURCE, HOME_SUBMIT_REPLACEMENT, "Chat submit bidirectional map");
+    }
+    if (next.includes(HOME_SUBMIT_V12)) {
+      next = replaceExactly(next, HOME_SUBMIT_V12, HOME_SUBMIT_REPLACEMENT, "upgrade home submit map v13");
+    }
+    if (next.includes("conversationOrigin:`tpp`")) {
+      next = replaceExactly(next, "conversationOrigin:`tpp`", "conversationOrigin:CDRChatMode?null:`tpp`", "non-TPP Chat model source");
+    }
+    if (next.includes(HOME_AUTOSUBMIT_ANCHOR)) {
+      next = replaceExactly(next, HOME_AUTOSUBMIT_ANCHOR, HOME_AUTOSUBMIT_REPLACEMENT, "home auto-submit for Codex seed");
+    }
     return next;
   }, bundlePath);
-  code = replaceExactly(code, "function j(e){", `/* ${HOME_MARKER} */function j(e){`, "Chat home marker");
+
+  if (!code.includes(HOME_MARKER)) {
+    if (code.includes(`/* ${HOME_MARKER_V8} */function j(e){`) || code.includes(`/* ${HOME_MARKER_V12} */function j(e){`)) {
+      code = code.replace(`/* ${HOME_MARKER_V8} */function j(e){`, `/* ${HOME_MARKER} */function j(e){`);
+      code = code.replace(`/* ${HOME_MARKER_V12} */function j(e){`, `/* ${HOME_MARKER} */function j(e){`);
+    } else {
+      code = replaceExactly(code, "function j(e){", `/* ${HOME_MARKER} */function j(e){`, "Chat home marker");
+    }
+  }
   verifyWorkHome(code, bundlePath);
   return { source: code, changed: true };
+}
+
+function patchOpenThread(source, bundlePath) {
+  if (source.includes(OPEN_THREAD_MARKER)) {
+    verifyOpenThread(source, bundlePath);
+    return { source, changed: false };
+  }
+  let code = source;
+  if (code.includes(OPEN_THREAD_V12) || code.includes(OPEN_THREAD_MARKER_V12)) {
+    // Replace from function Tc through end of v12 body by finding marker and rewriting whole function
+    if (code.includes(OPEN_THREAD_V12)) {
+      code = replaceExactly(code, OPEN_THREAD_V12, OPEN_THREAD_REPLACEMENT, "upgrade Codex handoff v13");
+    } else {
+      // Marker present with slightly different body — fall back to source replace of original if present
+      throw new Error(`${relPath(bundlePath)} has v12 handoff marker but unexpected body; resync assets`);
+    }
+  } else if (code.includes(OPEN_THREAD_SOURCE)) {
+    code = replaceExactly(code, OPEN_THREAD_SOURCE, OPEN_THREAD_REPLACEMENT, "Chat Codex→ChatGPT handoff");
+  } else {
+    throw new Error(`${relPath(bundlePath)} missing Codex open-thread helper Tc`);
+  }
+  verifyOpenThread(code, bundlePath);
+  return { source: code, changed: true };
+}
+
+function patchChatOrigin(source, bundlePath) {
+  let code = source;
+  let changed = false;
+  if (code.includes(ORIGIN_MARKER) && code.includes(LP_ORIGIN_REPLACEMENT) && code.includes(HS_SUBMIT_REPLACEMENT)) {
+    verifyChatOrigin(code, bundlePath);
+    return { source: code, changed: false };
+  }
+
+  if (code.includes(KM_ORIGIN_V12)) {
+    code = replaceExactly(code, KM_ORIGIN_V12, KM_ORIGIN_REPLACEMENT, "upgrade origin override v13");
+    changed = true;
+  } else if (code.includes(KM_ORIGIN_SOURCE)) {
+    code = replaceExactly(code, KM_ORIGIN_SOURCE, KM_ORIGIN_REPLACEMENT, "Chat/Work origin follows sticky mode on submit");
+    changed = true;
+  } else if (!code.includes(KM_ORIGIN_REPLACEMENT)) {
+    throw new Error(`${relPath(bundlePath)} missing km conversationOrigin assignment`);
+  }
+
+  if (code.includes(LP_ORIGIN_V12)) {
+    code = replaceExactly(code, LP_ORIGIN_V12, LP_ORIGIN_REPLACEMENT, "upgrade prepare-origin v13");
+    changed = true;
+  } else if (code.includes(LP_ORIGIN_SOURCE) && !code.includes(LP_ORIGIN_REPLACEMENT)) {
+    code = replaceExactly(code, LP_ORIGIN_SOURCE, LP_ORIGIN_REPLACEMENT, "Chat/Work origin follows sticky mode on prepare");
+    changed = true;
+  }
+
+  if (code.includes(HS_DESTRUCTURE_SOURCE)) {
+    code = replaceExactly(code, HS_DESTRUCTURE_SOURCE, HS_DESTRUCTURE_REPLACEMENT, "home composer autoSubmit prop");
+    changed = true;
+  }
+  if (code.includes(HS_SUBMIT_ANCHOR)) {
+    code = replaceExactly(code, HS_SUBMIT_ANCHOR, HS_SUBMIT_REPLACEMENT, "home composer auto-submit effect");
+    changed = true;
+  }
+
+  verifyChatOrigin(code, bundlePath);
+  return { source: code, changed };
 }
 
 function patchCss(source, bundlePath) {
@@ -593,6 +866,16 @@ function verifyPage(source, bundlePath) {
     "chatMode:CDRChatMode,expandable:!0",
     "item:e,chatMode:CDRChatMode",
     "CDRChatRoute=e=>CDRChatMode?",
+    "localStorage.getItem(`cdr-product-mode`)===`chat`",
+    "localStorage.setItem(`cdr-product-mode`,`chat`)",
+    "CDRChatModeFromRoute||CDRChatModeStored",
+    "localStorage.setItem(`cdr-product-mode`,e)",
+    "CDRLocalId",
+    "CDRChatId",
+    "cdr-thread-map",
+    SIDEBAR_CLICK_REPLACEMENT.slice(0, 80),
+    SITES_NAV_WORK_AND_CODEX,
+    CHAT_HISTORY_KEYS_V10,
     SAFE_OL_PROJECT_DISPLAY,
     SAFE_FKE_PROJECT_DISPLAY,
     SAFE_CHAT_HOME_GATE,
@@ -608,6 +891,11 @@ function verifyPage(source, bundlePath) {
     "if(CDRChatMode)te=G",
     "r!==`chat`&&b?",
     "r===`chat`?null:(0,XF.jsx)(fOe",
+    SITES_NAV_CODEX_ONLY,
+    "e.startsWith(`chatgpt:`)",
+    "sessionStorage.getItem(`cdr-product-mode`)",
+    CHAT_MODE_SELECT_V11,
+    "CDRChatNavigate(`/chat?mode=chat`);return}try{localStorage.removeItem(`cdr-product-mode`)",
   ]) {
     if (source.includes(forbidden)) {
       throw new Error(`${relPath(bundlePath)} still forks Chat chrome away from Work: ${forbidden}`);
@@ -653,10 +941,56 @@ function verifyWorkHome(source, bundlePath) {
     "chatMode:CDRChatMode=!1",
     "conversationOrigin:CDRChatMode?null:`tpp`",
     "CDRChatMode?`?mode=chat`:``",
+    "cdrContinueThreadKey",
+    "cdr-thread-map",
+    "cdrAutoSubmit",
+    "autoSubmit:u?.cdrAutoSubmit===!0",
   ]) {
     if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing Chat home invariant: ${item}`);
   }
   if (!source.includes("onSubmitAccepted:J")) throw new Error(`${relPath(bundlePath)} Chat submit callback is disconnected`);
+}
+
+function verifyOpenThread(source, bundlePath) {
+  parseBundle(source, bundlePath);
+  if (countOccurrences(source, OPEN_THREAD_MARKER) !== 1) {
+    throw new Error(`${relPath(bundlePath)} Chat Codex handoff marker invalid`);
+  }
+  if (source.includes(OPEN_THREAD_SOURCE) || source.includes(OPEN_THREAD_MARKER_V12)) {
+    throw new Error(`${relPath(bundlePath)} still has pre-v13 Codex handoff`);
+  }
+  for (const item of [
+    "CDRReadThreadMap",
+    "CDRBuildCodexSeed",
+    "cdrAutoSubmit:!0",
+    "/work/conversation/",
+    "cdrContinueThreadKey",
+    "CDRMode===`chat`||CDRMode===`work`",
+  ]) {
+    if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing Codex handoff invariant: ${item}`);
+  }
+}
+
+function verifyChatOrigin(source, bundlePath) {
+  parseBundle(source, bundlePath);
+  if (countOccurrences(source, ORIGIN_MARKER) !== 1) {
+    throw new Error(`${relPath(bundlePath)} Chat origin marker invalid`);
+  }
+  if (source.includes(KM_ORIGIN_SOURCE) || source.includes(ORIGIN_MARKER_V12)) {
+    throw new Error(`${relPath(bundlePath)} still has pre-v13 origin override`);
+  }
+  if (!source.includes(LP_ORIGIN_REPLACEMENT)) {
+    throw new Error(`${relPath(bundlePath)} missing Chat prepare-origin override`);
+  }
+  if (!source.includes("mode===`work`)return `tpp`")) {
+    throw new Error(`${relPath(bundlePath)} missing Work origin force`);
+  }
+  if (!source.includes(HS_SUBMIT_REPLACEMENT)) {
+    throw new Error(`${relPath(bundlePath)} missing home auto-submit effect`);
+  }
+  if (!source.includes("autoSubmit:CDRAutoSubmit=!1")) {
+    throw new Error(`${relPath(bundlePath)} missing autoSubmit prop on home composer`);
+  }
 }
 
 function verifyCss(source, bundlePath) {
@@ -684,17 +1018,34 @@ function locateTargets(platform = SUPPORTED_PLATFORM) {
   const assets = path.join(SRC_DIR, platform, "_asar", "webview", "assets");
   if (!fs.existsSync(assets)) throw new Error(`${platform}: extracted webview assets are missing`);
   const page = findOne(assets, (source) =>
-    source.includes(PAGE_MARKER) || (
+    source.includes(PAGE_MARKER) ||
+    source.includes(PAGE_MARKER_V12) ||
+    source.includes(PAGE_MARKER_V11) ||
+    source.includes(PAGE_MARKER_V10) ||
+    source.includes(PAGE_MARKER_V9) ||
+    source.includes(PAGE_MARKER_V8) || (
       source.includes("function ROe(") &&
       source.includes("function mje(") &&
       source.includes("sidebarElectron.productMode.chatGptWork.plainText")
     ), `${platform} native app page`);
   const home = findOne(assets, (source) =>
-    source.includes(HOME_MARKER) || (
+    source.includes(HOME_MARKER) ||
+    source.includes(HOME_MARKER_V12) ||
+    source.includes(HOME_MARKER_V8) || (
       source.includes("function j(") &&
       source.includes("chatgptConversations.home.hero") &&
-      source.includes("conversationOrigin:`tpp`")
+      (source.includes("conversationOrigin:`tpp`") || source.includes("conversationOrigin:CDRChatMode?null:`tpp`"))
     ), `${platform} Work home page`);
+  const openThread = findOne(assets, (source) =>
+    source.includes(OPEN_THREAD_MARKER) ||
+    source.includes(OPEN_THREAD_MARKER_V12) ||
+    source.includes(OPEN_THREAD_SOURCE) ||
+    source.includes(OPEN_THREAD_V12), `${platform} Codex open-thread helper`);
+  const chatOrigin = findOne(assets, (source) =>
+    source.includes(ORIGIN_MARKER) ||
+    source.includes(ORIGIN_MARKER_V12) ||
+    source.includes(KM_ORIGIN_SOURCE) ||
+    source.includes(KM_ORIGIN_V12), `${platform} ChatGPT completion origin`);
   const css = findOne(assets, (source, filePath) =>
     source.includes(CSS_MARKER) || (
       path.basename(filePath).startsWith("app-") &&
@@ -702,7 +1053,7 @@ function locateTargets(platform = SUPPORTED_PLATFORM) {
       source.includes(".electron-dark") &&
       source.includes("#root{height:100vh}")
     ), `${platform} global theme`);
-  return { assets, page, home, css };
+  return { assets, page, home, openThread, chatOrigin, css };
 }
 
 function main() {
@@ -713,11 +1064,19 @@ function main() {
   const targets = locateTargets(platform);
   const nextPage = patchPage(targets.page.source, targets.page.path);
   const nextHome = patchWorkHome(targets.home.source, targets.home.path);
+  const nextOpenThread = patchOpenThread(targets.openThread.source, targets.openThread.path);
+  const nextChatOrigin = patchChatOrigin(targets.chatOrigin.source, targets.chatOrigin.path);
   const nextCss = patchCss(targets.css.source, targets.css.path);
-  for (const target of [targets.page, targets.home, targets.css]) {
+  for (const target of [targets.page, targets.home, targets.openThread, targets.chatOrigin, targets.css]) {
     console.log(`  [${platform}] ${relPath(target.path)}`);
   }
-  if (!nextPage.changed && !nextHome.changed && !nextCss.changed) {
+  const anyChanged =
+    nextPage.changed ||
+    nextHome.changed ||
+    nextOpenThread.changed ||
+    nextChatOrigin.changed ||
+    nextCss.changed;
+  if (!anyChanged) {
     console.log("    [ok] native Chat mode already installed and verified");
     return;
   }
@@ -728,30 +1087,39 @@ function main() {
   const entries = [
     { path: targets.page.path, previous: targets.page.source, next: nextPage.source, verify: verifyPage },
     { path: targets.home.path, previous: targets.home.source, next: nextHome.source, verify: verifyWorkHome },
+    { path: targets.openThread.path, previous: targets.openThread.source, next: nextOpenThread.source, verify: verifyOpenThread },
+    { path: targets.chatOrigin.path, previous: targets.chatOrigin.source, next: nextChatOrigin.source, verify: verifyChatOrigin },
     { path: targets.css.path, previous: targets.css.source, next: nextCss.source, verify: verifyCss },
   ];
   atomicReplaceEntries(entries, { transactionRoot: path.join(SRC_DIR, platform, "_asar") });
-  console.log("    [ok] installed native Chat routing, history, and models atomically");
+  console.log("    [ok] installed unified Chat/Work/Codex continuity atomically");
 }
 
 module.exports = {
   CHAT_HOME_ROUTE,
   CSS_MARKER,
   HOME_MARKER,
+  OPEN_THREAD_MARKER,
+  ORIGIN_MARKER,
   PAGE_MARKER,
   atomicReplaceEntries,
   countOccurrences,
   locateTargets,
+  patchChatOrigin,
   patchCss,
+  patchOpenThread,
   patchPage,
   patchWorkHome,
   recoverAtomicTransaction,
   replaceExactly,
+  verifyChatOrigin,
   verifyCss,
+  verifyOpenThread,
   verifyPage,
   verifyWorkHome,
 };
 
 if (require.main === module) main();
+
 
 

@@ -10,9 +10,13 @@ version `26.707.91948`.
 - Source application: `/Applications/ChatGPT.app`
 - Required architecture: `x86_64`
 - Codex/Work visible model family: `gpt-5.6-sol`, `gpt-5.6-terra`, and
-  `gpt-5.6-luna`; hidden internal models remain available to app internals.
-- Chat uses the upstream-supported non-third-party models exposed by the native
-  ChatGPT model selector.
+  `gpt-5.6-luna` (Sol includes high/medium reasoning efforts); hidden internal
+  models remain available to app internals.
+- Chat unlocks the full ChatGPT `/models` catalog (`iim`) plus internal model
+  slugs, so Instant / 5.4 / o3 and other server-offered Chat models can appear.
+- Chat history includes Codex threads and projects (not ChatGPT-only), and Chat
+  mode stays sticky while browsing them.
+- Sites is shown in Work/Chat chrome and the Sites access gate is forced on.
 - ChatGPT Work features, including plugins, sites, pull requests, subagents, and
   artifacts, are left intact.
 - The Codex/ChatGPT Work selector has a third **Chat** option. The previous
@@ -21,8 +25,16 @@ version `26.707.91948`.
   renderer, with its existing history, projects, and conversation views.
 - Existing server-side conversation IDs remain unchanged and every available
   thread can be continued; the patch performs no chat migration or mutation.
-- Chat completions use `startCompletionStream`, separate from the Codex/Work
-  AppServer turn path and its shared usage allowance.
+- Chat completions use `startCompletionStream`, separate from the Codex
+  AppServer turn path. Chat sticky mode uses origin `null` (ChatGPT usage);
+  Work sticky mode uses origin `tpp`.
+- Mode switches stay on the open conversation. Chat↔Work share the same
+  conversation IDs; only sticky mode and origin/usage change.
+- Opening a Codex/local thread in Chat or Work maps to ChatGPT
+  (`cdr-thread-map`, migrating legacy `cdr-codex-chatgpt-map`), seeds recent
+  turns, and auto-submits once. Codex mode reverse-maps ChatGPT rows to
+  `/local/:id`. Seeded continuity is prefix-only (truncated on long threads),
+  not live dual-write.
 - New turns fall back to Sol when a saved legacy model is no longer visible.
   Existing thread metadata is not rewritten.
 
@@ -81,22 +93,25 @@ links and Finder reopens to reuse the existing private runtime safely.
 ## Native Chat mode architecture
 
 Chat is a third value in the existing Codex/ChatGPT Work product-mode selector,
-not another navigation row. Selecting it navigates the same renderer to
-`/chat?mode=chat`. Chat reuses Work's sidebar, history layout, projects, and home
-chrome. The `mode=chat` query value scopes model selection and ChatGPT usage
-without forking conversation data or applying a separate visual theme.
+not another navigation row. Selecting it keeps you on the current route when
+possible (adding `?mode=chat` on ChatGPT conversations) and only goes to
+`/chat?mode=chat` from home. Chat reuses Work's sidebar, history layout,
+projects, and home chrome. The sticky `cdr-product-mode` value scopes usage
+origin (`null` for Chat, `tpp` for Work) without forking conversation data or
+applying a separate visual theme.
 
 The route renders the application's built-in ChatGPT history, projects, and
 conversation page. It reads the signed-in account's existing server-side data
 and retains the original conversation identifiers. Opening, continuing, or
-switching a thread uses that same record; the patch does not import, export,
-clone, migrate, rewrite, or delete chats.
+switching a thread uses that same record; Chat↔Work continuity is full (same
+IDs). Codex↔ChatGPT continuity uses an automatic bidirectional map with
+transcript seed on first cross-open; the AppServer thread remains the Codex
+source of truth until further sync.
 
 Chat's model selector filters to upstream-supported models that are not marked
 as third-party. Sending from Chat invokes the native `startCompletionStream`
-transport. Codex and ChatGPT Work retain their AppServer turn-start transport,
-so their shared Codex usage path is not substituted for Chat's separate ChatGPT
-chat usage path.
+transport. Codex retains AppServer `turn/start`. Work uses the same ChatGPT UI
+as Chat with TPP origin.
 
 This design uses no remote-page overlay. Chat is patched entirely within the
 compiled native renderer and its existing application data flow. The separate
@@ -192,4 +207,5 @@ This local build is not Apple-notarized. On first normal launch, macOS may
 require **Control-click Codex.app > Open** (or **Open Anyway** in Privacy &
 Security). The launcher, private runtime, data profile, and URL registration are
 separate from the official ChatGPT app, so both can run at the same time.
+
 

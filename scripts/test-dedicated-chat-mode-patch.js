@@ -8,16 +8,22 @@ const {
   CHAT_HOME_ROUTE,
   CSS_MARKER,
   HOME_MARKER,
+  OPEN_THREAD_MARKER,
+  ORIGIN_MARKER,
   PAGE_MARKER,
   atomicReplaceEntries,
   countOccurrences,
   locateTargets,
+  patchChatOrigin,
   patchCss,
+  patchOpenThread,
   patchPage,
   patchWorkHome,
   recoverAtomicTransaction,
   replaceExactly,
+  verifyChatOrigin,
   verifyCss,
+  verifyOpenThread,
   verifyPage,
   verifyWorkHome,
 } = require("./patch-dedicated-chat-mode");
@@ -103,6 +109,8 @@ assert.ok(
 assert.ok(path.basename(targets.page.path).startsWith("app-initial~app-main~page-"));
 assert.ok(path.basename(targets.home.path).startsWith("work-home-page-"));
 assert.ok(path.basename(targets.css.path).startsWith("app-"));
+assert.ok(targets.openThread.path.includes("remote-conversation-page"));
+assert.ok(targets.chatOrigin.path.includes("quick-chat-window-page"));
 assertIncludes(targets.page.source, "function ROe(", "official page target");
 assertIncludes(targets.page.source, "function mje(", "official page target");
 assertIncludes(targets.home.source, "chatgptConversations.home.hero", "official Work home target");
@@ -111,6 +119,8 @@ assert.throws(() => locateTargets("mac-arm64"), /supports only mac-x64 26\.707\.
 
 const pageOnce = patchPage(targets.page.source, targets.page.path);
 const homeOnce = patchWorkHome(targets.home.source, targets.home.path);
+const openOnce = patchOpenThread(targets.openThread.source, targets.openThread.path);
+const originOnce = patchChatOrigin(targets.chatOrigin.source, targets.chatOrigin.path);
 const cssOnce = patchCss(targets.css.source, targets.css.path);
 assert.strictEqual(
   pageOnce.changed,
@@ -119,8 +129,22 @@ assert.strictEqual(
 );
 assert.strictEqual(
   homeOnce.changed,
-  !targets.home.source.includes(HOME_MARKER),
+  !targets.home.source.includes(HOME_MARKER) ||
+    !targets.home.source.includes("cdr-thread-map") ||
+    !targets.home.source.includes("cdrAutoSubmit"),
   "home first-pass change state is inconsistent",
+);
+assert.strictEqual(
+  openOnce.changed,
+  !targets.openThread.source.includes(OPEN_THREAD_MARKER),
+  "open-thread first-pass change state is inconsistent",
+);
+assert.strictEqual(
+  originOnce.changed,
+  !targets.chatOrigin.source.includes(ORIGIN_MARKER) ||
+    !targets.chatOrigin.source.includes("mode===`work`)return `tpp`") ||
+    !targets.chatOrigin.source.includes("autoSubmit:CDRAutoSubmit=!1"),
+  "chat-origin first-pass change state is inconsistent",
 );
 assert.strictEqual(
   cssOnce.changed,
@@ -129,14 +153,32 @@ assert.strictEqual(
 );
 verifyPage(pageOnce.source, targets.page.path);
 verifyWorkHome(homeOnce.source, targets.home.path);
+verifyOpenThread(openOnce.source, targets.openThread.path);
+verifyChatOrigin(originOnce.source, targets.chatOrigin.path);
 verifyCss(cssOnce.source, targets.css.path);
+
+assertIncludes(openOnce.source, "cdr-thread-map", "bidirectional thread map");
+assertIncludes(openOnce.source, "CDRBuildCodexSeed", "Codex transcript seed builder");
+assertIncludes(openOnce.source, "cdrAutoSubmit:!0", "auto-submit seeded ChatGPT handoff");
+assertIncludes(openOnce.source, "CDRMode===`chat`||CDRMode===`work`", "Chat and Work handoff");
+assertIncludes(openOnce.source, "/work/conversation/", "ChatGPT conversation route");
+assertIncludes(originOnce.source, ORIGIN_MARKER, "Chat origin override marker");
+assertIncludes(originOnce.source, "mode===`work`)return `tpp`", "Work sticky origin force");
+assertIncludes(originOnce.source, "autoSubmit:CDRAutoSubmit=!1", "home composer autoSubmit prop");
+assertIncludes(homeOnce.source, "cdrContinueThreadKey", "home stores Codex handoff mapping");
+assertIncludes(homeOnce.source, "cdr-thread-map", "home writes bidirectional map");
+assertIncludes(homeOnce.source, "autoSubmit:u?.cdrAutoSubmit===!0", "home passes auto-submit flag");
 
 const pageTwice = patchPage(pageOnce.source, targets.page.path);
 const homeTwice = patchWorkHome(homeOnce.source, targets.home.path);
+const openTwice = patchOpenThread(openOnce.source, targets.openThread.path);
+const originTwice = patchChatOrigin(originOnce.source, targets.chatOrigin.path);
 const cssTwice = patchCss(cssOnce.source, targets.css.path);
 for (const [label, once, twice] of [
   ["page", pageOnce, pageTwice],
   ["home", homeOnce, homeTwice],
+  ["open-thread", openOnce, openTwice],
+  ["chat-origin", originOnce, originTwice],
   ["CSS", cssOnce, cssTwice],
 ]) {
   assert.strictEqual(twice.changed, false, `${label} patch must be idempotent`);
@@ -156,14 +198,31 @@ assertIncludes(selector, "children:[o,s,l]", "three-mode selector menu");
 assertIncludes(selector, "e===`chat`?`Chat`", "Chat selector label");
 
 const shell = pageFunction("mje");
-const expectedModeCallback =
-  `onModeSelect:e=>{if(e===\`chat\`){CDRChatNavigate(\`${CHAT_HOME_ROUTE}\`);return}` +
-  "Iee(a,e===`work`?vf:Tr),CDRChatMode&&CDRChatNavigate(`/`)}";
-assertIncludes(shell, expectedModeCallback, "Chat mode route callback");
+assertIncludes(shell, "localStorage.setItem(`cdr-product-mode`,e)", "sticky mode persists on every select");
+assertIncludes(shell, "CDRLocalId", "mode switch detects local thread");
+assertIncludes(shell, "CDRChatId", "mode switch detects ChatGPT conversation");
+assertIncludes(shell, "cdr-thread-map", "mode switch uses bidirectional map");
+assert.ok(
+  !shell.includes("localStorage.removeItem(`cdr-product-mode`)"),
+  "mode switch must not clear sticky mode",
+);
+assert.ok(
+  !shell.includes("CDRChatMode&&CDRChatNavigate(`/`)"),
+  "leaving Chat must not hard-navigate home",
+);
+assert.ok(
+  !/onModeSelect:e=>\{if\(e===`chat`\)\{try\{localStorage\.setItem\(`cdr-product-mode`,`chat`\)\}catch\{\}CDRChatNavigate\(`\/chat\?mode=chat`\);return\}/.test(shell),
+  "Chat mode select must not always navigate to Chat home",
+);
 assert.strictEqual(
   countOccurrences(shell, "Iee(a,e===`work`?vf:Tr)"),
   1,
   "only Codex and ChatGPT Work may update conversationDetailMode",
+);
+assertIncludes(
+  pageOnce.source,
+  "z=({target:t})=>{if(t.source===`chatgpt`){let CDRMode=",
+  "sidebar reverse-maps ChatGPT opens in Codex",
 );
 assert.ok(
   !/Iee\([^)]*(?:`chat`|CDRChatMode)/.test(shell),
@@ -173,12 +232,18 @@ const callbackStart = shell.indexOf("onModeSelect:e=>{");
 const callbackEnd = shell.indexOf("}}),(0,iz.jsx)(vOe", callbackStart);
 assert.ok(callbackStart >= 0 && callbackEnd > callbackStart, "mode callback could not be isolated");
 const modeCallback = shell.slice(callbackStart, callbackEnd);
-for (const mutationWord of ["archive", "delete", "rename", "create", "migrate"]) {
+assertIncludes(modeCallback, "sp.delete(`mode`)", "Work mode strips mode=chat query");
+for (const mutationWord of ["archive", "rename", "create", "migrate"]) {
   assert.ok(
     !modeCallback.toLowerCase().includes(mutationWord),
     `mode switch callback unexpectedly contains ${mutationWord} behavior`,
   );
 }
+assert.ok(
+  !/\b(?:localStorage|indexedDB|fetch)\.delete\b/.test(modeCallback) &&
+    !modeCallback.includes("removeItem(`cdr-product-mode`)"),
+  "mode switch must not delete sticky mode or storage",
+);
 assertIncludes(pageOnce.source, "path:`/chat`", "native Chat home route");
 assertIncludes(shell, "CDRChatQueryClient=Yc()", "account-scoped Chat query client");
 assertIncludes(shell, "CDRChatQueryClient.removeQueries({type:`inactive`})", "inactive account cache purge");
@@ -222,6 +287,17 @@ for (const guard of [
 assertIncludes(shell, "sidebarMode:CDRChatMode?`work`:`codex`", "Chat reuses Work sidebar chrome");
 assert.ok(!shell.includes("sidebarMode:CDRChatMode?`chat`"), "Chat must not use a separate sidebarMode");
 assert.ok(!shell.includes("data-codex-product-mode"), "Chat must not set a Chat-only product theme attribute");
+assertIncludes(shell, "localStorage.getItem(`cdr-product-mode`)===`chat`", "sticky Chat mode while browsing threads");
+assertIncludes(shell, "localStorage.setItem(`cdr-product-mode`,`chat`)", "persist Chat from Chat routes");
+assertIncludes(shell, "CDRChatModeFromRoute||CDRChatModeStored", "Chat stays selected on Codex/project routes");
+assert.ok(!shell.includes("sessionStorage.getItem(`cdr-product-mode`)"), "Chat sticky mode must survive app restarts");
+assertIncludes(shell, "localStorage.setItem(`cdr-product-mode`,e)", "all modes sticky via product-mode key");
+assertIncludes(
+  nav,
+  "t&&(r===`codex`||r===`work`)&&!u?(0,XF.jsx)(yf,{electron:!0,children:(0,XF.jsx)(IOe,{})}):null",
+  "Sites visible in Work/Chat chrome",
+);
+assert.ok(!nav.includes("t&&r===`codex`&&!u?(0,XF.jsx)(yf,{electron:!0,children:(0,XF.jsx)(IOe,{})}):null"), "Sites must not stay Codex-only");
 for (const legacy of [
   "codex-rebuild:dedicated-chat-mode-v7",
   "persist:codex-chatgpt-live",
@@ -258,7 +334,8 @@ assert.ok(
   "Chat mode must include visible projects in ordering, lookup, and display keys",
 );
 assertIncludes(history, "isPinned:!1,project:e", "non-pinned ChatGPT projects");
-assertIncludes(history, "e.startsWith(`chatgpt:`)", "Chat history key filter");
+assertIncludes(history, "visibleProjects.map(e=>xE(e.gizmo.id)),...j.chatKeys]}}let M=new Map", "Chat history keeps Codex + ChatGPT keys");
+assert.ok(!history.includes("e.startsWith(`chatgpt:`)"), "Chat must not hide Codex threads");
 assertIncludes(history, "heading:`Tasks`", "Work history heading shared with Chat");
 assert.ok(!history.includes("heading:CDRChatMode?`Chats`"), "Chat must not rename Tasks to Chats");
 assert.ok(!history.includes("if(CDRChatMode)te=G"), "Chat must keep Work history sections");
@@ -343,6 +420,13 @@ assertIncludes(
   "CDRChatMode?null:`tpp`",
   "existing ChatGPT Work TPP branch",
 );
+assertIncludes(homeFunction, "cdr-thread-map", "bidirectional map write on accept");
+assertIncludes(homeFunction, "autoSubmit:u?.cdrAutoSubmit===!0", "seeded handoff auto-submit");
+
+assertIncludes(originOnce.source, "mode===`chat`)return null", "Chat sticky clears TPP origin");
+assertIncludes(originOnce.source, "cdr-auto-submitted:", "auto-submit once-per-key guard");
+assertIncludes(openOnce.source, "CDRReadThreadMap", "map migration helper");
+assertIncludes(openOnce.source, "cdr-codex-chatgpt-map", "legacy map still migrated");
 
 const evidenceFiles = fs.readdirSync(targets.assets)
   .filter((name) => name.endsWith(".js"))
@@ -657,5 +741,6 @@ assert.strictEqual(
   "test mutated the generated CSS bundle",
 );
 
-console.log("[ok] native Chat v9 Work-chrome parity, history, backend, theme-strip, transaction, and tamper tests passed");
+console.log("[ok] native Chat v13 unified Chat/Work/Codex continuity tests passed");
+
 
