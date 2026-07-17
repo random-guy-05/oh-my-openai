@@ -20,6 +20,7 @@ const PATCHES = [
   "patch-dedicated-chat-mode.js",
   "patch-chat-catalog.js",
   "patch-side-by-side-scheme.js",
+  "patch-isolated-userdata.js",
   "patch-plugin-auth.js",
   "patch-updater.js",
   "patch-archive-delete.js",
@@ -49,4 +50,5 @@ function main() {
 }
 
 main();
+
 
