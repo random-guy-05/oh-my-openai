@@ -20,6 +20,20 @@ const HOME_MARKER = "codex-rebuild:native-chat-home-v8";
 const CSS_MARKER = "codex-rebuild:native-chat-theme-v8";
 const CHAT_HOME_ROUTE = "/chat?mode=chat";
 
+// Chat history includes non-TPP projects that can omit gizmo.display.
+const UNSAFE_OL_PROJECT_DISPLAY =
+  "color:n.project.gizmo.display.theme,fallbackIcon:(0,jL.jsx)(TD,{className:`icon-xs`}),icon:n.project.gizmo.display.emoji}),label:n.project.gizmo.display.name.trim()||n.project.gizmo.id";
+const SAFE_OL_PROJECT_DISPLAY =
+  "color:n.project.gizmo.display?.theme,fallbackIcon:(0,jL.jsx)(TD,{className:`icon-xs`}),icon:n.project.gizmo.display?.emoji}),label:(n.project.gizmo.display?.name??``).trim()||n.project.gizmo.id";
+const UNSAFE_FKE_PROJECT_DISPLAY =
+  "t[67]!==u.gizmo.display.emoji||t[68]!==u.gizmo.display.theme||t[69]!==Ce?(we=(0,sL.jsx)(rI,{className:`icon-xs`,color:u.gizmo.display.theme,fallbackIcon:Ce,icon:u.gizmo.display.emoji}),t[67]=u.gizmo.display.emoji,t[68]=u.gizmo.display.theme,t[69]=Ce,t[70]=we)";
+const SAFE_FKE_PROJECT_DISPLAY =
+  "t[67]!==u.gizmo.display?.emoji||t[68]!==u.gizmo.display?.theme||t[69]!==Ce?(we=(0,sL.jsx)(rI,{className:`icon-xs`,color:u.gizmo.display?.theme,fallbackIcon:Ce,icon:u.gizmo.display?.emoji}),t[67]=u.gizmo.display?.emoji,t[68]=u.gizmo.display?.theme,t[69]=Ce,t[70]=we)";
+const UNSAFE_CHAT_HOME_GATE =
+  "let a=xy().status,o=Q(VS);if(i)return null;if((o??a)!==`allowed`)return(0,g0.jsx)(I1,{});";
+const SAFE_CHAT_HOME_GATE =
+  "let a=xy().status,o=Q(VS)??a;if(i)return null;if(o===`loading`)return null;if(o!==`allowed`)return(0,g0.jsx)(I1,{});";
+
 function countOccurrences(source, needle) {
   if (needle.length === 0) throw new Error("Cannot count an empty anchor");
   let count = 0;
@@ -247,7 +261,7 @@ const NEW_CHAT_SOURCE = String.raw`function NOe({showSearchNavItem:e,chatMode:t}
 
 const PROJECT_CHAT_ROW_SOURCE = 'function Uke(e){let{activeConversationId:n,activeServerConversationId:r,item:i,chatMode:CDRChatMode=!1}=e,CDRChatRoute=e=>CDRChatMode?`${e}${e.includes(`?`)?`&`:`?`}mode=chat`:e;switch(i.kind){case`optimistic`:{let e=i.conversationId,r=CDRChatRoute(dt(i.conversationId));return(0,sL.jsx)(tL,{activeConversationId:n,conversationId:e,isGrouped:!0,route:r})}case`server`:{let e=i.conversation,a=i.conversation.is_starred===!0,o=CDRChatRoute(dt(i.conversation.id));return(0,sL.jsx)(nL,{activeConversationId:n,activeServerConversationId:r,conversation:e,isGrouped:!0,isPinned:a,route:o})}}}';
 
-const CHAT_HOME_WRAPPER = String.raw`/* ${PAGE_MARKER} */function CDRChatHome(){let{accountId:e}=u_(),t=Yc(),[n,r]=(0,h0.useState)(e),i=n!==e;(0,h0.useLayoutEffect)(()=>{i&&(t.removeQueries({type:\`inactive\`}),void t.resetQueries({type:\`active\`}),r(e))},[e,i,t]);let a=xy().status,o=Q(VS);if(i)return null;if((o??a)!==\`allowed\`)return(0,g0.jsx)(I1,{});return(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{chatMode:!0},"chat:"+(n??"anonymous"))})}`.replaceAll("\\`", "`");
+const CHAT_HOME_WRAPPER = String.raw`/* ${PAGE_MARKER} */function CDRChatHome(){let{accountId:e}=u_(),t=Yc(),[n,r]=(0,h0.useState)(e),i=n!==e;(0,h0.useLayoutEffect)(()=>{i&&(t.removeQueries({type:\`inactive\`}),void t.resetQueries({type:\`active\`}),r(e))},[e,i,t]);${SAFE_CHAT_HOME_GATE}return(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{chatMode:!0},"chat:"+(n??"anonymous"))})}`.replaceAll("\\`", "`");
 
 const CHAT_THEME = `\n/* ${CSS_MARKER} */\n` +
   `:root[data-codex-product-mode=\"chat\"].electron-light{` +
@@ -262,10 +276,35 @@ const CHAT_THEME = `\n/* ${CSS_MARKER} */\n` +
   `--color-background-accent:#9d83f1;--color-background-accent-hover:#ad98f4}` +
   `\n`;
 
+function hardenNativeChatPage(source, bundlePath) {
+  let next = source;
+  let changed = false;
+  if (next.includes(UNSAFE_OL_PROJECT_DISPLAY)) {
+    next = replaceExactly(next, UNSAFE_OL_PROJECT_DISPLAY, SAFE_OL_PROJECT_DISPLAY, "safe ChatGPT project drag display");
+    changed = true;
+  }
+  if (next.includes(UNSAFE_FKE_PROJECT_DISPLAY)) {
+    next = replaceExactly(next, UNSAFE_FKE_PROJECT_DISPLAY, SAFE_FKE_PROJECT_DISPLAY, "safe ChatGPT project row display");
+    changed = true;
+  }
+  if (next.includes(UNSAFE_CHAT_HOME_GATE)) {
+    next = replaceExactly(next, UNSAFE_CHAT_HOME_GATE, SAFE_CHAT_HOME_GATE, "Chat home loading gate");
+    changed = true;
+  }
+  if (next.includes("n.project.gizmo.display.theme") || next.includes("u.gizmo.display.theme")) {
+    throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.theme unsafely`);
+  }
+  if (next.includes(UNSAFE_CHAT_HOME_GATE)) {
+    throw new Error(`${relPath(bundlePath)} Chat home still treats loading as an error`);
+  }
+  return { source: next, changed };
+}
+
 function patchPage(source, bundlePath) {
   if (source.includes(PAGE_MARKER)) {
-    verifyPage(source, bundlePath);
-    return { source, changed: false };
+    const hardened = hardenNativeChatPage(source, bundlePath);
+    verifyPage(hardened.source, bundlePath);
+    return hardened;
   }
   for (const legacy of [
     "codex-rebuild:dedicated-chat-mode-v7",
@@ -377,6 +416,7 @@ function patchPage(source, bundlePath) {
     next = replaceExactly(next, "let R;t[35]!==r||t[36]!==a||t[37]!==c||t[38]!==u||t[39]!==d||t[40]!==_||t[41]!==y?(R=", "let R=", "Chat project renderer cache start");
     next = replaceExactly(next, "},t[35]=r,t[36]=a,t[37]=c,t[38]=u,t[39]=d,t[40]=_,t[41]=y,t[42]=R):R=t[42];", "};", "Chat project renderer cache end");
     next = replaceExactly(next, "activeServerConversationId:r.activeServerConversationId,expandable:!0", "activeServerConversationId:r.activeServerConversationId,chatMode:CDRChatMode,expandable:!0", "Chat expandable project mode");
+    next = replaceExactly(next, UNSAFE_OL_PROJECT_DISPLAY, SAFE_OL_PROJECT_DISPLAY, "safe ChatGPT project drag display");
     return next;
   }, bundlePath);
 
@@ -388,6 +428,7 @@ function patchPage(source, bundlePath) {
       "let s=e=>(0,sL.jsx)(Uke,{activeConversationId:n,activeServerConversationId:i,item:e,chatMode:CDRChatMode});",
       "nested Chat project conversation route",
     );
+    next = replaceExactly(next, UNSAFE_FKE_PROJECT_DISPLAY, SAFE_FKE_PROJECT_DISPLAY, "safe ChatGPT project row display");
     return next;
   }, bundlePath);
 
@@ -462,9 +503,18 @@ function verifyPage(source, bundlePath) {
     "chatMode:CDRChatMode,expandable:!0",
     "item:e,chatMode:CDRChatMode",
     "CDRChatRoute=e=>CDRChatMode?",
+    SAFE_OL_PROJECT_DISPLAY,
+    SAFE_FKE_PROJECT_DISPLAY,
+    SAFE_CHAT_HOME_GATE,
   ];
   for (const item of required) {
     if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing native Chat invariant: ${item}`);
+  }
+  if (source.includes("n.project.gizmo.display.theme") || source.includes("u.gizmo.display.theme")) {
+    throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.theme unsafely`);
+  }
+  if (source.includes(UNSAFE_CHAT_HOME_GATE)) {
+    throw new Error(`${relPath(bundlePath)} Chat home still treats loading as an error`);
   }
   if (source.includes("persist:codex-chatgpt-live") || source.includes("CodexDedicatedChatSurface")) {
     throw new Error(`${relPath(bundlePath)} still contains legacy webview Chat code`);
@@ -599,3 +649,4 @@ module.exports = {
 };
 
 if (require.main === module) main();
+
