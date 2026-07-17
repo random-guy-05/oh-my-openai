@@ -82,8 +82,9 @@ links and Finder reopens to reuse the existing private runtime safely.
 
 Chat is a third value in the existing Codex/ChatGPT Work product-mode selector,
 not another navigation row. Selecting it navigates the same renderer to
-`/chat?mode=chat`. The `mode=chat` query value scopes the Chat-specific layout,
-accent, and tab visibility without forking or transforming conversation data.
+`/chat?mode=chat`. Chat reuses Work's sidebar, history layout, projects, and home
+chrome. The `mode=chat` query value scopes model selection and ChatGPT usage
+without forking conversation data or applying a separate visual theme.
 
 The route renders the application's built-in ChatGPT history, projects, and
 conversation page. It reads the signed-in account's existing server-side data
@@ -191,3 +192,4 @@ This local build is not Apple-notarized. On first normal launch, macOS may
 require **Control-click Codex.app > Open** (or **Open Anyway** in Privacy &
 Security). The launcher, private runtime, data profile, and URL registration are
 separate from the official ChatGPT app, so both can run at the same time.
+

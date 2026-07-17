@@ -63,8 +63,10 @@ The native product-mode selector has three choices:
   at the route-scoped URL `/chat?mode=chat`.
 
 Chat is part of the Codex/ChatGPT Work selector; it is not a separate sidebar
-destination. Its route applies a distinct Chat accent and can remove
-coding-specific tabs without changing the underlying conversations.
+destination. Chat reuses the same Work chrome (sidebar, history layout, projects,
+and home). The only intentional differences are the model selector and usage
+path: Chat uses non-TPP ChatGPT models / ChatGPT usage, while Work uses TPP /
+Codex usage.
 
 The Chat page uses the desktop application's existing ChatGPT conversation and
 project data. It preserves server-side conversation identifiers, so existing
@@ -192,3 +194,4 @@ binary or making the repository public.
 - [OpenAI Codex](https://github.com/openai/codex) — Codex CLI
 - [Haleclipse/CodexDesktop-Rebuild](https://github.com/Haleclipse/CodexDesktop-Rebuild) — upstream cross-platform rebuild
 - [Electron Forge](https://www.electronforge.io/) — packaging toolchain
+

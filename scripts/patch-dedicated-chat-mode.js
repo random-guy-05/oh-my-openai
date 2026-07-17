@@ -3,9 +3,10 @@
  * Promote the native ChatGPT client already shipped in the official Intel app
  * into a third Codex / ChatGPT Work / Chat product mode.
  *
- * Chat remains on the official non-TPP ChatGPT transport and server-side
- * conversation IDs. This patch changes renderer routing and presentation only:
- * it does not mirror, migrate, create, rename, archive, or delete chats.
+ * Chat and ChatGPT Work share the same Work chrome (sidebar, history layout,
+ * projects, home). The only intentional differences are:
+ *   - Chat uses non-TPP ChatGPT models / ChatGPT usage
+ *   - Work uses TPP / Codex usage
  *
  * Supported upstream: macOS Intel 26.707.91948 (build 5440).
  */
@@ -15,7 +16,8 @@ const { parse } = require("acorn");
 const { relPath, SRC_DIR } = require("./patch-util");
 
 const SUPPORTED_PLATFORM = "mac-x64";
-const PAGE_MARKER = "codex-rebuild:native-chat-mode-v8";
+const PAGE_MARKER = "codex-rebuild:native-chat-mode-v9";
+const PAGE_MARKER_V8 = "codex-rebuild:native-chat-mode-v8";
 const HOME_MARKER = "codex-rebuild:native-chat-home-v8";
 const CSS_MARKER = "codex-rebuild:native-chat-theme-v8";
 const CHAT_HOME_ROUTE = "/chat?mode=chat";
@@ -33,6 +35,10 @@ const UNSAFE_CHAT_HOME_GATE =
   "let a=xy().status,o=Q(VS);if(i)return null;if((o??a)!==`allowed`)return(0,g0.jsx)(I1,{});";
 const SAFE_CHAT_HOME_GATE =
   "let a=xy().status,o=Q(VS)??a;if(i)return null;if(o===`loading`)return null;if(o!==`allowed`)return(0,g0.jsx)(I1,{});";
+const UNSAFE_PROJECT_TITLE =
+  "function Jke(e){return e.gizmo.display.name.trim()||e.gizmo.id}";
+const SAFE_PROJECT_TITLE =
+  "function Jke(e){return (e.gizmo.display?.name??``).trim()||e.gizmo.id}";
 
 function countOccurrences(source, needle) {
   if (needle.length === 0) throw new Error("Cannot count an empty anchor");
@@ -263,18 +269,91 @@ const PROJECT_CHAT_ROW_SOURCE = 'function Uke(e){let{activeConversationId:n,acti
 
 const CHAT_HOME_WRAPPER = String.raw`/* ${PAGE_MARKER} */function CDRChatHome(){let{accountId:e}=u_(),t=Yc(),[n,r]=(0,h0.useState)(e),i=n!==e;(0,h0.useLayoutEffect)(()=>{i&&(t.removeQueries({type:\`inactive\`}),void t.resetQueries({type:\`active\`}),r(e))},[e,i,t]);${SAFE_CHAT_HOME_GATE}return(0,g0.jsx)(h0.Suspense,{fallback:null,children:(0,g0.jsx)(T0,{chatMode:!0},"chat:"+(n??"anonymous"))})}`.replaceAll("\\`", "`");
 
-const CHAT_THEME = `\n/* ${CSS_MARKER} */\n` +
-  `:root[data-codex-product-mode=\"chat\"].electron-light{` +
-  `--color-background-surface:#f8f5ff;--vscode-sideBar-background:#eee8ff;` +
-  `--color-token-main-surface-primary:#f8f5ff;--color-token-side-bar-background:#eee8ff;` +
-  `--color-token-bg-primary:#eee8ff;--color-token-bg-secondary:#e6ddff;` +
-  `--color-background-accent:#7657d6;--color-background-accent-hover:#6848c8}` +
-  `:root[data-codex-product-mode=\"chat\"].electron-dark{` +
-  `--color-background-surface:#181421;--vscode-sideBar-background:#211a2f;` +
-  `--color-token-main-surface-primary:#181421;--color-token-side-bar-background:#211a2f;` +
-  `--color-token-bg-primary:#211a2f;--color-token-bg-secondary:#2a2140;` +
-  `--color-background-accent:#9d83f1;--color-background-accent-hover:#ad98f4}` +
-  `\n`;
+const CHAT_ROUTE_STATE_V8 =
+  "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatMode=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`;(0,rz.useEffect)(()=>{let e=document.documentElement;return CDRChatMode?e.setAttribute(`data-codex-product-mode`,`chat`):e.removeAttribute(`data-codex-product-mode`),()=>{e.removeAttribute(`data-codex-product-mode`)}},[CDRChatMode]);let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ";
+const CHAT_ROUTE_STATE_V9 =
+  "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatMode=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`;let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ";
+
+function stripChatTheme(source) {
+  const marker = `\n/* ${CSS_MARKER} */`;
+  const start = source.indexOf(marker);
+  if (start === -1) return { source, changed: false };
+  // Theme block runs to EOF in our patch.
+  return { source: source.slice(0, start), changed: true };
+}
+
+function alignChatUiWithWork(source, bundlePath) {
+  let next = source;
+  let changed = false;
+
+  if (next.includes(PAGE_MARKER_V8)) {
+    next = replaceExactly(next, PAGE_MARKER_V8, PAGE_MARKER, "Chat page marker v9");
+    changed = true;
+  }
+
+  if (next.includes(CHAT_ROUTE_STATE_V8)) {
+    next = replaceExactly(next, CHAT_ROUTE_STATE_V8, CHAT_ROUTE_STATE_V9, "remove Chat-only theme attribute");
+    changed = true;
+  }
+
+  // Chat must reuse Work chrome, not a separate `chat` sidebar mode.
+  const chatSidebar = "sidebarMode:CDRChatMode?`chat`:`codex`";
+  const workSidebar = "sidebarMode:CDRChatMode?`work`:`codex`";
+  if (next.includes(chatSidebar)) {
+    next = replaceExactly(
+      next,
+      chatSidebar,
+      workSidebar,
+      "Work sidebar chrome for Chat",
+      countOccurrences(next, chatSidebar),
+    );
+    changed = true;
+  }
+
+  if (next.includes("F=CDRChatMode?`chat`:l===`STEPS_PROSE`?`work`:`codex`")) {
+    next = replaceExactly(
+      next,
+      "F=CDRChatMode?`chat`:l===`STEPS_PROSE`?`work`:`codex`",
+      "F=CDRChatMode||l===`STEPS_PROSE`?`work`:`codex`",
+      "Work scroll namespace for Chat",
+    );
+    changed = true;
+  }
+
+  // Undo Chat-only nav hiding so Chat matches Work.
+  const navReverts = [
+    ["r!==`chat`&&b?(0,XF.jsx)", "b?(0,XF.jsx)", "restore Library in Chat"],
+    ["r!==`chat`&&_&&v!==`project`?(0,XF.jsx)(FOe", "_&&v!==`project`?(0,XF.jsx)(FOe", "restore Projects nav in Chat"],
+    ["t&&r!==`chat`&&(r===`codex`||l)?", "t&&(r===`codex`||l)?", "restore Skills in Chat"],
+    ["r!==`chat`&&x?(0,XF.jsx)(yf", "x?(0,XF.jsx)(yf", "restore Pull Requests in Chat"],
+    ["r===`chat`||_?null:(0,XF.jsx)(hOe", "_?null:(0,XF.jsx)(hOe", "restore fallback Projects in Chat"],
+    ["r===`chat`?null:(0,XF.jsx)(fOe,{})", "(0,XF.jsx)(fOe,{})", "restore external tool nav in Chat"],
+  ];
+  for (const [from, to, label] of navReverts) {
+    if (next.includes(from)) {
+      next = replaceExactly(next, from, to, label);
+      changed = true;
+    }
+  }
+
+  if (next.includes("heading:CDRChatMode?`Chats`:`Tasks`")) {
+    next = replaceExactly(next, "heading:CDRChatMode?`Chats`:`Tasks`", "heading:`Tasks`", "Work history heading for Chat");
+    changed = true;
+  }
+  if (next.includes("te;if(CDRChatMode)te=G;else switch(u){")) {
+    next = replaceExactly(next, "te;if(CDRChatMode)te=G;else switch(u){", "te;switch(u){", "Work history sections for Chat");
+    changed = true;
+  }
+
+  if (next.includes("data-codex-product-mode") || next.includes("sidebarMode:CDRChatMode?`chat`")) {
+    throw new Error(`${relPath(bundlePath)} still applies Chat-only chrome instead of Work UI`);
+  }
+  if (next.includes("heading:CDRChatMode?`Chats`") || next.includes("if(CDRChatMode)te=G")) {
+    throw new Error(`${relPath(bundlePath)} still forks Chat history layout away from Work`);
+  }
+
+  return { source: next, changed };
+}
 
 function hardenNativeChatPage(source, bundlePath) {
   let next = source;
@@ -291,8 +370,15 @@ function hardenNativeChatPage(source, bundlePath) {
     next = replaceExactly(next, UNSAFE_CHAT_HOME_GATE, SAFE_CHAT_HOME_GATE, "Chat home loading gate");
     changed = true;
   }
+  if (next.includes(UNSAFE_PROJECT_TITLE)) {
+    next = replaceExactly(next, UNSAFE_PROJECT_TITLE, SAFE_PROJECT_TITLE, "safe ChatGPT project title");
+    changed = true;
+  }
   if (next.includes("n.project.gizmo.display.theme") || next.includes("u.gizmo.display.theme")) {
     throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.theme unsafely`);
+  }
+  if (next.includes("e.gizmo.display.name.trim()")) {
+    throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.name unsafely`);
   }
   if (next.includes(UNSAFE_CHAT_HOME_GATE)) {
     throw new Error(`${relPath(bundlePath)} Chat home still treats loading as an error`);
@@ -301,10 +387,19 @@ function hardenNativeChatPage(source, bundlePath) {
 }
 
 function patchPage(source, bundlePath) {
-  if (source.includes(PAGE_MARKER)) {
-    const hardened = hardenNativeChatPage(source, bundlePath);
-    verifyPage(hardened.source, bundlePath);
-    return hardened;
+  if (source.includes(PAGE_MARKER) || source.includes(PAGE_MARKER_V8)) {
+    let next = source;
+    let changed = false;
+    if (source.includes(PAGE_MARKER_V8) || source.includes("sidebarMode:CDRChatMode?`chat`") || source.includes("data-codex-product-mode")) {
+      const aligned = alignChatUiWithWork(next, bundlePath);
+      next = aligned.source;
+      changed = changed || aligned.changed;
+    }
+    const hardened = hardenNativeChatPage(next, bundlePath);
+    next = hardened.source;
+    changed = changed || hardened.changed;
+    verifyPage(next, bundlePath);
+    return { source: next, changed };
   }
   for (const legacy of [
     "codex-rebuild:dedicated-chat-mode-v7",
@@ -322,31 +417,24 @@ function patchPage(source, bundlePath) {
   code = replaceFunction(code, "NOe", NEW_CHAT_SOURCE, bundlePath);
   code = replaceFunction(code, "Uke", PROJECT_CHAT_ROW_SOURCE, bundlePath);
 
+  // Keep Work nav chrome identical in Chat — only remove the standalone Quick Chat row.
   code = transformFunction(code, "MOe", (body) => {
-    let next = body;
-    next = replaceExactly(next, "b?(0,XF.jsx)", "r!==`chat`&&b?(0,XF.jsx)", "Chat Library visibility");
-    next = replaceExactly(next, "_&&v!==`project`?(0,XF.jsx)(FOe", "r!==`chat`&&_&&v!==`project`?(0,XF.jsx)(FOe", "Chat Projects nav visibility");
-    next = replaceExactly(next, "t&&(r===`codex`||l)?", "t&&r!==`chat`&&(r===`codex`||l)?", "Chat Skills visibility");
-    next = replaceExactly(next, "x?(0,XF.jsx)(yf", "r!==`chat`&&x?(0,XF.jsx)(yf", "Chat Pull Requests visibility");
-    next = replaceExactly(next, "_?null:(0,XF.jsx)(hOe", "r===`chat`||_?null:(0,XF.jsx)(hOe", "Chat fallback Projects visibility");
-    next = replaceExactly(next, "(0,XF.jsx)(fOe,{})", "r===`chat`?null:(0,XF.jsx)(fOe,{})", "Chat external tool nav visibility");
-    next = replaceExactly(next, "r===`codex`&&n?(0,XF.jsx)(cOe,{}):null", "null", "standalone Quick Chat row removal");
-    return next;
+    return replaceExactly(body, "r===`codex`&&n?(0,XF.jsx)(cOe,{}):null", "null", "standalone Quick Chat row removal");
   }, bundlePath);
 
   code = transformFunction(code, "mje", (body) => {
     let next = replaceExactly(
       body,
       "a=md(X),{accountId:o}=u_(),",
-      "a=md(X),CDRChatQueryClient=Yc(),CDRChatLocation=ce(),CDRChatNavigate=Cn(),CDRChatMode=CDRChatLocation.pathname===`/chat`||new URLSearchParams(CDRChatLocation.search).get(`mode`)===`chat`;(0,rz.useEffect)(()=>{let e=document.documentElement;return CDRChatMode?e.setAttribute(`data-codex-product-mode`,`chat`):e.removeAttribute(`data-codex-product-mode`),()=>{e.removeAttribute(`data-codex-product-mode`)}},[CDRChatMode]);let{accountId:o}=u_(),[CDRChatSettledAccount,CDRChatSetSettledAccount]=(0,rz.useState)(o),CDRChatAccountChanging=CDRChatSettledAccount!==o;(0,rz.useLayoutEffect)(()=>{CDRChatAccountChanging&&(CDRChatQueryClient.removeQueries({type:`inactive`}),void CDRChatQueryClient.resetQueries({type:`active`}),CDRChatSetSettledAccount(o))},[o,CDRChatAccountChanging,CDRChatQueryClient]);let ",
+      CHAT_ROUTE_STATE_V9,
       "Chat route state",
     );
     next = replaceExactly(next, "I=j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`", "I=CDRChatMode?`chat`:(j==null&&F===`non_coding`||A===`STEPS_PROSE`?`work`:`codex`)", "Chat selected mode");
     next = replaceExactly(
       next,
       "let B=z,V;t[16]!==i||t[17]!==r?(V=(0,iz.jsx)(MOe,{chatGptProjectCrudStatus:void 0,desktopNavItemsEnabled:i,quickChatEnabled:r,sidebarMode:`codex`}),t[16]=i,t[17]=r,t[18]=V):V=t[18];",
-      "let B=z,V=(0,iz.jsx)(MOe,{chatGptProjectCrudStatus:void 0,desktopNavItemsEnabled:i,quickChatEnabled:r,sidebarMode:CDRChatMode?`chat`:`codex`});",
-      "Chat nav mode",
+      "let B=z,V=(0,iz.jsx)(MOe,{chatGptProjectCrudStatus:void 0,desktopNavItemsEnabled:i,quickChatEnabled:r,sidebarMode:CDRChatMode?`work`:`codex`});",
+      "Work nav chrome for Chat",
     );
     next = replaceExactly(
       next,
@@ -358,7 +446,7 @@ function patchPage(source, bundlePath) {
     next = replaceExactly(
       next,
       "let ce;t[40]!==k||t[41]!==ee?(ce=(0,iz.jsx)(IAe,{onScrolledContentUnderHeaderChange:k,scrollContainerRef:g,sidebarMode:`codex`,topContent:ee}),t[40]=k,t[41]=ee,t[42]=ce):ce=t[42];",
-      "let CDRChatSidebarNode=CDRChatMode&&CDRChatAccountChanging?null:(0,iz.jsx)(IAe,{onScrolledContentUnderHeaderChange:k,scrollContainerRef:g,sidebarMode:CDRChatMode?`chat`:`codex`,topContent:ee,chatMode:CDRChatMode},CDRChatMode?`chat:${CDRChatSettledAccount??`anonymous`}`:`codex`);",
+      "let CDRChatSidebarNode=CDRChatMode&&CDRChatAccountChanging?null:(0,iz.jsx)(IAe,{onScrolledContentUnderHeaderChange:k,scrollContainerRef:g,sidebarMode:CDRChatMode?`work`:`codex`,topContent:ee,chatMode:CDRChatMode},CDRChatMode?`chat:${CDRChatSettledAccount??`anonymous`}`:`codex`);",
       "Chat history sidebar",
     );
     next = replaceExactly(
@@ -372,7 +460,7 @@ function patchPage(source, bundlePath) {
 
   code = transformFunction(code, "IAe", (body) => {
     let next = replaceExactly(body, "function IAe({onScrolledContentUnderHeaderChange:e,scrollContainerRef:t,sidebarMode:n,topContent:r})", "function IAe({onScrolledContentUnderHeaderChange:e,scrollContainerRef:t,sidebarMode:n,topContent:r,chatMode:CDRChatMode=!1})", "Chat IAe prop");
-    next = replaceExactly(next, "F=l===`STEPS_PROSE`?`work`:`codex`", "F=CDRChatMode?`chat`:l===`STEPS_PROSE`?`work`:`codex`", "Chat scroll namespace");
+    next = replaceExactly(next, "F=l===`STEPS_PROSE`?`work`:`codex`", "F=CDRChatMode||l===`STEPS_PROSE`?`work`:`codex`", "Work scroll namespace for Chat");
     next = replaceExactly(next, ",!f&&(h?T.isWorkspaceRootOptionsLoading:v))", ",!CDRChatMode&&!f&&(h?T.isWorkspaceRootOptionsLoading:v))", "Chat history loading gate");
     next = replaceExactly(next, ",R;if(m)R=[(0,yR.jsx)(eAe,{},`unified`)];", ",R;if(CDRChatMode)R=[(0,yR.jsx)(eAe,{chatMode:!0},`chat`)];else if(m)R=[(0,yR.jsx)(eAe,{},`unified`)];", "Chat unified history branch");
     return next;
@@ -404,10 +492,9 @@ function patchPage(source, bundlePath) {
       "source:`all`});if(CDRChatMode){let e=e=>e.startsWith(`chatgpt:`);j={...j,chatKeys:[...E.visibleProjects.map(e=>xE(e.gizmo.id)),...j.chatKeys].filter(e),pinnedKeys:j.pinnedKeys.filter(e)}}let M=new Map",
       "Chat-only history keys",
     );
-    next = replaceExactly(next, "heading:`Tasks`", "heading:CDRChatMode?`Chats`:`Tasks`", "Chat history heading");
+    // Keep Work's "Tasks" heading and section switch — identical chrome.
     next = replaceExactly(next, "allowCodexThreadProjectDrag:!0", "allowCodexThreadProjectDrag:!CDRChatMode", "Chat drag isolation");
     next = replaceExactly(next, "chatGptSource:E,codexProjectKindByThreadKey:k", "chatGptSource:E,chatMode:CDRChatMode,codexProjectKindByThreadKey:k", "Chat project row mode", 2);
-    next = replaceExactly(next, "te;switch(u){", "te;if(CDRChatMode)te=G;else switch(u){", "Chat-only history section");
     return next;
   }, bundlePath);
 
@@ -440,6 +527,7 @@ function patchPage(source, bundlePath) {
     "(0,g0.jsx)(Lt,{path:`/`,element:(0,g0.jsx)(JUe,{})}),(0,g0.jsx)(Lt,{path:`/chat`,element:(0,g0.jsx)(CDRChatHome,{})}),",
     "Chat home route",
   );
+  code = hardenNativeChatPage(code, bundlePath).source;
   verifyPage(code, bundlePath);
   return { source: code, changed: true };
 }
@@ -466,16 +554,17 @@ function patchWorkHome(source, bundlePath) {
 }
 
 function patchCss(source, bundlePath) {
-  if (source.includes(CSS_MARKER)) {
-    verifyCss(source, bundlePath);
-    return { source, changed: false };
-  }
   if (!source.includes("--color-token-main-surface-primary") || !source.includes(".electron-dark")) {
     throw new Error(`${relPath(bundlePath)} is not the expected global theme bundle`);
   }
-  const code = source + CHAT_THEME;
-  verifyCss(code, bundlePath);
-  return { source: code, changed: true };
+  // Chat reuses Work colors — strip any leftover Chat-only accent theme.
+  if (source.includes(CSS_MARKER) || source.includes('data-codex-product-mode="chat"')) {
+    const stripped = stripChatTheme(source);
+    verifyCss(stripped.source, bundlePath);
+    return stripped;
+  }
+  verifyCss(source, bundlePath);
+  return { source, changed: false };
 }
 
 function verifyPage(source, bundlePath) {
@@ -490,8 +579,9 @@ function verifyPage(source, bundlePath) {
     "Jhe({tppOnly:!CDRChatMode})",
     "visibleProjects.map",
     "route:`${e.route}?mode=chat`",
-    "sidebarMode:CDRChatMode?`chat`:`codex`",
-    "data-codex-product-mode",
+    "sidebarMode:CDRChatMode?`work`:`codex`",
+    "F=CDRChatMode||l===`STEPS_PROSE`?`work`:`codex`",
+    "heading:`Tasks`",
     "allowCodexThreadProjectDrag:!CDRChatMode",
     "CDRChatQueryClient.removeQueries({type:`inactive`})",
     "CDRChatQueryClient.resetQueries({type:`active`})",
@@ -506,12 +596,28 @@ function verifyPage(source, bundlePath) {
     SAFE_OL_PROJECT_DISPLAY,
     SAFE_FKE_PROJECT_DISPLAY,
     SAFE_CHAT_HOME_GATE,
+    SAFE_PROJECT_TITLE,
   ];
   for (const item of required) {
     if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing native Chat invariant: ${item}`);
   }
+  for (const forbidden of [
+    "data-codex-product-mode",
+    "sidebarMode:CDRChatMode?`chat`",
+    "heading:CDRChatMode?`Chats`",
+    "if(CDRChatMode)te=G",
+    "r!==`chat`&&b?",
+    "r===`chat`?null:(0,XF.jsx)(fOe",
+  ]) {
+    if (source.includes(forbidden)) {
+      throw new Error(`${relPath(bundlePath)} still forks Chat chrome away from Work: ${forbidden}`);
+    }
+  }
   if (source.includes("n.project.gizmo.display.theme") || source.includes("u.gizmo.display.theme")) {
     throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.theme unsafely`);
+  }
+  if (source.includes("e.gizmo.display.name.trim()")) {
+    throw new Error(`${relPath(bundlePath)} still reads ChatGPT project display.name unsafely`);
   }
   if (source.includes(UNSAFE_CHAT_HOME_GATE)) {
     throw new Error(`${relPath(bundlePath)} Chat home still treats loading as an error`);
@@ -554,13 +660,11 @@ function verifyWorkHome(source, bundlePath) {
 }
 
 function verifyCss(source, bundlePath) {
-  if (countOccurrences(source, CSS_MARKER) !== 1) throw new Error(`${relPath(bundlePath)} Chat theme marker invalid`);
-  for (const item of [
-    ':root[data-codex-product-mode="chat"].electron-light',
-    ':root[data-codex-product-mode="chat"].electron-dark',
-    "--color-token-main-surface-primary",
-  ]) {
-    if (!source.includes(item)) throw new Error(`${relPath(bundlePath)} missing Chat theme invariant: ${item}`);
+  if (source.includes(CSS_MARKER) || source.includes('data-codex-product-mode="chat"')) {
+    throw new Error(`${relPath(bundlePath)} still contains Chat-only theme overrides`);
+  }
+  if (!source.includes("--color-token-main-surface-primary") || !source.includes(".electron-dark")) {
+    throw new Error(`${relPath(bundlePath)} is not the expected global theme bundle`);
   }
 }
 
@@ -627,7 +731,7 @@ function main() {
     { path: targets.css.path, previous: targets.css.source, next: nextCss.source, verify: verifyCss },
   ];
   atomicReplaceEntries(entries, { transactionRoot: path.join(SRC_DIR, platform, "_asar") });
-  console.log("    [ok] installed native Chat routing, history, models, and theme atomically");
+  console.log("    [ok] installed native Chat routing, history, and models atomically");
 }
 
 module.exports = {
@@ -649,4 +753,5 @@ module.exports = {
 };
 
 if (require.main === module) main();
+
 

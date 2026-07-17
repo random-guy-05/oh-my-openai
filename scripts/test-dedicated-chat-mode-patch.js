@@ -124,7 +124,7 @@ assert.strictEqual(
 );
 assert.strictEqual(
   cssOnce.changed,
-  !targets.css.source.includes(CSS_MARKER),
+  targets.css.source.includes(CSS_MARKER) || targets.css.source.includes('data-codex-product-mode="chat"'),
   "CSS first-pass change state is inconsistent",
 );
 verifyPage(pageOnce.source, targets.page.path);
@@ -217,8 +217,11 @@ for (const guard of [
   "r===`chat`||_?null:",
   "r===`chat`?null:",
 ]) {
-  assertIncludes(nav, guard, "Chat code-only nav reduction");
+  assert.ok(!nav.includes(guard), `Chat must not hide Work nav chrome: ${guard}`);
 }
+assertIncludes(shell, "sidebarMode:CDRChatMode?`work`:`codex`", "Chat reuses Work sidebar chrome");
+assert.ok(!shell.includes("sidebarMode:CDRChatMode?`chat`"), "Chat must not use a separate sidebarMode");
+assert.ok(!shell.includes("data-codex-product-mode"), "Chat must not set a Chat-only product theme attribute");
 for (const legacy of [
   "codex-rebuild:dedicated-chat-mode-v7",
   "persist:codex-chatgpt-live",
@@ -255,10 +258,16 @@ assert.ok(
   "Chat mode must include visible projects in ordering, lookup, and display keys",
 );
 assertIncludes(history, "isPinned:!1,project:e", "non-pinned ChatGPT projects");
-assertIncludes(history, "e.startsWith(`chatgpt:`)", "Chat-only history filter");
-assertIncludes(history, "heading:CDRChatMode?`Chats`:`Tasks`", "Chat history heading");
-assertIncludes(history, "if(CDRChatMode)te=G;else switch(u)", "Chat-only history section");
+assertIncludes(history, "e.startsWith(`chatgpt:`)", "Chat history key filter");
+assertIncludes(history, "heading:`Tasks`", "Work history heading shared with Chat");
+assert.ok(!history.includes("heading:CDRChatMode?`Chats`"), "Chat must not rename Tasks to Chats");
+assert.ok(!history.includes("if(CDRChatMode)te=G"), "Chat must keep Work history sections");
 assertIncludes(history, "allowCodexThreadProjectDrag:!CDRChatMode", "cross-backend drag isolation");
+assertIncludes(
+  historyHost,
+  "F=CDRChatMode||l===`STEPS_PROSE`?`work`:`codex`",
+  "Chat reuses Work scroll namespace",
+);
 assert.strictEqual(
   countOccurrences(history, "chatGptSource:E,chatMode:CDRChatMode"),
   2,
@@ -290,12 +299,31 @@ const chatHome = pageFunction("CDRChatHome");
 assertIncludes(chatHome, "children:(0,g0.jsx)(T0,{chatMode:!0},\"chat:\"+(n??\"anonymous\"))", "native Chat home");
 assertIncludes(chatHome, "{accountId:e}=u_()", "account-keyed Chat home");
 assertIncludes(chatHome, "if(i)return null", "two-phase Chat home account gate");
+assertIncludes(chatHome, "o=Q(VS)??a", "Chat home prefers store status");
+assertIncludes(chatHome, "if(o===`loading`)return null", "Chat home waits while loading");
+assertIncludes(chatHome, "if(o!==`allowed`)return(0,g0.jsx)(I1,{})", "Chat home keeps denied fallback");
+assert.ok(!chatHome.includes("if((o??a)!==`allowed`)"), "Chat home must not treat loading as an error");
 assertIncludes(chatHome, "t.removeQueries({type:`inactive`})", "Chat home inactive cache purge");
 assertIncludes(chatHome, "t.resetQueries({type:`active`})", "Chat home active observer reset");
 assert.ok(
   chatHome.indexOf("if(i)return null") < chatHome.indexOf("(0,g0.jsx)(T0"),
   "Chat home mounts before account cache isolation settles",
 );
+
+assertIncludes(
+  pageOnce.source,
+  "color:n.project.gizmo.display?.theme,fallbackIcon:(0,jL.jsx)(TD,{className:`icon-xs`}),icon:n.project.gizmo.display?.emoji}),label:(n.project.gizmo.display?.name??``).trim()||n.project.gizmo.id",
+  "safe ChatGPT project drag display",
+);
+assertIncludes(pageOnce.source, "color:u.gizmo.display?.theme", "safe ChatGPT project row theme");
+assertIncludes(
+  pageOnce.source,
+  "function Jke(e){return (e.gizmo.display?.name??``).trim()||e.gizmo.id}",
+  "safe ChatGPT project title",
+);
+assert.ok(!pageOnce.source.includes("n.project.gizmo.display.theme"), "OL must not read display.theme unsafely");
+assert.ok(!pageOnce.source.includes("u.gizmo.display.theme"), "Fke must not read display.theme unsafely");
+assert.ok(!pageOnce.source.includes("e.gizmo.display.name.trim()"), "Jke must not read display.name unsafely");
 
 const homeFunction = functionReader(homeOnce.source, targets.home.path)("j");
 assertIncludes(homeFunction, "chatMode:CDRChatMode=!1", "Chat home prop");
@@ -348,9 +376,19 @@ for (const selectorNeedle of [
   ':root[data-codex-product-mode="chat"].electron-dark',
   "--color-background-accent:#7657d6",
   "--color-background-accent:#9d83f1",
+  CSS_MARKER,
 ]) {
-  assertIncludes(cssOnce.source, selectorNeedle, "Chat light/dark theme");
+  assert.ok(!cssOnce.source.includes(selectorNeedle), `Chat-only theme must be removed: ${selectorNeedle}`);
 }
+assertIncludes(cssOnce.source, "--color-token-main-surface-primary", "shared Work/Codex theme tokens");
+assertIncludes(cssOnce.source, ".electron-dark", "shared dark theme");
+
+const themedCss = `${targets.css.source}\n/* ${CSS_MARKER} */\n:root[data-codex-product-mode="chat"].electron-dark{--color-background-accent:#9d83f1}\n`;
+const strippedTheme = patchCss(themedCss, targets.css.path);
+assert.strictEqual(strippedTheme.changed, true, "legacy Chat theme must be stripped");
+assert.ok(!strippedTheme.source.includes(CSS_MARKER), "stripped CSS still has theme marker");
+assert.ok(!strippedTheme.source.includes('data-codex-product-mode="chat"'), "stripped CSS still has Chat theme selectors");
+verifyCss(strippedTheme.source, targets.css.path);
 
 const noRoute = replaceOne(
   pageOnce.source,
@@ -432,15 +470,20 @@ assert.throws(
   () => verifyWorkHome(tppOnlyHome, targets.home.path),
   /missing Chat home invariant: conversationOrigin/,
 );
-const noDarkTheme = replaceOne(
-  cssOnce.source,
-  ':root[data-codex-product-mode="chat"].electron-dark',
-  ':root[data-codex-product-mode="chat"].electron-broken',
-  "dark theme tamper",
+const forkedSidebar = replaceOne(
+  pageOnce.source,
+  "sidebarMode:CDRChatMode?`work`:`codex`,topContent:ee,chatMode:CDRChatMode",
+  "sidebarMode:CDRChatMode?`chat`:`codex`,topContent:ee,chatMode:CDRChatMode",
+  "sidebar chrome tamper",
 );
 assert.throws(
+  () => verifyPage(forkedSidebar, targets.page.path),
+  /still forks Chat chrome away from Work|missing native Chat invariant: sidebarMode/,
+);
+const noDarkTheme = `${cssOnce.source}\n/* ${CSS_MARKER} */\n:root[data-codex-product-mode="chat"].electron-dark{}\n`;
+assert.throws(
   () => verifyCss(noDarkTheme, targets.css.path),
-  /missing Chat theme invariant/,
+  /still contains Chat-only theme overrides/,
 );
 
 const atomicDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-chat-v8-"));
@@ -614,4 +657,5 @@ assert.strictEqual(
   "test mutated the generated CSS bundle",
 );
 
-console.log("[ok] native Chat v8 renderer, history, backend, theme, transaction, and tamper tests passed");
+console.log("[ok] native Chat v9 Work-chrome parity, history, backend, theme-strip, transaction, and tamper tests passed");
+
