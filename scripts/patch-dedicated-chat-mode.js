@@ -877,7 +877,7 @@ function verifyPage(source, bundlePath) {
   const required = [
     "onSelect:()=>t(`chat`)",
     "path:`/chat`",
-    "Jhe({tppOnly:!CDRChatMode})",
+    "Jhe({tppOnly:!0})",
     "visibleProjects.map",
     "route:`${e.route}?mode=chat`",
     "sidebarMode:CDRChatMode?`work`:`codex`",
