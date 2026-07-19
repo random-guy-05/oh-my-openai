@@ -323,13 +323,130 @@ static BOOL CreatePrivateDirectory(NSString *path, NSString **failure) {
   return YES;
 }
 
+static BOOL LinkSharedCodexPath(NSString *sourcePath,
+                                NSString *destinationPath,
+                                BOOL expectDirectory,
+                                NSString **failure) {
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  BOOL sourceIsDirectory = NO;
+  BOOL sourceExists = [fileManager fileExistsAtPath:sourcePath
+                                        isDirectory:&sourceIsDirectory];
+  if (!sourceExists) {
+    if (expectDirectory) {
+      NSError *createError = nil;
+      if (![fileManager createDirectoryAtPath:sourcePath
+                  withIntermediateDirectories:YES
+                                   attributes:@{NSFilePosixPermissions: @0700}
+                                        error:&createError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+          @"The shared Codex path %@ could not be created.\n\n%@",
+          sourcePath, createError.localizedDescription];
+        return NO;
+      }
+      sourceIsDirectory = YES;
+    } else {
+      return YES;
+    }
+  }
+  if (sourceIsDirectory != expectDirectory) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The shared Codex path %@ has the wrong type.", sourcePath];
+    return NO;
+  }
+
+  NSError *destError = nil;
+  NSDictionary<NSURLResourceKey, id> *destValues =
+    [[NSURL fileURLWithPath:destinationPath]
+      resourceValuesForKeys:@[NSURLIsSymbolicLinkKey, NSURLIsDirectoryKey]
+                      error:&destError];
+  NSNumber *isSymlink = destValues[NSURLIsSymbolicLinkKey];
+  if (isSymlink.boolValue) {
+    NSString *resolved = destinationPath.stringByResolvingSymlinksInPath;
+    if ([resolved isEqualToString:sourcePath.stringByResolvingSymlinksInPath]) {
+      return YES;
+    }
+    NSError *removeError = nil;
+    if (![fileManager removeItemAtPath:destinationPath error:&removeError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The stale Codex symlink %@ could not be replaced.\n\n%@",
+        destinationPath, removeError.localizedDescription];
+      return NO;
+    }
+  } else if ([fileManager fileExistsAtPath:destinationPath]) {
+    // Merge any desktop-only session files into the shared CLI home once,
+    // then replace the private copy with a symlink so both stay in sync.
+    if (expectDirectory) {
+      NSDirectoryEnumerator *enumerator =
+        [fileManager enumeratorAtPath:destinationPath];
+      for (NSString *relative in enumerator) {
+        NSString *fromPath = [destinationPath stringByAppendingPathComponent:relative];
+        NSString *toPath = [sourcePath stringByAppendingPathComponent:relative];
+        BOOL fromIsDirectory = NO;
+        if (![fileManager fileExistsAtPath:fromPath isDirectory:&fromIsDirectory] ||
+            fromIsDirectory) {
+          continue;
+        }
+        if ([fileManager fileExistsAtPath:toPath]) continue;
+        NSString *toParent = toPath.stringByDeletingLastPathComponent;
+        NSError *parentError = nil;
+        if (![fileManager createDirectoryAtPath:toParent
+                    withIntermediateDirectories:YES
+                                     attributes:nil
+                                          error:&parentError]) {
+          if (failure) *failure = [NSString stringWithFormat:
+            @"Could not prepare shared Codex session path.\n\n%@",
+            parentError.localizedDescription];
+          return NO;
+        }
+        NSError *copyError = nil;
+        if (![fileManager copyItemAtPath:fromPath toPath:toPath error:&copyError]) {
+          if (failure) *failure = [NSString stringWithFormat:
+            @"Could not merge desktop session into ~/.codex.\n\n%@",
+            copyError.localizedDescription];
+          return NO;
+        }
+      }
+    }
+    NSString *backupPath = [destinationPath stringByAppendingString:@".pre-cli-sync"];
+    if ([fileManager fileExistsAtPath:backupPath]) {
+      NSError *removeBackupError = nil;
+      if (![fileManager removeItemAtPath:backupPath error:&removeBackupError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+          @"Could not clear the previous Codex sync backup.\n\n%@",
+          removeBackupError.localizedDescription];
+        return NO;
+      }
+    }
+    NSError *moveError = nil;
+    if (![fileManager moveItemAtPath:destinationPath
+                              toPath:backupPath
+                               error:&moveError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"Could not back up the private Codex path before CLI sync.\n\n%@",
+        moveError.localizedDescription];
+      return NO;
+    }
+  }
+
+  NSError *linkError = nil;
+  if (![fileManager createSymbolicLinkAtPath:destinationPath
+                         withDestinationPath:sourcePath
+                                       error:&linkError]) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"Could not link %@ to the Codex CLI home.\n\n%@",
+      destinationPath.lastPathComponent, linkError.localizedDescription];
+    return NO;
+  }
+  return YES;
+}
+
 static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
   NSFileManager *fileManager = NSFileManager.defaultManager;
   NSString *sourceHome = [NSHomeDirectory() stringByAppendingPathComponent:@".codex"];
 
   // Carry the existing account and user configuration into the isolated home
-  // once. Runtime databases and mutable session state are deliberately never
-  // shared, because two desktop apps cannot safely own the same SQLite files.
+  // once. Runtime databases stay private so the desktop app and CLI can keep
+  // independent SQLite writers, while conversation rollouts are shared below.
   for (NSString *name in @[@"auth.json", @"config.toml"]) {
     NSString *sourcePath = [sourceHome stringByAppendingPathComponent:name];
     NSString *destinationPath = [codexHomePath stringByAppendingPathComponent:name];
@@ -366,6 +483,27 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
         name, strerror(errno)];
       return NO;
     }
+  }
+
+  // Keep desktop Codex threads and `codex` CLI sessions on the same rollout
+  // files under ~/.codex without sharing mutable SQLite databases.
+  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"sessions"],
+                           [codexHomePath stringByAppendingPathComponent:@"sessions"],
+                           YES,
+                           failure)) {
+    return NO;
+  }
+  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"archived_sessions"],
+                           [codexHomePath stringByAppendingPathComponent:@"archived_sessions"],
+                           YES,
+                           failure)) {
+    return NO;
+  }
+  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"session_index.jsonl"],
+                           [codexHomePath stringByAppendingPathComponent:@"session_index.jsonl"],
+                           NO,
+                           failure)) {
+    return NO;
   }
   return YES;
 }
@@ -591,3 +729,4 @@ int main(int argc, const char *argv[]) {
     return 0;
   }
 }
+
