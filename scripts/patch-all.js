@@ -17,8 +17,9 @@ const PATCHES = [
   "patch-devtools.js",
   "patch-fast-mode.js",
   "patch-latest-models.js",
-  "patch-dedicated-chat-mode.js",
-  "patch-chat-catalog.js",
+  "patch-local-canonical-mode.js",
+  "patch-usage-controls.js",
+  "patch-resource-saver.js",
   "patch-side-by-side-scheme.js",
   "patch-isolated-userdata.js",
   "patch-plugin-auth.js",
@@ -50,5 +51,3 @@ function main() {
 }
 
 main();
-
-

@@ -47,8 +47,8 @@ function targetFiles(platform) {
     })
     .sort()
     .map((name) => path.join(buildDirectory, name));
-  if (build.length !== 5) {
-    throw new Error(platform + " build bundles: expected 5 protocol files, found " + build.length);
+  if (build.length !== 4) {
+    throw new Error(platform + " build bundles: expected 4 protocol files, found " + build.length);
   }
   const renderer = fs.readdirSync(assetsDirectory)
     .filter((name) => name.endsWith(".js"))
@@ -81,18 +81,18 @@ function verifyInstalled(files) {
       occurrences(combinedRenderer, ORIGINAL_URL) !== 0) {
     throw new Error("The original codex:// protocol remains in patched bundles");
   }
-  if (occurrences(combinedBuild, UNIQUE_URL) !== 8 ||
+  if (occurrences(combinedBuild, UNIQUE_URL) !== 4 ||
       occurrences(combinedRenderer, UNIQUE_URL) !== 6) {
     throw new Error("Unexpected codex-rebuild:// deep-link structure");
   }
   if (occurrences(combinedBuild, ORIGINAL_PROTOCOL_LITERAL) !== 0 ||
-      occurrences(combinedBuild, UNIQUE_PROTOCOL_LITERAL) !== 4 ||
+      occurrences(combinedBuild, UNIQUE_PROTOCOL_LITERAL) !== 3 ||
       occurrences(combinedBuild, ORIGINAL_REGISTRATION) !== 0 ||
       occurrences(combinedBuild, RUNTIME_REGISTRATION) !== 0 ||
-      occurrences(combinedBuild, LAUNCHER_OWNS_REGISTRATION) !== 1 ||
+      occurrences(combinedBuild, LAUNCHER_OWNS_REGISTRATION) !== 0 ||
       occurrences(combinedBuild, BROKEN_LAUNCHER_REGISTRATION) !== 0 ||
       occurrences(combinedBuild, ORIGINAL_SINGLE_INSTANCE) !== 0 ||
-      occurrences(combinedBuild, UNIQUE_SINGLE_INSTANCE) !== 1) {
+      occurrences(combinedBuild, UNIQUE_SINGLE_INSTANCE) !== 0) {
     throw new Error("Unexpected main-process protocol registration structure");
   }
 }
@@ -132,21 +132,21 @@ function patchPlatform(platform, checkOnly) {
     singleInstancePredicates: occurrences(combinedBuild, ORIGINAL_SINGLE_INSTANCE),
     uniqueSingleInstancePredicates: occurrences(combinedBuild, UNIQUE_SINGLE_INSTANCE),
   };
-  const freshStructure = structure.buildUrls === 8 && structure.uniqueBuildUrls === 0 &&
+  const freshStructure = structure.buildUrls === 4 && structure.uniqueBuildUrls === 0 &&
     structure.rendererUrls === 6 && structure.uniqueRendererUrls === 0 &&
-    structure.protocolLiterals === 4 && structure.uniqueProtocolLiterals === 0 &&
-    structure.registrations === 1 && structure.runtimeRegistrations === 0 &&
+    structure.protocolLiterals === 3 && structure.uniqueProtocolLiterals === 0 &&
+    structure.registrations === 0 && structure.runtimeRegistrations === 0 &&
     structure.launcherRegistrations === 0 && structure.brokenLauncherRegistrations === 0 &&
-    structure.singleInstancePredicates === 1 &&
+    structure.singleInstancePredicates === 0 &&
     structure.uniqueSingleInstancePredicates === 0;
   const upgradeStructure = alreadyMarked && structure.buildUrls === 0 &&
-    structure.uniqueBuildUrls === 8 && structure.rendererUrls === 0 &&
+    structure.uniqueBuildUrls === 4 && structure.rendererUrls === 0 &&
     structure.uniqueRendererUrls === 6 &&
-    structure.protocolLiterals + structure.uniqueProtocolLiterals === 4 &&
+    structure.protocolLiterals + structure.uniqueProtocolLiterals === 3 &&
     structure.registrations === 0 &&
     structure.runtimeRegistrations + structure.launcherRegistrations +
-      structure.brokenLauncherRegistrations === 1 &&
-    structure.singleInstancePredicates + structure.uniqueSingleInstancePredicates === 1;
+      structure.brokenLauncherRegistrations === 0 &&
+    structure.singleInstancePredicates + structure.uniqueSingleInstancePredicates === 0;
   if (!freshStructure && !upgradeStructure) {
     throw new Error(platform + ": upstream deep-link structure changed: " +
       JSON.stringify(structure));

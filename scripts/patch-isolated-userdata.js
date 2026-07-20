@@ -15,7 +15,7 @@ const MARKER = "codex-rebuild:isolated-userdata-v1";
 const SUPPORTED_PLATFORM = "mac-x64";
 
 const USERDATA_FROM =
-  "function ee({appDataPath:e,buildFlavor:n,env:r}){let i=r.CODEX_ELECTRON_USER_DATA_PATH?.trim();if(i)return(0,o.resolve)(i);let a=(0,o.join)(e,t.Na(n)),s=r.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null;return n===`agent`&&s!=null?(0,o.join)(a,`agent`,s):a}";
+  "function ee({appDataPath:e,buildFlavor:n,env:r}){let i=r.CODEX_ELECTRON_USER_DATA_PATH?.trim();if(i)return(0,o.resolve)(i);let a=(0,o.join)(e,t.qa(n)),s=r.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null;return n===`agent`&&s!=null?(0,o.join)(a,`agent`,s):a}";
 const USERDATA_TO =
   `function ee({appDataPath:e,buildFlavor:n,env:r}){/* ${MARKER} */let i=r.CODEX_ELECTRON_USER_DATA_PATH?.trim();if(i)return(0,o.resolve)(i);let a=(0,o.join)(e,\`CodexDesktop-Rebuild\`,\`Profile\`),s=r.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null;return n===\`agent\`&&s!=null?(0,o.join)(a,\`agent\`,s):a}`;
 

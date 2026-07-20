@@ -5,8 +5,12 @@
 const fs = require("fs");
 const path = require("path");
 
-const SRC_DIR = path.join(__dirname, "..", "src");
-const PROJECT_ROOT = path.join(__dirname, "..");
+const PROJECT_ROOT = path.resolve(
+  process.env.CODEX_REBUILD_PROJECT_ROOT || path.join(__dirname, ".."),
+);
+const SRC_DIR = path.resolve(
+  process.env.CODEX_REBUILD_SRC_DIR || path.join(PROJECT_ROOT, "src"),
+);
 
 /**
  * Locate bundles matching a filename pattern across platform directories.
