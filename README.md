@@ -1,4 +1,4 @@
-# Community Codex — a ChatGPT‑style Codex rebuild
+# Oh My OpenAI — A Community Rebuild of Codex
 
 Community Codex is a readable, inspectable side‑by‑side rebuild of the Codex desktop runtime and launcher for macOS. It turns the Codex Electron client into a ChatGPT‑like experience while preserving upstream task history and AppServer transport — a Community edition of Codex built for chat-first workflows.
 
