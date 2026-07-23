@@ -4,6 +4,44 @@ Community Codex is a readable, inspectable side‑by‑side rebuild of the Codex
 
 This README emphasizes the novel features implemented in the codebase, especially the chat mode and presets, and explains how this is effectively a ChatGPT app adapted to the Codex runtime.
 
+## Quick Install (Homebrew)
+
+**One-liner:**
+
+```sh
+brew install --cask https://raw.githubusercontent.com/random-guy-05/oh-my-openai/main/Casks/codex-desktop.rb
+```
+
+Or if you'd like to tap for easier upgrades:
+
+```sh
+brew tap random-guy-05/oh-my-openai https://github.com/random-guy-05/oh-my-openai.git
+brew install --cask codex-desktop
+```
+
+The cask downloads the latest DMG, installs `Codex.app` to `/Applications`,
+strips the Gatekeeper quarantine (the build is ad-hoc signed), and opens the
+app automatically. On first launch the launcher extracts its private runtime
+from the embedded payload and starts Codex.
+
+To update to a new release:
+
+```sh
+brew upgrade --cask codex-desktop
+```
+
+To uninstall (removes the app and all private runtime data):
+
+```sh
+brew uninstall --zap --cask codex-desktop
+```
+
+> **Note:** The tap URL is explicit because the repository is not prefixed
+> with `homebrew-`. This is intentional — the cask lives alongside the build
+> scripts in the same repo.
+
+## Current build
+
 ---
 
 ## Quick summary
@@ -94,8 +132,16 @@ If you want the side‑by‑side launcher only, `npm run build:side-by-side:x64`
 
 ---
 
+## Manual Installation
+
+Download the DMG from the [latest release](https://github.com/random-guy-05/oh-my-openai/releases),
+open it, and drag **Codex** to Applications. The build is ad-hoc signed and
+not notarized, so first launch may require Control-click → Open and a
+Keychain Always Allow approval.
+
 ## License
-Community Codex is released under the MIT license. A full `LICENSE` file can be added if you want the canonical text in the repo.
+
+Community Codex is released under the MIT license.
 
 ---
 
@@ -103,6 +149,4 @@ Community Codex is released under the MIT license. A full `LICENSE` file can be 
 - Read the patch scripts in `scripts/` and run their `test-*.js` helpers before opening PRs.
 - Keep patches focused and reversible; all patch scripts parse target bundles with Acorn and fail closed on unexpected upstream drift.
 
----
 
-Want me to make the README prettier or add a LICENSE file? See suggestions below.
