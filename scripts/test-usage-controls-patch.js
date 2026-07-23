@@ -64,6 +64,11 @@ assert.strictEqual(summary.totalCachePercent, 75);
 assert.strictEqual(summary.lastCachePercent, 80);
 assert.strictEqual(summary.fiveHourDelta, 0);
 assert.strictEqual(summary.weeklyDelta, 0);
+assert.strictEqual(
+  runtime.summary("server-a").usage.total.totalTokens,
+  1250,
+  "server/local task aliases must resolve to the same usage record",
+);
 
 runtime.observe("thread-a", "server-a", { total, last }, [
   { bucket: { windowDurationMins: 300, usedPercent: 23.5, resetsAt: 100 } },
@@ -123,8 +128,13 @@ store.threads["thread-a"].config = {
 };
 localStorage.setItem(STORE_KEY, JSON.stringify(store));
 assert.throws(() => runtime.assertCanStart("thread-a"), /5-hour usage cap reached/);
+assert.throws(() => runtime.assertCanStart("server-a"), /5-hour usage cap reached/);
 assert.throws(
   () => assertTaskLimitWithoutRuntime("thread-a"),
+  /5-hour usage cap reached/,
+);
+assert.throws(
+  () => assertTaskLimitWithoutRuntime("server-a"),
   /5-hour usage cap reached/,
 );
 
@@ -160,4 +170,4 @@ assert.ok(
   "persisted telemetry must have a bounded thread count",
 );
 
-console.log("[ok] usage runtime telemetry, cache ratios, quota deltas, caps, resets, and bounds");
+console.log("[ok] usage runtime telemetry, task aliases, cache ratios, quota deltas, caps, resets, and bounds");

@@ -40,15 +40,22 @@ const MODELS_IIM_TO =
   `this.safeGet(\`/models\`,{parameters:{query:{iim:!0,include_icons:!1}}})/* ${MARKER}:iim */`;
 
 const MODELS_FN_FROM = "async models(){return IL(await this.request.getModelsResponse())}";
+
+// Must be an expression inside models() — a `function` declaration is a SyntaxError
+// in the surrounding class body (that previously left the app on startup-loader forever).
+const MERGE_IIFE =
+  "(e=>{const t=[{description:null,lane:`thinking`,selectedLabel:`Sol High`,slug:`gpt-5.6-sol`,title:`Sol High`,thinkingEffort:`high`},{description:null,lane:`thinking`,selectedLabel:`Sol Medium`,slug:`gpt-5.6-sol`,title:`Sol Medium`,thinkingEffort:`medium`},{description:null,lane:`instant`,selectedLabel:`5.5 Instant`,slug:`gpt-5.5`,title:`5.5 Instant`},{description:null,lane:`thinking`,selectedLabel:`GPT-5.4`,slug:`gpt-5.4`,title:`5.4`},{description:null,lane:`thinking`,selectedLabel:`o3`,slug:`o3`,title:`o3`}];const n=new Set;const r=[];for(const o of[...t,...e?.options??[]]){const k=`${o.slug}:${o.thinkingEffort??``}:${o.lane??``}`;n.has(k)||(n.add(k),r.push(o))}return{...e,defaultModelSlug:`gpt-5.6-sol`,options:r}})";
+
 const MODELS_FN_TO =
-  "async models(){return CDRMergeChatModels(IL(await this.request.getModelsResponse()))}/* " +
+  "async models(){return" +
+  MERGE_IIFE +
+  "(IL(await this.request.getModelsResponse()))}/* " +
   MARKER +
   ":merge */";
 
-const MERGE_HELPER =
-  "function CDRMergeChatModels(e){const t=[{description:null,lane:`thinking`,selectedLabel:`Sol High`,slug:`gpt-5.6-sol`,title:`Sol High`,thinkingEffort:`high`},{description:null,lane:`thinking`,selectedLabel:`Sol Medium`,slug:`gpt-5.6-sol`,title:`Sol Medium`,thinkingEffort:`medium`},{description:null,lane:`instant`,selectedLabel:`5.5 Instant`,slug:`gpt-5.5`,title:`5.5 Instant`},{description:null,lane:`thinking`,selectedLabel:`GPT-5.4`,slug:`gpt-5.4`,title:`5.4`},{description:null,lane:`thinking`,selectedLabel:`o3`,slug:`o3`,title:`o3`}];const n=new Set;const r=[];for(const e of[...t,...e?.options??[]]){const t=`${e.slug}:${e.thinkingEffort??``}:${e.lane??``}`;n.has(t)||(n.add(t),r.push(e))}return{...e,defaultModelSlug:`gpt-5.6-sol`,options:r}}/* " +
-  MARKER +
-  ":helper */";
+const BROKEN_CLASS_HELPER = "}function CDRMergeChatModels(";
+const BROKEN_MODELS_CALL =
+  "async models(){return CDRMergeChatModels(IL(await this.request.getModelsResponse()))}";
 
 const PLACEHOLDER_FROM =
   "QL=`auto`,$L=[{description:null,lane:`instant`,selectedLabel:`GPT-5 Instant`,slug:QL,title:`Instant`},{description:null,lane:`thinking`,selectedLabel:`GPT-5 Thinking`,slug:`gpt-5-thinking`,title:`Thinking`}],eR={defaultModelSlug:QL,options:$L,versionOptions:[{defaultModelSlug:QL,id:`gpt-5`,label:`GPT-5`,modelSlugByLane:{auto:QL,thinking:`gpt-5-thinking`},options:$L,slugs:[QL,`gpt-5-thinking`]}]}";
@@ -99,15 +106,39 @@ function findCatalogBundle(platform) {
   return { path: matches[0], source: fs.readFileSync(matches[0], "utf8") };
 }
 
+function stripBrokenClassHelper(source) {
+  // Old builds injected `function CDRMergeChatModels` into a class body, which
+  // throws SyntaxError and freezes the HTML startup-loader forever.
+  const start = source.indexOf(BROKEN_CLASS_HELPER);
+  if (start === -1) return source;
+  const helperMarker = `}/* ${MARKER}:helper */`;
+  const helperMarkerV1 = "}/* codex-rebuild:chat-catalog-v1:helper */";
+  let end = source.indexOf(helperMarker, start);
+  let markerLen = helperMarker.length;
+  if (end === -1) {
+    end = source.indexOf(helperMarkerV1, start);
+    markerLen = helperMarkerV1.length;
+  }
+  if (end === -1) {
+    throw new Error("broken CDRMergeChatModels helper found but helper marker missing");
+  }
+  // Keep the closing `}` of the previous class method; drop `function … }/* helper */`.
+  return source.slice(0, start + 1) + source.slice(end + markerLen);
+}
+
 function verify(source, bundlePath) {
+  if (source.includes(BROKEN_CLASS_HELPER) || source.includes("function CDRMergeChatModels(")) {
+    throw new Error(
+      `${relPath(bundlePath)} still has illegal class-body CDRMergeChatModels helper`,
+    );
+  }
   for (const item of [
     `${MARKER}:sites`,
     `${MARKER}:internal`,
     `${MARKER}:iim`,
     `${MARKER}:merge`,
-    `${MARKER}:helper`,
     `${MARKER}:placeholder`,
-    "CDRMergeChatModels(",
+    MERGE_IIFE,
     "selectedLabel:`Sol High`",
     "selectedLabel:`Sol Medium`",
     "selectedLabel:`5.5 Instant`",
@@ -123,37 +154,63 @@ function verify(source, bundlePath) {
   if (source.includes(SITES_ATOM_FROM) || source.includes(MODELS_FN_FROM)) {
     throw new Error(`${relPath(bundlePath)} still has locked Sites/model catalog anchors`);
   }
+  if (source.includes(BROKEN_MODELS_CALL)) {
+    throw new Error(`${relPath(bundlePath)} still calls removed CDRMergeChatModels helper`);
+  }
   if (source.includes(MARKER_V1) && !source.includes(MARKER)) {
     throw new Error(`${relPath(bundlePath)} still on chat-catalog v1`);
   }
 }
 
 function patch(source, bundlePath) {
-  if (source.includes(`${MARKER}:merge`) && source.includes("CDRMergeChatModels(")) {
-    verify(source, bundlePath);
-    return { source, changed: false };
+  let next = stripBrokenClassHelper(source);
+
+  if (
+    next.includes(`${MARKER}:merge`) &&
+    next.includes(MERGE_IIFE) &&
+    !next.includes(BROKEN_CLASS_HELPER) &&
+    !next.includes("function CDRMergeChatModels(")
+  ) {
+    verify(next, bundlePath);
+    return { source: next, changed: next !== source };
   }
 
-  let next = source;
-  next = replaceOneOf(next, [SITES_ATOM_FROM, SITES_ATOM_V1], SITES_ATOM_TO, "force Sites available");
-  next = replaceOneOf(
-    next,
-    [INTERNAL_MODELS_FROM, INTERNAL_MODELS_V1],
-    INTERNAL_MODELS_TO,
-    "enable internal ChatGPT models",
-  );
-  next = replaceOneOf(next, [MODELS_IIM_FROM, MODELS_IIM_V1], MODELS_IIM_TO, "request full /models catalog");
-
-  if (!next.includes("function CDRMergeChatModels(")) {
-    if (!next.includes(MODELS_FN_FROM)) {
-      throw new Error(`${relPath(bundlePath)} models() anchor missing for merge helper`);
-    }
-    next = replaceExactly(
+  if (!next.includes(`${MARKER}:sites`) && !next.includes(SITES_ATOM_TO)) {
+    next = replaceOneOf(next, [SITES_ATOM_FROM, SITES_ATOM_V1], SITES_ATOM_TO, "force Sites available");
+  }
+  if (!next.includes(`${MARKER}:internal`) && !next.includes(INTERNAL_MODELS_TO)) {
+    next = replaceOneOf(
       next,
-      MODELS_FN_FROM,
-      `${MERGE_HELPER}${MODELS_FN_TO}`,
-      "inject Chat model merge helper",
+      [INTERNAL_MODELS_FROM, INTERNAL_MODELS_V1],
+      INTERNAL_MODELS_TO,
+      "enable internal ChatGPT models",
     );
+  }
+  if (!next.includes(`${MARKER}:iim`) && !next.includes(MODELS_IIM_TO)) {
+    next = replaceOneOf(next, [MODELS_IIM_FROM, MODELS_IIM_V1], MODELS_IIM_TO, "request full /models catalog");
+  }
+
+  if (next.includes(BROKEN_MODELS_CALL)) {
+    const brokenWithMarker = BROKEN_MODELS_CALL + `/* ${MARKER}:merge */`;
+    if (next.includes(brokenWithMarker)) {
+      next = replaceExactly(
+        next,
+        brokenWithMarker,
+        MODELS_FN_TO,
+        "replace broken CDRMergeChatModels call with IIFE",
+      );
+    } else {
+      next = replaceExactly(
+        next,
+        BROKEN_MODELS_CALL,
+        MODELS_FN_TO,
+        "replace bare broken CDRMergeChatModels call with IIFE",
+      );
+    }
+  } else if (next.includes(MODELS_FN_FROM)) {
+    next = replaceExactly(next, MODELS_FN_FROM, MODELS_FN_TO, "inject Chat model merge IIFE");
+  } else if (!next.includes(MERGE_IIFE)) {
+    throw new Error(`${relPath(bundlePath)} models() anchor missing for merge IIFE`);
   }
 
   if (next.includes(PLACEHOLDER_FROM)) {
@@ -196,3 +253,4 @@ function main() {
 module.exports = { MARKER, findCatalogBundle, patch, verify };
 
 if (require.main === module) main();
+

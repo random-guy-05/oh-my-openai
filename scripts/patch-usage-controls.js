@@ -35,11 +35,14 @@ function installUsageRuntime() {
     const raw = String(threadKey || threadId || "").trim();
     return raw;
   };
-  const emptyStore = () => ({ version: 1, threads: {} });
+  const emptyStore = () => ({ version: 1, threads: {}, aliases: {} });
   const load = () => {
     try {
       const value = JSON.parse(localStorage.getItem(storeKey) || "null");
-      if (value && value.version === 1 && value.threads) return value;
+      if (value && value.version === 1 && value.threads) {
+        value.aliases = value.aliases && typeof value.aliases === "object" ? value.aliases : {};
+        return value;
+      }
     } catch {}
     return emptyStore();
   };
@@ -50,7 +53,26 @@ function installUsageRuntime() {
           (right[1]?.updatedAt || 0) - (left[1]?.updatedAt || 0),
       );
       store.threads = Object.fromEntries(entries.slice(0, maxThreads));
+      const retained = new Set(Object.keys(store.threads));
+      store.aliases = Object.fromEntries(
+        Object.entries(store.aliases || {}).filter(
+          ([alias, target]) => retained.has(alias) || retained.has(target),
+        ),
+      );
       localStorage.setItem(storeKey, JSON.stringify(store));
+    } catch {}
+  };
+  const resolveKey = (store, threadKey, threadId) => {
+    const key = keyOf(threadKey, threadId);
+    return store?.aliases?.[key] || key;
+  };
+  const notify = (threadKey, aliases = []) => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent("cdr-usage-change", {
+          detail: { threadKey, aliases },
+        }),
+      );
     } catch {}
   };
   const tokenBucket = (bucket) => ({
@@ -112,7 +134,13 @@ function installUsageRuntime() {
     }
 
     const store = load();
-    const previous = store.threads[key] || {};
+    const resolvedKey = resolveKey(store, key);
+    const primaryKey = store.threads[resolvedKey] ? resolvedKey : key;
+    const aliasKeys = [keyOf(threadKey), keyOf(threadId)].filter(Boolean);
+    for (const alias of aliasKeys) {
+      if (alias !== primaryKey) store.aliases[alias] = primaryKey;
+    }
+    const previous = store.threads[primaryKey] || {};
     const baseline = { ...(previous.baseline || {}) };
     for (const name of ["fiveHour", "weekly"]) {
       const current = windows[name];
@@ -127,7 +155,7 @@ function installUsageRuntime() {
         baseline[name] = { ...current };
       }
     }
-    store.threads[key] = {
+    store.threads[primaryKey] = {
       updatedAt: Date.now(),
       config: previous.config || {
         fiveHourPercent: null,
@@ -140,12 +168,16 @@ function installUsageRuntime() {
       hasExactUsage: hasExactUsage || previous.hasExactUsage === true,
     };
     save(store);
+    notify(primaryKey, aliasKeys);
   };
-  const getRecord = (threadKey) => load().threads[keyOf(threadKey)] || null;
-  const configure = (threadKey) => {
-    const key = keyOf(threadKey);
-    if (!key) return;
+  const getRecord = (threadKey, threadId) => {
     const store = load();
+    return store.threads[resolveKey(store, threadKey, threadId)] || null;
+  };
+  const configure = (threadKey) => {
+    const store = load();
+    const key = resolveKey(store, threadKey);
+    if (!key) return null;
     const record = store.threads[key] || {
       updatedAt: Date.now(),
       config: {},
@@ -194,9 +226,11 @@ function installUsageRuntime() {
     record.updatedAt = Date.now();
     store.threads[key] = record;
     save(store);
+    notify(key, [key]);
     window.alert(
       "Task limits saved. Quota caps use observed account-wide deltas and are conservative when other tasks run concurrently.",
     );
+    return { ...record.config };
   };
   const summary = (threadKey, usage) => {
     const key = keyOf(threadKey);
@@ -268,6 +302,7 @@ function installUsageRuntime() {
     configure,
     summary,
     assertCanStart,
+    getRecord,
     storeKey,
   };
   return globalThis.__cdrUsageV1;
@@ -276,7 +311,9 @@ function installUsageRuntime() {
 function assertTaskLimitWithoutRuntime(threadKey) {
   try {
     const value = JSON.parse(localStorage.getItem("cdr-usage-v1") || "null");
-    const record = value?.threads?.[String(threadKey || "")];
+    const rawKey = String(threadKey || "");
+    const resolvedKey = value?.aliases?.[rawKey] || rawKey;
+    const record = value?.threads?.[resolvedKey];
     if (!record) return;
     const delta = (name) => {
       const current = record.windows?.[name];
