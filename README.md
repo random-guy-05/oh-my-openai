@@ -1,126 +1,146 @@
-# Oh My OpenAI — Codex side-by-side rebuild
+# Oh My OpenAI — Codex (side‑by‑side rebuild)
 
-A customized side-by-side Codex (Codex Desktop) build that runs next to the official app on Intel macOS. It’s focused on local-friendly tweaks, safer defaults, and a set of small but useful runtime patches you can inspect and rebuild from source.
+![build badge](https://img.shields.io/badge/build-unknown-lightgrey) ![side-by-side](https://img.shields.io/badge/side--by--side-YES-blue) ![license](https://img.shields.io/badge/license-MIT-yellow)
 
-Badges: build | side-by-side | MIT
+A tidy, inspectable rebuild of the Codex desktop runtime and launcher for Intel macOS — runs next to the official app, ships local-friendly patches, and keeps everything auditable.
 
-Overview
+---
 
-This repository contains the tools, patches, and build scripts used to produce a side-by-side Codex desktop runtime and launcher. The goal is not to replace upstream but to offer a reproducible, inspectable rebuild with optional behavior changes such as model presets, resource-saver limits, usage caps, and an isolated runtime/containerized profile.
+## Table of contents
+- [Quick summary](#quick-summary)  
+- [What this repo actually does](#what-this-repo-actually-does)  
+- [Quick start / build](#quick-start--build)  
+- [Important files & scripts](#important-files--scripts)  
+- [Install / runtime paths](#install--runtime-paths)  
+- [Security / audit notes](#security--audit-notes)  
+- [License (short)](#license-short)  
+- [Contributing](#contributing)
 
-Key features (what the code actually does)
+---
 
-- Side-by-side launcher + runtime
-  - A separate launcher (io.haleclipse.codexdesktop.launcher) that embeds a private runtime (io.haleclipse.codexdesktop.runtime) so the rebuilt app can coexist with the official Codex install.
-  - Builds for mac-x64 (Intel) and mac-arm64 are supported; side-by-side packaging scripts focus on mac-x64.
-- Local task presets
-  - Three visible presets exposed in the UI selector without changing native task history or AppServer transport: Chat, ChatGPT Work, and Codex. Switching updates the native selector and the model used for the next turn while preserving authoritative turn history in AppServer.
-- Model / runtime patches
-  - Patches that keep the latest GPT-5.6 named models available (Sol, Terra, Luna) and route certain handoffs or background resumes to specific model flavors.
+## Quick summary
+This repository contains scripts and small deterministic patches that produce a "side‑by‑side" Codex Desktop build: a launcher that embeds a private runtime so the rebuilt app can coexist with the official Codex install. Focus areas: reproducible builds, model-routing patches, usage/resource controls, and local observability for debugging.
+
+---
+
+## What this repo actually does
+- Side‑by‑side launcher & isolated runtime
+  - Launcher: `io.haleclipse.codexdesktop.launcher`
+  - Private runtime: `io.haleclipse.codexdesktop.runtime`
+  - Keeps profiles and runtime data separate from the official app.
+
+- Local task presets (UI-visible)
+  - Exposes three presets in a selector: **Chat**, **ChatGPT Work**, **Codex**.
+  - Switching updates the native model selector for the *next turn* but preserves authoritative AppServer task history.
+
+- Model & routing patches
+  - Keeps named GPT-5.6 variants (Sol / Terra / Luna) available and routes handoffs/background resumes to configured flavors.
+
 - Usage & resource controls
-  - Optional cumulative token caps and observed-quota percentage limits exposed under a /limits endpoint and enforced by the patched logic.
-  - Bounded usage and telemetry stores to avoid unbounded growth.
-  - Reduced defaults for detached/inactive browser instances (e.g., default to fewer pages and aggressive idle timeouts) to save CPU and memory.
-- Observability & telemetry hooks
-  - Exact AppServer token and prompt-cache telemetry are surfaced under /status endpoints for local inspection.
-  - Scripts include test utilities to assert expected telemetry and usage deltas.
+  - Optional cumulative token caps and percentage quota limits (`/limits`) enforced via patched logic.
+  - Bounded usage/telemetry stores to avoid unbounded growth.
+  - Reduced defaults for detached/inactive browser instances (fewer pages, shorter idle timeouts) to save CPU/RAM.
+
+- Observability
+  - Local `/status` endpoints surface token and prompt-cache telemetry for inspection.
+  - Test scripts validate telemetry/usage deltas.
+
 - Reproducible build tooling
-  - Scripts to sync upstream, apply deterministic patches, check source, and build both runtimes and a side-by-side launcher. The built artifacts are reproducible by following the build steps below.
-- Isolation & data location
-  - Isolated profile and CODEX_HOME to keep runtime data separate from the official app.
-  - Runtime data is stored under:
+  - Scripts to sync upstream artifacts, apply deterministic patches, run checks, and produce platform builds + a side‑by‑side launcher.
 
-  ~/Library/Application Support/CodexDesktop-Rebuild/
+---
 
-What lives in this repo (important files)
+## Quick start / build (canonical sequence)
+Follow these steps in order — they’re intentionally sequential:
 
-- scripts/
-  - patch-local-canonical-mode.js — local-mode and canonical-mode patching
-  - patch-usage-controls.js — enforcement of usage caps and limits
-  - patch-resource-saver.js — disables or tightens background/browser defaults
-  - patch-latest-models.js — ensures named GPT-5.6 variants remain available
-  - patch-all.js — convenience wrapper that applies the above patches
-  - build-from-upstream.js — prepares a runtime build for the given platform
-  - build-side-by-side-mac.js — embeds a runtime into a side-by-side launcher
-  - sync-upstream.js — fetches upstream assets to a reproducible path
-  - test-*.js — quick regressions for the most important patches
-- src/mac-x64/_asar/ — compiled upstream application assets after patching
-- package.json — build scripts and metadata (see scripts section below)
-
-Quick verification & build
-
-These commands are the canonical sequence used by the repo (order matters):
-
-```sh
+```bash
+# install deps
 npm ci
+
+# get upstream assets (uses installed upstream if available)
 npm run sync:installed:x64
+
+# apply mac-x64 patches
 node scripts/patch-all.js mac-x64
+
+# smoke tests for patches
 npm run test:latest-models
 npm run test:local-mode
 npm run test:usage-controls
 npm run test:resource-saver
+
+# sanity check then build
 node scripts/patch-all.js mac-x64 --check
 npm run build:mac-x64
 npm run build:side-by-side:x64
 ```
 
-Notes
+Tip: run the `test:*` scripts between patch and build to catch issues early.
 
-- The build is ad-hoc signed and not notarized. On first launch you may need to Control-click → Open and allow in Keychain.
-- The side-by-side build embeds a private runtime so user data and identifiers are separate from the official app.
-- The code intentionally keeps task history authoritative in AppServer; switching presets does not mutate server-side history.
+---
+
+## Important files & scripts
+- scripts/
+  - `patch-local-canonical-mode.js` — local/canonical mode patching  
+  - `patch-usage-controls.js` — usage-cap enforcement, `/limits`  
+  - `patch-resource-saver.js` — resource-saver/background tweaks  
+  - `patch-latest-models.js` — ensure GPT-5.6 variants are present  
+  - `patch-all.js` — convenience wrapper for all patches  
+  - `build-from-upstream.js` — prepare a runtime for a platform  
+  - `build-side-by-side-mac.js` — embed runtime into launcher  
+  - `sync-upstream.js` — fetch upstream assets reproducibly  
+  - `test-*.js` — small regression/test utilities
+
+- `src/mac-x64/_asar/` — patched upstream application assets  
+- `package.json` — scripts and metadata
 
 Helpful npm scripts (from package.json)
+- `npm run start` / `npm run dev` — dev run  
+- `npm run patch` — run `patch-all.js`  
+- `npm run patch:mac` — mac patches (arm64 + x64)  
+- `npm run build:mac-x64` — build mac x64 runtime  
+- `npm run build:side-by-side:x64` — package side-by-side launcher
 
-- npm run start / dev — start the patched app in development
-- npm run patch — run patch-all.js
-- npm run patch:mac — apply mac patches for both arm64 and x64
-- npm run build:mac-x64 — build runtime for mac x64
-- npm run build:side-by-side:x64 — create the side-by-side launcher that bundles the patched runtime
-- npm run test:latest-models — verify latest-models patch
-- npm run test:local-mode — verify local canonical-mode patch
-- npm run test:usage-controls — verify usage caps
-- npm run test:resource-saver — verify resource saver behavior
+---
 
-Security & privacy
+## Install / runtime paths
+- Runtime data for the side‑by‑side build:  
+  `~/Library/Application Support/CodexDesktop-Rebuild/`
 
-- The rebuild keeps telemetry surface points for local inspection (/status) but the patched runtime exposes fewer default background resources and respects the configured limits.
-- If you plan to run this build, audit the patches under scripts/ before launching and check the test utilities.
+- Example artifact (from earlier builds):  
+  `out/Codex-side-by-side-mac-x64-26.715.31925.dmg`  
+  Example SHA‑256: `111e7dd8458ac36e973e7760a666120da16ccceaa9eb10e1c7a0684662ea2d18`
 
-Installation (runtime paths)
+> Note: the build artifact is ad‑hoc signed and not notarized. Gatekeeper prompts on first launch are expected (Control‑click → Open).
 
-Runtime data for the rebuilt side-by-side launcher is stored at:
+---
 
-~/Library/Application Support/CodexDesktop-Rebuild/
+## Security / audit notes
+- The repo exposes local telemetry endpoints for inspection. Nothing here automatically transmits data to third parties — audit `scripts/` before running builds.
+- Keep patches small and reversible; tests exist to help validate behavior.
 
-Installer artifact example (from earlier builds)
+---
 
-- Installer: out/Codex-side-by-side-mac-x64-26.715.31925.dmg
-- Example SHA-256: 111e7dd8458ac36e973e7760a666120da16ccceaa9eb10e1c7a0684662ea2d18
+## License (short)
+Licensed under MIT. Copyright (c) 2026 random-guy-05.  
+(Per your request the full MIT boilerplate has been removed from the README — add a `LICENSE` file with the canonical text if you want the full legal copy.)
 
-Contributing
+---
 
-- Read the scripts in scripts/ to understand the patches and run the test files before opening anything.
-- Keep patches small, well-documented, and reversible.
+## Contributing
+1. Read the patch scripts in `scripts/`.  
+2. Run the `test-*.js` helpers locally before opening PRs.  
+3. Keep patches small, documented, and reversible.
 
-License — MIT
+---
 
-Copyright (c) 2026 random-guy-05
+## Visuals / screenshots
+(Place screenshots in `/assets/` and reference them here.)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+![screenshot placeholder](https://via.placeholder.com/800x300.png?text=Add+your+screenshot+to+/assets)
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Made with care — want it to look even nicer? I can:
+- add a polished SVG header,  
+- add real CI/status badges (once CI exists),  
+- create a dedicated `LICENSE` file with the canonical MIT text, or  
+- add a short "Usage / Quick Start" with example screenshots and commands.
