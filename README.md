@@ -1,146 +1,108 @@
-# Oh My OpenAI — Codex (side‑by‑side rebuild)
+# Community Codex — a ChatGPT‑style Codex rebuild
 
-![build badge](https://img.shields.io/badge/build-unknown-lightgrey) ![side-by-side](https://img.shields.io/badge/side--by--side-YES-blue) ![license](https://img.shields.io/badge/license-MIT-yellow)
+Community Codex is a readable, inspectable side‑by‑side rebuild of the Codex desktop runtime and launcher for macOS. It turns the Codex Electron client into a ChatGPT‑like experience while preserving upstream task history and AppServer transport — a Community edition of Codex built for chat-first workflows.
 
-A tidy, inspectable rebuild of the Codex desktop runtime and launcher for Intel macOS — runs next to the official app, ships local-friendly patches, and keeps everything auditable.
-
----
-
-## Table of contents
-- [Quick summary](#quick-summary)  
-- [What this repo actually does](#what-this-repo-actually-does)  
-- [Quick start / build](#quick-start--build)  
-- [Important files & scripts](#important-files--scripts)  
-- [Install / runtime paths](#install--runtime-paths)  
-- [Security / audit notes](#security--audit-notes)  
-- [License (short)](#license-short)  
-- [Contributing](#contributing)
+This README emphasizes the novel features implemented in the codebase, especially the chat mode and presets, and explains how this is effectively a ChatGPT app adapted to the Codex runtime.
 
 ---
 
 ## Quick summary
-This repository contains scripts and small deterministic patches that produce a "side‑by‑side" Codex Desktop build: a launcher that embeds a private runtime so the rebuilt app can coexist with the official Codex install. Focus areas: reproducible builds, model-routing patches, usage/resource controls, and local observability for debugging.
+- Name: Community Codex (side‑by‑side rebuild)
+- Platform focus: mac-x64 (Intel) with mac-arm64 supported
+- Purpose: expose ChatGPT‑style chat mode and presets inside the native Codex client, plus usage/resource controls, observability, and reproducible build tooling
 
 ---
 
-## What this repo actually does
-- Side‑by‑side launcher & isolated runtime
-  - Launcher: `io.haleclipse.codexdesktop.launcher`
-  - Private runtime: `io.haleclipse.codexdesktop.runtime`
-  - Keeps profiles and runtime data separate from the official app.
+## What makes Community Codex different (novel features)
+These are the actual features implemented in the repository (look in `scripts/` and `src/mac-x64/_asar/` for the code):
 
-- Local task presets (UI-visible)
-  - Exposes three presets in a selector: **Chat**, **ChatGPT Work**, **Codex**.
-  - Switching updates the native model selector for the *next turn* but preserves authoritative AppServer task history.
+1) Chat first, sticky chat behavior
+- Implements a ChatGPT‑style chat mode that is "sticky": the composer, send control, and conversation flow behave like a chat app without breaking native Codex history. Look at `scripts/_apply-sticky-chat-v43.js` and `scripts/_apply-chat-models-v37.js` for the runtime hooks and ASAR injection.
+- Sticky send: the patched send flow (`CDRStickyChatSend` and associated bridge hooks) ensures new messages are appended to the existing conversation rather than triggering navigations or undesired surface changes.
+- Background resume & handoffs are routed to a lightweight GPT-5.6 flavor (Luna Light) to resume state or fetch context without consuming the heavier model budget.
 
-- Model & routing patches
-  - Keeps named GPT-5.6 variants (Sol / Terra / Luna) available and routes handoffs/background resumes to configured flavors.
+2) Chat model picker mapped to AppServer models
+- The Chat mode originally used a ChatGPT catalog; Community Codex maps that catalog back to the local AppServer model picker so users can keep the familiar ChatGPT UI while running Sol/Terra/Luna models provided by the Codex backend.
+- See `scripts/_apply-chat-models-v37.js` and `scripts/_inspect-model-picker-state2.js` for how the patch extracts model picker helpers and publishes AppServer-compatible model lists.
 
-- Usage & resource controls
-  - Optional cumulative token caps and percentage quota limits (`/limits`) enforced via patched logic.
-  - Bounded usage/telemetry stores to avoid unbounded growth.
-  - Reduced defaults for detached/inactive browser instances (fewer pages, shorter idle timeouts) to save CPU/RAM.
+3) UI‑visible presets (Chat, ChatGPT Work, Codex) with safe semantics
+- Three presets are exposed in the selector but they intentionally do not change route, AppServer task id, transcript ownership, or history hydration. The code stores only the selected preset (`cdr-product-mode`) and updates the visible native selector for the *next* turn only.
+- The selector colorization and model/effort mapping are local UI conveniences; authoritative history remains on AppServer and all thread reads/hydration use upstream `thread/read` with `includeTurns: true` (see `CUSTOM_BUILD.md` and `scripts/patch-local-canonical-mode.js`).
 
-- Observability
-  - Local `/status` endpoints surface token and prompt-cache telemetry for inspection.
-  - Test scripts validate telemetry/usage deltas.
+4) Seamless chat + minimal server-side mutation
+- Patches (e.g., `patch-local-canonical-mode.js`) use careful surface-only edits: setMode-only selectors, local `cdr-local-mode-change` events, and safe composer/controller replacements so that server-side identifiers remain stable.
+- The test harness `scripts/test-local-canonical-mode-patch.js` validates that patched bundles preserve required call sites and parse cleanly with Acorn.
 
-- Reproducible build tooling
-  - Scripts to sync upstream artifacts, apply deterministic patches, run checks, and produce platform builds + a side‑by‑side launcher.
+5) Usage controls and telemetry for local inspection
+- `patch-usage-controls.js` adds exact AppServer token and prompt-cache counters, observed account quota deltas, and optional per-task caps accessible via a local `/limits` endpoint.
+- Telemetry and prompt-cache counters are exposed under `/status` for local inspection; tests assert expected deltas.
+
+6) Resource saver / lifecycle tuning
+- `patch-resource-saver.js` reduces detached/inactive defaults (e.g., from 32 pages / 30 minutes to 8 pages / 10 minutes) and tightens background defaults to save CPU and memory while keeping upstream protections.
+
+7) Side‑by‑side packaging and isolated runtime
+- The outer launcher installs a fingerprinted private runtime under `~/Library/Application Support/CodexDesktop-Rebuild/Codex.app`, keeping CODEX_HOME and profile data isolated from the official app. Packaging scripts (`build-side-by-side-mac.js`, `build-from-upstream.js`) handle embedding the patched runtime into a launcher.
 
 ---
 
-## Quick start / build (canonical sequence)
-Follow these steps in order — they’re intentionally sequential:
+## Why this is a ChatGPT-style app for Codex
+Community Codex adapts the ChatGPT UX and conversation semantics into the Codex client by:
+
+- Mapping ChatGPT model listings to AppServer models, so the Chat UI selects Sol/Terra/Luna models rather than the original ChatGPT cloud catalog.
+- Providing a sticky, chat‑like composer and send flow so conversations feel like a chat app and messages append naturally.
+- Preserving server‑authoritative task history and thread reads (no covert server-side rewriting), so the rebuild is UX‑focused rather than invasive.
+
+In short: the repo makes Codex behave like ChatGPT's chat app while keeping data, IDs, and history consistent with the original Codex AppServer.
+
+---
+
+## Files to inspect (where the magic lives)
+- scripts/patch-local-canonical-mode.js — selector/composer/controller patches and durable notes
+- scripts/_apply-sticky-chat-v43.js — sticky chat assembly, installs a patched ASAR
+- scripts/_apply-chat-models-v37.js — converts ChatGPT catalog entries into AppServer model picker lists
+- scripts/patch-usage-controls.js — token counters, `/limits` logic
+- scripts/patch-resource-saver.js — lifecycle and detached tab defaults
+- scripts/patch-latest-models.js — keeps Sol/Terra/Luna variants surfaced
+- scripts/patch-all.js — runs all patches in a deterministic sequence
+- scripts/test-*.js — local tests that verify patch invariants using Acorn-based parsing and targeted asserts
+- src/mac-x64/_asar/ — patched runtime assets after the patches are applied
+
+---
+
+## Quick build & verification
+Follow the repo canonical sequence (these scripts are in package.json):
 
 ```bash
-# install deps
 npm ci
-
-# get upstream assets (uses installed upstream if available)
 npm run sync:installed:x64
-
-# apply mac-x64 patches
 node scripts/patch-all.js mac-x64
-
-# smoke tests for patches
 npm run test:latest-models
 npm run test:local-mode
 npm run test:usage-controls
 npm run test:resource-saver
-
-# sanity check then build
 node scripts/patch-all.js mac-x64 --check
 npm run build:mac-x64
 npm run build:side-by-side:x64
 ```
 
-Tip: run the `test:*` scripts between patch and build to catch issues early.
+If you want the side‑by‑side launcher only, `npm run build:side-by-side:x64` packages the patched runtime into the launcher (after building the runtime).
 
 ---
 
-## Important files & scripts
-- scripts/
-  - `patch-local-canonical-mode.js` — local/canonical mode patching  
-  - `patch-usage-controls.js` — usage-cap enforcement, `/limits`  
-  - `patch-resource-saver.js` — resource-saver/background tweaks  
-  - `patch-latest-models.js` — ensure GPT-5.6 variants are present  
-  - `patch-all.js` — convenience wrapper for all patches  
-  - `build-from-upstream.js` — prepare a runtime for a platform  
-  - `build-side-by-side-mac.js` — embed runtime into launcher  
-  - `sync-upstream.js` — fetch upstream assets reproducibly  
-  - `test-*.js` — small regression/test utilities
-
-- `src/mac-x64/_asar/` — patched upstream application assets  
-- `package.json` — scripts and metadata
-
-Helpful npm scripts (from package.json)
-- `npm run start` / `npm run dev` — dev run  
-- `npm run patch` — run `patch-all.js`  
-- `npm run patch:mac` — mac patches (arm64 + x64)  
-- `npm run build:mac-x64` — build mac x64 runtime  
-- `npm run build:side-by-side:x64` — package side-by-side launcher
+## Runtime & install paths
+- Isolated runtime path: `~/Library/Application Support/CodexDesktop-Rebuild/` (the launcher installs `Codex.app` inside this folder)
 
 ---
 
-## Install / runtime paths
-- Runtime data for the side‑by‑side build:  
-  `~/Library/Application Support/CodexDesktop-Rebuild/`
-
-- Example artifact (from earlier builds):  
-  `out/Codex-side-by-side-mac-x64-26.715.31925.dmg`  
-  Example SHA‑256: `111e7dd8458ac36e973e7760a666120da16ccceaa9eb10e1c7a0684662ea2d18`
-
-> Note: the build artifact is ad‑hoc signed and not notarized. Gatekeeper prompts on first launch are expected (Control‑click → Open).
-
----
-
-## Security / audit notes
-- The repo exposes local telemetry endpoints for inspection. Nothing here automatically transmits data to third parties — audit `scripts/` before running builds.
-- Keep patches small and reversible; tests exist to help validate behavior.
-
----
-
-## License (short)
-Licensed under MIT. Copyright (c) 2026 random-guy-05.  
-(Per your request the full MIT boilerplate has been removed from the README — add a `LICENSE` file with the canonical text if you want the full legal copy.)
+## License
+Community Codex is released under the MIT license. A full `LICENSE` file can be added if you want the canonical text in the repo.
 
 ---
 
 ## Contributing
-1. Read the patch scripts in `scripts/`.  
-2. Run the `test-*.js` helpers locally before opening PRs.  
-3. Keep patches small, documented, and reversible.
+- Read the patch scripts in `scripts/` and run their `test-*.js` helpers before opening PRs.
+- Keep patches focused and reversible; all patch scripts parse target bundles with Acorn and fail closed on unexpected upstream drift.
 
 ---
 
-## Visuals / screenshots
-(Place screenshots in `/assets/` and reference them here.)
-
-![screenshot placeholder](https://via.placeholder.com/800x300.png?text=Add+your+screenshot+to+/assets)
-
-Made with care — want it to look even nicer? I can:
-- add a polished SVG header,  
-- add real CI/status badges (once CI exists),  
-- create a dedicated `LICENSE` file with the canonical MIT text, or  
-- add a short "Usage / Quick Start" with example screenshots and commands.
+Want me to make the README prettier or add a LICENSE file? See suggestions below.
