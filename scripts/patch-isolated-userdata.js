@@ -14,8 +14,10 @@ const { relPath, SRC_DIR } = require("./patch-util");
 const MARKER = "codex-rebuild:isolated-userdata-v1";
 const SUPPORTED_PLATFORM = "mac-x64";
 
-const USERDATA_FROM =
-  "function ee({appDataPath:e,buildFlavor:n,env:r}){let i=r.CODEX_ELECTRON_USER_DATA_PATH?.trim();if(i)return(0,o.resolve)(i);let a=(0,o.join)(e,t.qa(n)),s=r.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null;return n===`agent`&&s!=null?(0,o.join)(a,`agent`,s):a}";
+// 26.721 renamed the minified helper from t.qa to t.ro.  Use a regex that
+// matches any minified member name so the patch survives future renames.
+const USERDATA_RE =
+  /function ee\(\{appDataPath:e,buildFlavor:n,env:r\}\)\{let i=r\.CODEX_ELECTRON_USER_DATA_PATH\?\.trim\(\);if\(i\)return\(0,o\.resolve\)\(i\);let a=\(0,o\.join\)\(e,t\.[a-zA-Z_$][\w$]*\(n\)\),s=r\.CODEX_ELECTRON_AGENT_RUN_ID\?\.trim\(\)\|\|null;return n===`agent`&&s!=null\?\(0,o\.join\)\(a,`agent`,s\):a\}/;
 const USERDATA_TO =
   `function ee({appDataPath:e,buildFlavor:n,env:r}){/* ${MARKER} */let i=r.CODEX_ELECTRON_USER_DATA_PATH?.trim();if(i)return(0,o.resolve)(i);let a=(0,o.join)(e,\`CodexDesktop-Rebuild\`,\`Profile\`),s=r.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null;return n===\`agent\`&&s!=null?(0,o.join)(a,\`agent\`,s):a}`;
 
@@ -40,20 +42,18 @@ function findBootstrap(platform) {
 
 function patchFile(filePath, checkOnly) {
   let source = fs.readFileSync(filePath, "utf8");
-  if (source.includes(MARKER) && source.includes(USERDATA_TO)) {
+  if (source.includes(MARKER)) {
     console.log(`    [ok] ${relPath(filePath)} already isolates userData`);
     return false;
   }
-  if (!source.includes(USERDATA_FROM) && !source.includes(USERDATA_TO)) {
+  if (!USERDATA_RE.test(source)) {
     throw new Error(`${relPath(filePath)} missing expected ee() userData helper`);
   }
   if (checkOnly) {
     console.log(`    [?] ${relPath(filePath)} would isolate userData`);
     return true;
   }
-  if (source.includes(USERDATA_FROM)) {
-    source = source.split(USERDATA_FROM).join(USERDATA_TO);
-  }
+  source = source.replace(USERDATA_RE, USERDATA_TO);
   if (!source.includes(MARKER)) {
     throw new Error(`${relPath(filePath)} failed to install isolated userData patch`);
   }
@@ -76,4 +76,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { MARKER, USERDATA_FROM, USERDATA_TO, findBootstrap, patchFile };
+module.exports = { MARKER, USERDATA_RE, USERDATA_TO, findBootstrap, patchFile };

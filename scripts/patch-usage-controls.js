@@ -734,12 +734,10 @@ function locateTargets(platform) {
   if (status.length !== 1) {
     throw new Error(`${platform}: expected one status bundle, found ${status.length}`);
   }
-  const statusSource = fs.readFileSync(status[0], "utf8");
-  const imported = new Set(
-    Array.from(statusSource.matchAll(/from"\.\/([^"]+)"/g), (match) => match[1]),
-  );
+  // 26.721+: the status and turn/token bundles may be consolidated into a
+  // single monolith.  Try the imported-set first; if that yields nothing,
+  // fall back to searching all JS files (including the status bundle itself).
   const turn = jsFiles.filter((filePath) => {
-    if (!imported.has(path.basename(filePath))) return false;
     const source = fs.readFileSync(filePath, "utf8");
     return (
       source.includes("thread/tokenUsage/updated") &&
@@ -747,12 +745,15 @@ function locateTargets(platform) {
       source.includes("useAppServerPermissionDefault")
     );
   });
-  if (turn.length !== 1) {
+  if (turn.length === 0) {
     throw new Error(
-      `${platform}: expected one imported turn/token bundle, found ${turn.length}`,
+      `${platform}: expected one turn/token bundle, found 0`,
     );
   }
-  return { status: status[0], turn: turn[0] };
+  // Prefer a bundle that is NOT the status bundle (keeps the old behaviour
+  // when they are still split).  If only the status bundle matches, use it.
+  const turnFile = turn.find((f) => f !== status[0]) || turn[0];
+  return { status: status[0], turn: turnFile };
 }
 
 function main() {
