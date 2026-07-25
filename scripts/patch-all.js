@@ -56,10 +56,22 @@ function main() {
   const extra = args.filter((a) => a.startsWith("--"));
   const passArgs = [...(platform ? [platform] : []), ...extra];
 
+  // Patches whose needle set is only valid for macOS x86_64 against the current
+  // 26.721.x monolith. Skip them on every other platform instead of letting
+  // the per-patcher hard-throw abort the entire patch pipeline.
+  const MAC_X64_ONLY_PATCHES = new Set([
+    "patch-local-canonical-mode.js",
+  ]);
+
   for (const script of PATCHES) {
     const scriptPath = path.join(__dirname, script);
     const label = script.replace(".js", "");
     console.log(`\n== ${label} ==`);
+
+    if (platform && platform !== "mac-x64" && MAC_X64_ONLY_PATCHES.has(script)) {
+      console.log(`[skip] ${label} supports mac-x64 only; skipping for ${platform}`);
+      continue;
+    }
 
     try {
       execFileSync("node", [scriptPath, ...passArgs], { stdio: "inherit" });

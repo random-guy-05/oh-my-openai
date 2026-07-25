@@ -249,10 +249,26 @@ function resolveMacSource(platform, platformDir, asarDir) {
   const sourceMetadata = loadSourceMetadata(platformDir);
   if (platform === "mac-x64") {
     if (!sourceMetadata) {
-      throw new Error("Missing required Intel upstream metadata. Run npm run sync:installed:x64 first.");
+      throw new Error(
+        "Missing required Intel upstream metadata. Run npm run sync:installed:x64 first, " +
+        "or let sync-upstream.js populate it from the official appcast archive."
+      );
     }
-    if (sourceMetadata.sourceKind !== "installed-app-snapshot") {
+    // Accept either the local /Applications/ChatGPT.app snapshot (sourceKind =
+    // "installed-app-snapshot") OR the CI-downloaded appcast archive (sourceKind
+    // = "appcast-archive"). The local snapshot path still wins when present so
+    // that a developer's installed Codex.app remains the authoritative source.
+    const ALLOWED_INTEL_SOURCE_KINDS = new Set([
+      "installed-app-snapshot",
+      "appcast-archive",
+    ]);
+    if (!ALLOWED_INTEL_SOURCE_KINDS.has(sourceMetadata.sourceKind)) {
       throw new Error(`Unsupported Intel upstream source kind: ${sourceMetadata.sourceKind}`);
+    }
+    if (sourceMetadata.sourceKind === "appcast-archive") {
+      // The CI-downloaded Codex.app inside the extract dir is the source.
+      // Insert it as a candidate so we search there before /Applications.
+      candidates.unshift(...findAppBundles(extractDir));
     }
   } else if (!sourceMetadata) {
     console.log("   [source] legacy arm64 cache has no snapshot metadata; relying on its complete OpenAI signature seal");
