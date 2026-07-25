@@ -185,19 +185,43 @@ function walk(node, visitor) {
   }
 }
 
+// 26.721.31836 sometimes wraps the product-mode controller in an arrow
+// function rather than a top-level FunctionDeclaration, so we search
+// FunctionDeclaration first (to preserve 26.715 behaviour where that
+// was the canonical match), FunctionExpression second, and finally
+// ArrowFunctionExpression as a fallback. Needles are applied to the
+// function body source (BlockStatement or expression body) so that a
+// needle inside an unrelated arrow callback or closure does not match.
+function functionBodyText(source, node) {
+  if (!node.body) return "";
+  return source.slice(node.body.start, node.body.end);
+}
+
 function findFunction(source, filePath, needles, ast = null) {
-  const matches = [];
-  walk(ast || parseBundle(source, filePath), (node) => {
-    if (node.type !== "FunctionDeclaration") return;
-    const text = source.slice(node.start, node.end);
-    if (needles.every((needle) => text.includes(needle))) matches.push(node);
-  });
-  if (matches.length !== 1) {
-    throw new Error(
-      `${relPath(filePath)} expected one function for ${needles[0]}, found ${matches.length}`,
-    );
+  const tree = ast || parseBundle(source, filePath);
+  const PREFERENCE = [
+    "FunctionDeclaration",
+    "FunctionExpression",
+    "ArrowFunctionExpression",
+  ];
+  for (const type of PREFERENCE) {
+    const matches = [];
+    walk(tree, (node) => {
+      if (node.type !== type) return;
+      const body = functionBodyText(source, node);
+      if (!body) return;
+      if (needles.every((needle) => body.includes(needle))) matches.push(node);
+    });
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      throw new Error(
+        `${relPath(filePath)} expected one ${type} for ${needles[0]}, found ${matches.length}`,
+      );
+    }
   }
-  return matches[0];
+  throw new Error(
+    `${relPath(filePath)} expected one function for ${needles[0]}, found 0`,
+  );
 }
 
 function replaceFunction(source, node, replacement) {
