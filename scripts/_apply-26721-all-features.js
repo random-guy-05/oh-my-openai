@@ -182,8 +182,8 @@ const usageGuardAnchor = "/* codex-rebuild:usage-guard-v1 */";
 if (mono.includes(usageGuardAnchor) && !mono.includes(MARKER + ":usage-runtime")) {
   mono = replaceOnce(mono, usageGuardAnchor, USAGE_RUNTIME + usageGuardAnchor, "install usage runtime");
   console.log("[ok] usage runtime installed");
-} else if (!mono.includes(usageGuardAnchor)) {
-  // Inject before P_a as fallback
+} else if (!mono.includes(usageGuardAnchor) && !mono.includes(MARKER + ":usage-runtime")) {
+  // Inject before P_a as fallback (guard against double-injection on partial-state re-runs)
   mono = tryReplace(mono, "function P_a(e){", USAGE_RUNTIME + "function P_a(e){", "install usage runtime (fallback)");
 } else {
   console.log("[skip] usage runtime already present or guard not found");
