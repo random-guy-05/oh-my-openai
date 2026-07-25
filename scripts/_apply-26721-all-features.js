@@ -14,7 +14,7 @@
  *
  * 26.721 key variable mappings (from 26.715):
  *   Monolith file: app-initial-BTphDPeq.js (was: many separate files)
- *   Send function: Nka(e,{conversationId:n, prompt:l, model:a, ...})
+ *   Send function: dynamically detected (was Nka in 26.715/26.721.31836, Pka in 26.721.41059)
  *   Action row: u6c(e) with {threadId:i, turnId:a}, JSX alias L3
  *   React hooks: g6c (React import, has useState/useEffect/useRef)
  *   Model catalog: P_a(await this.request.getModelsResponse())
@@ -124,13 +124,25 @@ function findJsxAlias(src) {
   return Object.entries(jsxCounts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
+// Find the minified async send function that takes {attachments, conversationId, ...}.
+// The function name changes between upstream builds (e.g. Nka in 26.715/26.721.31836,
+// Pka in 26.721.41059), so we detect it dynamically rather than hard-coding it.
+function findSendFunction(src) {
+  const m = src.match(/async function ([a-zA-Z_$][\w$]*)\(e,\{attachments:/);
+  if (!m) throw new Error("Could not find the async send function (async function X(e,{attachments:) in the monolith");
+  return m[1];
+}
+
 // ─── Read source and detect minified aliases ───
 
 let mono = fs.readFileSync(MONO, "utf8");
 let appMain = fs.readFileSync(APP_MAIN, "utf8");
 const REACT = findReactAlias(mono);
 const JSX = findJsxAlias(mono);
+const SEND_FN = findSendFunction(mono);
+const SEND_ANCHOR = `async function ${SEND_FN}(e,{attachments:`;
 console.log(`[detect] React hooks/JSX alias: ${REACT}, JSX alias: ${JSX}`);
+console.log(`[detect] Send function: ${SEND_FN}`);
 
 // Idempotency
 if (mono.includes(MARKER + ":applied")) {
@@ -342,22 +354,22 @@ return!0;
 }
 `;
 
-// Inject bridge before Nka
+// Inject bridge before the send function
 if (!mono.includes(MARKER + ":bridge")) {
-  mono = tryReplace(mono, "async function Nka(e,{attachments:", BRIDGE + "\nasync function Nka(e,{attachments:", "inject CDRStickyChatSend");
+  mono = tryReplace(mono, SEND_ANCHOR, BRIDGE + "\n" + SEND_ANCHOR, "inject CDRStickyChatSend");
   console.log("[ok] CDRStickyChatSend bridge injected");
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 4. SEND HOOK — Intercept Nka in Chat mode
+// 4. SEND HOOK — Intercept the send function in Chat mode
 // ═══════════════════════════════════════════════════════════════
 
 const sendHookAnchor = "let v=CH(),y=l.trim();";
 const sendHookReplacement = "let v=CH(),y=l.trim();{/* " + MARKER + ":send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:f,attachments:t});if(_cdrRes)return{conversationId:n,serverConversationId:null,streamRequestId:null};}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
 
 if (!mono.includes(MARKER + ":send-hook")) {
-  mono = tryReplace(mono, sendHookAnchor, sendHookReplacement, "inject send hook into Nka");
-  console.log("[ok] send hook injected into Nka");
+  mono = tryReplace(mono, sendHookAnchor, sendHookReplacement, `inject send hook into ${SEND_FN}`);
+  console.log(`[ok] send hook injected into ${SEND_FN}`);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -663,7 +675,7 @@ if (!appMain.includes(MARKER + ":app-main-fb")) {
 // Verify
 const checks = [
   [MARKER + ":bridge", "CDRStickyChatSend bridge"],
-  [MARKER + ":send-hook", "Send hook in Nka"],
+  [MARKER + ":send-hook", `Send hook in ${SEND_FN}`],
   [MARKER + ":task-usage-badge", "Task usage badge"],
   [MARKER + ":turn-usage-badge", "Turn usage badge"],
   ["CDRTaskUsageBadge,{threadId:i}", "Task badge placement"],

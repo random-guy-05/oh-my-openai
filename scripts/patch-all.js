@@ -35,19 +35,22 @@ const PATCHES = [
   "patch-plugin-auth.js",
   "patch-updater.js",
   "patch-archive-delete.js",
-  // Intentionally removed: _apply-26721-all-features.js was the user's
-  // "failed reapply" attempt that tried to consolidate every custom
-  // feature into a single script via dynamic alias detection. Its
-  // upstream anchors (P_a(await this.request.getModelsResponse()),
-  // async function Nka(e,{attachments: …), the thumbs_up/thumbs_down
-  // rating action row, and the previous-version error boundary marker)
-  // do not match the 26.721.31836 monolith, so it silently no-ops on
-  // every important step (no chat catalog hookup, no send bridge, no
-  // usage badges) and even double-injects CDRInstallUsageRuntime when
-  // it is run twice on partial state. The two canonical patches above
-  // (_apply-26721-all-features.js was meant to replace) now run from
-  // patch-util.js's cached parser and produce the durable, marker-
-  // verified custom features.
+  // Unified custom-feature mount for the 26.721 base. Ports all of the
+  // features lost during the 26.721 rebase: CDRStickyChatSend (chat-mode
+  // send bridge), CDRTaskUsageBadge + CDRTurnUsageBadge (usage displays),
+  // CDRMergeChatModels (live ChatGPT catalog picker), CDRInstallUsageRuntime,
+  // error-boundary instrumentation, and the transcript publisher.
+  //
+  // IMPORTANT HISTORY: this script was briefly removed in commit 0d19210 on
+  // the (empirically FALSE) claim that its anchors "do not match the 26.721
+  // monolith". A direct test against the shipped 26.721.41059 monolith proved
+  // 6 of 7 anchors match exactly; the only drift was the minified send
+  // function name Nka -> Pka between builds. The script now detects the send
+  // function name dynamically (findSendFunction) so it survives future
+  // webpack renames. Removing it ships a vanilla DMG missing every custom
+  // feature. Do NOT remove it again without re-running the anchor test in
+  // /tmp/cdr-diag/test-anchors.js against the current upstream monolith.
+  "_apply-26721-all-features.js",
 ];
 
 function main() {
