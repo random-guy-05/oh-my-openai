@@ -290,7 +290,45 @@ async function syncMac(variant, appcastUrl, destDir) {
   const resourcesDir = findResourcesDir(extractDir);
   if (!resourcesDir) throw new Error(`${label}: Resources directory not found`);
 
+  // Capture app.asar + codex CLI hashes BEFORE the asar is unpacked into
+  // _asar/. build-from-upstream.js uses these to verify the upstream source
+  // bundle that's about to be repacked.
+  const sourceAppPath = path.dirname(path.dirname(resourcesDir));
+  const sourceInfoPlist = path.join(sourceAppPath, "Contents", "Info.plist");
+  const sourceAsarPath = path.join(resourcesDir, "app.asar");
+  const sourceCodexPath = path.join(resourcesDir, "codex");
+  if (!fs.existsSync(sourceAsarPath) || !fs.existsSync(sourceCodexPath)) {
+    throw new Error(`${label}: extracted bundle is missing app.asar or codex CLI`);
+  }
+  if (!fs.existsSync(sourceInfoPlist)) {
+    throw new Error(`${label}: extracted bundle is missing Info.plist`);
+  }
+  const appAsarSha256 = sha256File(sourceAsarPath);
+  const codexSha256 = sha256File(sourceCodexPath);
+  const version = readPlistValue(sourceInfoPlist, "CFBundleShortVersionString");
+  const build = readPlistValue(sourceInfoPlist, "CFBundleVersion");
+  const bundleIdentifier = readPlistValue(sourceInfoPlist, "CFBundleIdentifier");
+
   assembleOutput(resourcesDir, destDir, label);
+
+  // CI / appcast-archive path: write the upstream-source metadata so
+  // build-from-upstream.js can accept the downloaded bundle as a legitimate
+  // source. The local `/Applications/ChatGPT.app` snapshot path uses
+  // sourceKind = "installed-app-snapshot"; this alternate path is tagged
+  // "appcast-archive" and is recognised by build-from-upstream.js.
+  writeSourceMetadata(destDir, {
+    appPath: sourceAppPath,
+    asarPath: sourceAsarPath,
+    build,
+    bundleIdentifier,
+    codexPath: sourceCodexPath,
+    codexSha256,
+    version,
+    architecture: variant === "x64" ? "x86_64" : "arm64",
+    appAsarSha256,
+    sourceKind: "appcast-archive",
+  });
+  console.log(`   [meta] sourceKind=appcast-archive version=${version} build=${build}`);
   return info;
 }
 
