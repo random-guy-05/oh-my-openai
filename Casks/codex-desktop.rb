@@ -1,9 +1,10 @@
 cask "codex-desktop" do
   version "26.721.41059"
-  # Side-by-side DMG hash from the CI build at commit 4ae70b3
-  # (sync.yml run 30172599602). Recompute via `shasum -a 256 out/*.dmg`
+  # Side-by-side DMG hash from local build including ALL custom features
+  # (patch-all.js 14/14 + _apply-26721-all-features + CDR markers).
+  # Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
   # after every `npm run build:mac-x64` + `npm run build:side-by-side:x64`.
-  sha256 "0f5c740d14e3696c3c859eeb4fd47e15f18aa6e40d0fbd22a5198be2086b4860"
+  sha256 "8cc4c982dd6b0a1e26b323249c2bdca997a85601cb383c835942cfae113fe011"
 
   url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}/Codex-side-by-side-mac-x64-#{version}.dmg",
       verified: "github.com/random-guy-05/oh-my-openai/releases/"
