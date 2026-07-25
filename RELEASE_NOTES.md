@@ -148,3 +148,66 @@ data-codex-product-mode="chat"             = 1   (CSS hook)
 
 If `codex-rebuild:local-canonical-send-v3` is 0 after the sequence,
 the bundle is again stuck — re-run the recovery procedure.
+
+## Structural limitation: asar-prod vs. patcher
+
+Live investigation of `src/mac-x64/_asar/webview/assets/app-initial-BHB6SClA.js`
+shows it is a **Vite-dev dep-bundle** with a `const __vite__mapDeps=…` header.
+The patcher's needle sets (`sidebarElectron.productMode.trigger`,
+`codexLocalAccessStatus`, `activeCollaborationMode`, `collaborationModes`,
+`ChatGPT conversation does not have a server id`, etc.) are minified-
+identifier constants from upstream — the patcher expects to find them
+all in a **single contiguous bundle file**. The patcher runs on the
+**monolithic Vite-dev** layout of `src/mac-x64/`.
+
+`/Applications/Codex.app/.../Codex.payload/Contents/Resources/app.asar`
+was extracted to `/tmp/codex-fresh/webview/assets/` and contains
+**4504 separate `.js` files** (production code-split chunks). In that
+prod layout the controller, composer, and context needles live in
+*different* chunks; `locateTargets` requires ONE composer file with
+five co-located needles (`activeCollaborationMode &&
+setSelectedCollaborationMode && blockedReasonOpenNonce &&
+settings.model && collaborationModes`) and fails with
+`expected one composer bundle, found 0` against prod. So a direct
+`cp -R /tmp/codex-fresh/webview/assets/*` into `src/mac-x64/_asar/webview/assets/`
+would NOT produce a patchable bundle — the chunk layout is the wrong
+target.
+
+The repo's `.gitignore` declares `src/`, so no clean Vite-dev copy is
+available from git history or stash. The only realistic recovery
+sources are external to this environment: a teammate's checkout, a
+Time-Machine / external-backup snapshot, or regenerating the dev
+bundles by running the project's own build pipeline
+(`scripts/build-side-by-side-mac.js`).
+
+## Patcher-source state (this commit)
+
+The patcher source on `fix/lcm-dual-signal-idempotency-2026-07-25`
+(commit `131062d`) is **defensively correct** against all known
+partial-state re-run cases:
+
+- `patchSelectorBundle` outer early-return requires BOTH the canonical
+  selector marker AND the send-button marker.
+- `patchSelectorBundleInner` wraps the entire selector rewrite block in
+  `if (!selectorAlreadyPatched) { … }` and the controller injection +
+  memo-deps in `if (!controllerAlreadyInjected) { … }`.
+- `patchComposerBundleInner` and `modelPicker` inner wraps mirror the
+  controller's dual-signal guard (`MARKER || \`let CDRRuntime=${RUNTIME_SOURCE}\``).
+- AST insert guards the controller body type is `BlockStatement`
+  (catches upstream drift to arrow-expression bodies).
+- `verifySelectorBundle` throws an actionable recovery command when the
+  send marker is missing on a half-installed controller.
+- AST-based `--reset` mode strips partial injections from
+  controller / composer / model-picker function bodies with re-parse
+  safety, so `--reset` cannot itself emit a broken bundle.
+
+`scripts/test-local-canonical-mode-patch.js` and the runtime smoke pass
+in-memory; the four focused tests (`test:local-canonical-mode`,
+`test:usage-controls`, `test:resource-saver`, `test:latest-models`)
+report `[ok]` on freshly-importable source via the patcher module,
+independent of the on-disk bundle.
+
+To actually mount features on the live bundle, restore a clean
+Vite-dev bundle at `src/mac-x64/_asar/webview/assets/` (one of the
+external sources named above), then run
+`node scripts/patch-all.js mac-x64` and verify the markers land.
