@@ -17,7 +17,17 @@ const PATCHES = [
   "patch-devtools.js",
   "patch-fast-mode.js",
   "patch-latest-models.js",
+  // Re-enabled after adding a process-scoped AST cache in patch-util.js.
+  // The cache lets patchSelectorBundle / patchComposerBundle /
+  // patchContextBundle / patchCss share a single Acorn parse per
+  // source per file path, so the monolith is parsed at most twice
+  // (original + post-verification) instead of five-plus times.
+  // These are the canonical Chat / ChatGPT Work / Codex presets that
+  // defined the custom set of features in oh-my-openai v26.715.72359.
   "patch-local-canonical-mode.js",
+  // Token telemetry, prompt-cache visibility, and conservative local
+  // usage caps. Also re-enabled: cached parser invoked once for the
+  // status bundle and once for the turn guard bundle.
   "patch-usage-controls.js",
   "patch-resource-saver.js",
   "patch-side-by-side-scheme.js",
@@ -25,6 +35,19 @@ const PATCHES = [
   "patch-plugin-auth.js",
   "patch-updater.js",
   "patch-archive-delete.js",
+  // Intentionally removed: _apply-26721-all-features.js was the user's
+  // "failed reapply" attempt that tried to consolidate every custom
+  // feature into a single script via dynamic alias detection. Its
+  // upstream anchors (P_a(await this.request.getModelsResponse()),
+  // async function Nka(e,{attachments: …), the thumbs_up/thumbs_down
+  // rating action row, and the previous-version error boundary marker)
+  // do not match the 26.721.31836 monolith, so it silently no-ops on
+  // every important step (no chat catalog hookup, no send bridge, no
+  // usage badges) and even double-injects CDRInstallUsageRuntime when
+  // it is run twice on partial state. The two canonical patches above
+  // (_apply-26721-all-features.js was meant to replace) now run from
+  // patch-util.js's cached parser and produce the durable, marker-
+  // verified custom features.
 ];
 
 function main() {

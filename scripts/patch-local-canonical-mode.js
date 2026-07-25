@@ -16,7 +16,7 @@
 const fs = require("fs");
 const path = require("path");
 const { parse } = require("acorn");
-const { SRC_DIR, relPath } = require("./patch-util");
+const { SRC_DIR, relPath, parseBundleCached: parseBundle } = require("./patch-util");
 
 const SUPPORTED_PLATFORM = "mac-x64";
 const SELECTOR_MARKER = "codex-rebuild:local-canonical-selector-v3";
@@ -185,14 +185,6 @@ function walk(node, visitor) {
   }
 }
 
-function parseBundle(source, filePath) {
-  try {
-    return parse(source, { ecmaVersion: "latest", sourceType: "module" });
-  } catch (error) {
-    throw new Error(`${relPath(filePath)} failed to parse: ${error.message}`);
-  }
-}
-
 function findFunction(source, filePath, needles, ast = null) {
   const matches = [];
   walk(ast || parseBundle(source, filePath), (node) => {
@@ -268,11 +260,17 @@ function patchSelectorBundle(source, filePath) {
     "children:`ChatGPT Work`",
     "ChatGPT Work menu label",
   );
-  selector = replaceOne(
-    selector,
-    "let w=i===`codex`?Ym:void 0",
-    "let CDRChatRight=i===`chat`?Ym:void 0,CDRChatItem=(0,U8.jsx)(yz.Item,{className:`py-2.5 text-base`,RightIcon:CDRChatRight,SubText:(0,U8.jsx)(`span`,{className:`text-token-description-foreground`,children:`Chat preset — same task and history`}),onSelect:()=>a(`chat`),children:(0,U8.jsx)(`span`,{className:`font-openai-sans`,children:`Chat`})});let w=i===`codex`?Ym:void 0",
-    "Chat selector item",
+  // 26.721.31836: the Codex RightIcon variable name can differ between
+  // minifications (was Ym, now Bm). Capture it dynamically so the patch
+  // keeps working across minor upstream builds.
+  const codexIconMatch = selector.match(/let w=i===`codex`\?(\w+):void 0/);
+  if (!codexIconMatch) {
+    throw new Error(`${relPath(filePath)}: could not locate Codex RightIcon variable for Chat selector item`);
+  }
+  const codexIconVar = codexIconMatch[1];
+  selector = selector.replace(
+    /let w=i===`codex`\?\w+:void 0/,
+    `let CDRChatRight=i===\`chat\`?${codexIconVar}:void 0,CDRChatItem=(0,U8.jsx)(yz.Item,{className:\`py-2.5 text-base\`,RightIcon:CDRChatRight,SubText:(0,U8.jsx)(\`span\`,{className:\`text-token-description-foreground\`,children:\`Chat preset — same task and history\`}),onSelect:()=>a(\`chat\`),children:(0,U8.jsx)(\`span\`,{className:\`font-openai-sans\`,children:\`Chat\`})});let w=i===\`codex\`?${codexIconVar}:void 0`,
   );
   selector = replaceOne(
     selector,
@@ -302,23 +300,31 @@ function patchSelectorBundle(source, filePath) {
       `${match}let CDRRuntime=${RUNTIME_SOURCE},[CDRMode,CDRSetMode]=(0,L$.useState)(()=>CDRRuntime.mode(\`codex\`));`,
   );
 
-  // Add durable-sync useLayoutEffect after variable declarations
-  // 26.721: u=Y(hH)===`allowed`,d=s===P3o,f=d||n?`codex`:i,p;
-  controller = tryReplace(
-    controller,
-    "u=Y(hH)===`allowed`,d=s===P3o,f=d||n?`codex`:i,p;",
-    "u=Y(hH)===`allowed`,d=s===P3o,f=d||n?`codex`:i,p;(0,D0l.useLayoutEffect)(()=>{/* codex-rebuild:sticky-chat-v43:durable-sync */if(CDRMode!==`codex`)Kac(a,{codexLocalAccessStatus:r,currentMode:i,navigate:o,nextMode:`codex`,startNewConversation:l})},[CDRMode,a,r,i,o,l]);",
-    "Keep native surface on codex so /local sticky history stays",
-  );
+  // Add durable-sync useLayoutEffect after variable declarations.
+  // 26.721.30844: u=Y(hH)===`allowed`,d=s===P3o,f=d||n?`codex`:i,p;
+  // 26.721.31836: u=Y(f_a)===`allowed`,d=s===R3o,f=d||n?`codex`:i,p;
+  // Use a regex so small minifier name changes do not break the patch.
+  const durableSyncMatch = controller.match(/u=Y\([\w$]+\)===`allowed`,d=s===[\w$]+,f=d\|\|n\?`codex`:i,p;/);
+  if (durableSyncMatch) {
+    controller = controller.replace(
+      /u=Y\([\w$]+\)===`allowed`,d=s===[\w$]+,f=d\|\|n\?`codex`:i,p;/,
+      `${durableSyncMatch[0]}(0,D0l.useLayoutEffect)(()=>{/* codex-rebuild:sticky-chat-v43:durable-sync */if(CDRMode!==\`codex\`)Kac(a,{codexLocalAccessStatus:r,currentMode:i,navigate:o,nextMode:\`codex\`,startNewConversation:l})},[CDRMode,a,r,i,o,l]);`,
+    );
+  } else {
+    console.warn(`  [warn] Could not inject durable-sync useLayoutEffect in ${relPath(filePath)}`);
+  }
 
-  // Replace the mode-switch memo callback body to use CDR setMode
-  // 26.721: p=e=>{if(d){...}return}Kac(a,{...nextMode:e,...})}
-  // Single-step: replace just the callback body (between { and },t[0]=r)
-  controller = replaceOne(
-    controller,
-    "if(d){if(e===`work`){let e=c?.returnLocation;e==null?o(`/`,{replace:!0}):o(Mzn(e),{replace:!0,state:e.state})}return}Kac(a,{codexLocalAccessStatus:r,currentMode:i,navigate:o,nextMode:e,startNewConversation:l})",
+  // Replace the mode-switch memo callback body to use CDR setMode.
+  // The routing helper name changes between minor builds (Mzn, Qzn, etc.),
+  // so match the callback shape with a regex instead of an exact string.
+  const modeSwitchRegex = /if\(d\)\{if\(e===`work`\)\{[\s\S]*?\}return\}Kac\(a,\{[\s\S]*?startNewConversation:[\w$]+\}\)/;
+  const modeSwitchMatch = controller.match(modeSwitchRegex);
+  if (!modeSwitchMatch) {
+    throw new Error(`${relPath(filePath)}: could not locate mode-switch callback for sticky presets`);
+  }
+  controller = controller.replace(
+    modeSwitchRegex,
     "/* codex-rebuild:sticky-chat-v43:durable-mode */let CDRNext=CDRRuntime.setMode(e);CDRSetMode(CDRNext)",
-    "Sticky presets: mode switch only flips CDR sticky mode",
   );
 
   // Change memo dependency from f to CDRMode
@@ -754,7 +760,12 @@ function main() {
   ].map(([key, patcher]) => {
     const filePath = targets[key];
     const source = fs.readFileSync(filePath, "utf8");
-    return { filePath, next: patcher(source, filePath), source };
+    try {
+      return { filePath, next: patcher(source, filePath), source };
+    } catch (error) {
+      console.warn(`  [warn] ${relPath(filePath)} ${key} patch failed: ${error.message}`);
+      return { filePath, next: source, source };
+    }
   });
 
   if (checkOnly) {

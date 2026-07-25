@@ -12,8 +12,15 @@
  */
 const fs = require("fs");
 const path = require("path");
-const acorn = require("acorn");
-const { SRC_DIR, relPath } = require("./patch-util");
+const { SRC_DIR, relPath, parseBundleCached } = require("./patch-util");
+
+// `parse` is the cached parser from patch-util.js — it memoises the AST
+// per file path so the controller, dialog, verifier, and turn-guard
+// patches on the same monolith share one Acorn pass per source string
+// instead of each re-parsing the ~14 MB monolith. The error label it
+// produces (`<relPath> failed to parse: <message>`) already matches
+// what callers and tests expect from the original local `parse`.
+const parse = parseBundleCached;
 
 const MARKER = "codex-rebuild:usage-controls-v1";
 const GUARD_MARKER = "codex-rebuild:usage-guard-v1";
@@ -373,18 +380,6 @@ function walk(node, visitor) {
     } else if (value && typeof value.type === "string") {
       walk(value, visitor);
     }
-  }
-}
-
-function parse(source, filePath) {
-  try {
-    return acorn.parse(source, {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      ranges: true,
-    });
-  } catch (error) {
-    throw new Error(`${relPath(filePath)} failed to parse: ${error.message}`);
   }
 }
 
