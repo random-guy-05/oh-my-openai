@@ -162,9 +162,43 @@ function invalidateAstCache(bundlePath) {
   _astCache.delete(path.resolve(bundlePath));
 }
 
+/**
+ * Format a single soft-fail `[warn]` line for a patcher whose inner patching
+ * step threw. Shared across `patchSelectorBundle`, `patchComposerBundle`,
+ * `patchContextBundle`, and (potentially) future patch wrappers so the
+ * orchestrator's log output is uniformly:
+ *   [warn] <relpath> <label> patch skipped: <message>
+ *       <stack trace, 6 lines, indented>
+ *
+ * The trailing stack-trace block keeps diagnostic information visible
+ * without flooding the log on a clean apply. `relPath` is reused so the
+ * relative path is the same as the rest of the pipeline.
+ */
+function logPatcherError(filePath, error, label) {
+  if (!error || typeof error !== "object") {
+    console.warn(
+      `  [warn] ${relPath(filePath)} ${label} patch skipped: ${String(error)}`,
+    );
+    return;
+  }
+  console.warn(
+    `  [warn] ${relPath(filePath)} ${label} patch skipped: ${error.message || error}`,
+  );
+  if (error.stack) {
+    console.warn(
+      error.stack
+        .split("\n")
+        .slice(0, 6)
+        .map((line) => `    ${line}`)
+        .join("\n"),
+    );
+  }
+}
+
 module.exports = {
   invalidateAstCache,
   locateBundles,
+  logPatcherError,
   parseBundleCached,
   relPath,
   SRC_DIR,
