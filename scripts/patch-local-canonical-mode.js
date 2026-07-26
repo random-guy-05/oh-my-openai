@@ -370,16 +370,16 @@ function patchSelectorBundleInner(source, filePath) {
   const selectorAlreadyPatched = selector.includes(SELECTOR_MARKER);
   if (!selectorAlreadyPatched) {
 
-  // 26.721 variable names: U8=JSX, Z=FormattedMessage, W8=i18n defs, Ym=RightIcon, yz=Dropdown
+  // 26.721 variable names: W8=JSX (was U8 in 26.721.31836; 26.721.41059 swapped), Z=FormattedMessage, U8=utility object, Ym/Bm=RightIcon, yz=Dropdown
   selector = replaceOne(
     selector,
     "s=i===`work`?",
-    "s=i===`chat`?(0,U8.jsx)(`span`,{className:`truncate font-openai-sans font-semibold`,children:`Chat`}):i===`work`?",
+    "s=i===`chat`?(0,W8.jsx)(`span`,{className:`truncate font-openai-sans font-semibold`,children:`Chat`}):i===`work`?",
     "Chat selector label",
   );
   selector = tryReplace(
     selector,
-    "children:n?(0,U8.jsx)(Z,{...W8.chatGpt}):(0,U8.jsx)(Z,{...W8.work})",
+    "children:n?(0,W8.jsx)(Z,{...W8.chatGpt}):(0,W8.jsx)(Z,{...W8.work})",
     "children:`ChatGPT Work`",
     "ChatGPT Work trigger label",
   );
@@ -391,7 +391,7 @@ function patchSelectorBundleInner(source, filePath) {
   );
   selector = tryReplace(
     selector,
-    "children:n?(0,U8.jsx)(Z,{...W8.chatGpt}):(0,U8.jsx)(Z,{id:`sidebarElectron.productMode.chatGptWork.unavailable`,defaultMessage:`ChatGPT Work`,description:`ChatGPT Work option in the sidebar mode selector when ChatGPT features are unavailable`})",
+    "children:n?(0,W8.jsx)(Z,{...W8.chatGpt}):(0,W8.jsx)(Z,{id:`sidebarElectron.productMode.chatGptWork.unavailable`,defaultMessage:`ChatGPT Work`,description:`ChatGPT Work option in the sidebar mode selector when ChatGPT features are unavailable`})",
     "children:`ChatGPT Work`",
     "ChatGPT Work menu label",
   );
@@ -405,7 +405,7 @@ function patchSelectorBundleInner(source, filePath) {
   const codexIconVar = codexIconMatch[1];
   selector = selector.replace(
     /let w=i===`codex`\?\w+:void 0/,
-    `let CDRChatRight=i===\`chat\`?${codexIconVar}:void 0,CDRChatItem=(0,U8.jsx)(yz.Item,{className:\`py-2.5 text-base\`,RightIcon:CDRChatRight,SubText:(0,U8.jsx)(\`span\`,{className:\`text-token-description-foreground\`,children:\`Chat preset — same task and history\`}),onSelect:()=>a(\`chat\`),children:(0,U8.jsx)(\`span\`,{className:\`font-openai-sans\`,children:\`Chat\`})});let w=i===\`codex\`?${codexIconVar}:void 0`,
+    `let CDRChatRight=i===\`chat\`?${codexIconVar}:void 0,CDRChatItem=(0,W8.jsx)(yz.Item,{className:\`py-2.5 text-base\`,RightIcon:CDRChatRight,SubText:(0,W8.jsx)(\`span\`,{className:\`text-token-description-foreground\`,children:\`Chat preset — same task and history\`}),onSelect:()=>a(\`chat\`),children:(0,W8.jsx)(\`span\`,{className:\`font-openai-sans\`,children:\`Chat\`})});let w=i===\`codex\`?${codexIconVar}:void 0`,
   );
   selector = replaceOne(
     selector,
