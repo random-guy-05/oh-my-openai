@@ -4,7 +4,7 @@ cask "codex-desktop" do
   # (patch-all.js 14/14 + _apply-26721-all-features + CDR markers).
   # Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
   # after every `npm run build:mac-x64` + `npm run build:side-by-side:x64`.
-  sha256 "ef0d0f028095adfa9f06084ebc38a5798d568de5b7361ead45e06f12e870b392"
+  sha256 "319f92a0ae0ce7751c5675cedce2a5f85d825dc228886b47b85a51e2a3978bc6"
 
   url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}/Codex-side-by-side-mac-x64-#{version}.dmg",
       verified: "github.com/random-guy-05/oh-my-openai/releases/"
