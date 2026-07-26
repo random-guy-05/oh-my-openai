@@ -637,11 +637,22 @@ function patchComposerBundleInner(source, filePath) {
   let resume = composer.slice(resumeStart, resumeEnd + 1);
 
   // 26.721: let i=await io(t,r,e);
+  // Chat→codex transcript injection: when resuming a conversation that had
+  // Chat mode turns, those turns are stored in localStorage under
+  // 'cdr-thread-extras:local:{conversationId}'. We read them and prepend
+  // to i.prompt as a <chat_transcript> block so Luna Light (the background
+  // model) receives the full chat history as context for summarization.
+  // The 'e' parameter of lee=async(e,t,r)=> is the conversationId, so
+  // 'local:'+e constructs the correct localStorage key. This is the
+  // chat→codex direction of the bidirectional context handoff.
+  // Escaping: \\n in this template literal produces \n (backslash-n) in
+  // the output JS, which is the correct escape sequence for newlines in
+  // single-quoted string literals.
   resume = tryReplace(
     resume,
     "let i=await io(t,r,e);",
-    `/* ${RESUME_CONTEXT_MARKER} */let i=await io(t,CDRBackground,e);`,
-    "Luna Light resume context",
+    `/* ${RESUME_CONTEXT_MARKER} */let i=await io(t,CDRBackground,e);try{let _cdrKey='local:'+e,_cdrRows=JSON.parse(localStorage.getItem('cdr-thread-extras:'+_cdrKey)||'[]');if(Array.isArray(_cdrRows)&&_cdrRows.length){let _cdrLines=[];for(let _cdrRow of _cdrRows){if(!_cdrRow||!_cdrRow.text)continue;_cdrLines.push((_cdrRow.role==='user'?'User':'Assistant')+': '+String(_cdrRow.text).trim())}if(_cdrLines.length){let _cdrT=_cdrLines.join('\\n\\n---\\n\\n');i.prompt='You are resuming a conversation that has prior Chat mode turns on this same task. The transcript below is from Chat mode interactions. Use it as context, summarize key decisions, and continue naturally.\\n\\n<chat_transcript>\\n'+_cdrT+'\\n</chat_transcript>\\n\\n'+(i.prompt||'')}}}catch{}`,
+    "Luna Light resume context (with chat transcript injection)",
   );
 
   // model:null,serviceTier:?,reasoningEffort:null → background model
