@@ -651,7 +651,7 @@ function patchComposerBundleInner(source, filePath) {
   resume = tryReplace(
     resume,
     "let i=await io(t,r,e);",
-    `/* ${RESUME_CONTEXT_MARKER} */let i=await io(t,CDRBackground,e);try{let _cdrKey='local:'+e,_cdrRows=JSON.parse(localStorage.getItem('cdr-thread-extras:'+_cdrKey)||'[]');if(Array.isArray(_cdrRows)&&_cdrRows.length){let _cdrLines=[];for(let _cdrRow of _cdrRows){if(!_cdrRow||!_cdrRow.text)continue;_cdrLines.push((_cdrRow.role==='user'?'User':'Assistant')+': '+String(_cdrRow.text).trim())}if(_cdrLines.length){let _cdrT=_cdrLines.join('\\n\\n---\\n\\n');i.prompt='You are resuming a conversation that has prior Chat mode turns on this same task. The transcript below is from Chat mode interactions. Use it as context, summarize key decisions, and continue naturally.\\n\\n<chat_transcript>\\n'+_cdrT+'\\n</chat_transcript>\\n\\n'+(i.prompt||'')}}}catch{}`,
+    `/* ${RESUME_CONTEXT_MARKER} */let i=await io(t,CDRBackground,e);try{let _cdrKey='local:'+e,_cdrRows=JSON.parse(localStorage.getItem('cdr-thread-extras:'+_cdrKey)||'[]');if(Array.isArray(_cdrRows)&&_cdrRows.length){let _cdrLines=[];for(let _cdrRow of _cdrRows.slice(-50)){if(!_cdrRow||!_cdrRow.text)continue;_cdrLines.push((_cdrRow.role==='user'?'User':'Assistant')+': '+String(_cdrRow.text).trim().slice(0,2000))}if(_cdrLines.length){let _cdrT=_cdrLines.join('\\n\\n---\\n\\n').slice(0,24000);i.prompt='You are resuming a conversation that has prior Chat mode turns on this same task. The transcript below is from Chat mode interactions. Use it as context, summarize key decisions, and continue naturally.\\n\\n<chat_transcript>\\n'+_cdrT+'\\n</chat_transcript>\\n\\n'+(i.prompt||'')}}}catch{}`,
     "Luna Light resume context (with chat transcript injection)",
   );
 
