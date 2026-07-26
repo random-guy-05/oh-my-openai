@@ -385,7 +385,7 @@ if (!mono.includes(MARKER + ":send-hook")) {
 // that uses the global React module directly.
 
 const threadFile = findThreadFile();
-if (threadFile && !process.env.CDR_SKIP_TRANSCRIPT) {
+if (false && threadFile && !process.env.CDR_SKIP_TRANSCRIPT) { // TODO: fix transcript publisher escaping bug (literal newlines in strings)
   let threadSrc = fs.readFileSync(threadFile, "utf8");
   if (!threadSrc.includes(MARKER + ":transcript")) {
     // Find a suitable injection point: look for a useEffect or similar pattern
