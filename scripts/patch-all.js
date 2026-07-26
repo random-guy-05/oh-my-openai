@@ -51,6 +51,16 @@ const PATCHES = [
   // feature. Do NOT remove it again without re-running the anchor test in
   // /tmp/cdr-diag/test-anchors.js against the current upstream monolith.
   "_apply-26721-all-features.js",
+  // Transcript publisher v1 — codex→chat context handoff. Injects an event
+  // dispatch into the OD component (visibleTurnEntries + conversationId) and
+  // a self-contained IIFE that serializes native codex turns into a
+  // <codex_transcript> block on globalThis.__cdrCodexContextByThread.
+  // CDRStickyChatSend then prepends it as context on the first chat send.
+  // This replaces the disabled `if (false && ...)` publisher that was in
+  // _apply-26721-all-features.js section 5 (which had a template literal
+  // escaping bug). Must run AFTER _apply-26721-all-features.js so the
+  // thread file is not already patched by the disabled block.
+  "_apply-transcript-publisher-v1.js",
 ];
 
 function main() {

@@ -385,7 +385,15 @@ if (!mono.includes(MARKER + ":send-hook")) {
 // that uses the global React module directly.
 
 const threadFile = findThreadFile();
-if (false && threadFile && !process.env.CDR_SKIP_TRANSCRIPT) { // TODO: fix transcript publisher escaping bug (literal newlines in strings)
+// Transcript publisher is now handled by the standalone script
+// _apply-transcript-publisher-v1.js (added to PATCHES array in patch-all.js).
+// The previous inline implementation was disabled with `if (false && ...)`
+// due to a template literal escaping bug (literal newlines in string literals).
+// The standalone script avoids the escaping issue by building the injected
+// code from a string array with explicit \n escapes, and also reads from
+// the correct data source (native codex turns via visibleTurnEntries) instead
+// of localStorage extras (chat turns).
+if (false /* transcript publisher moved to _apply-transcript-publisher-v1.js */ && threadFile && !process.env.CDR_SKIP_TRANSCRIPT) {
   let threadSrc = fs.readFileSync(threadFile, "utf8");
   if (!threadSrc.includes(MARKER + ":transcript")) {
     // Find a suitable injection point: look for a useEffect or similar pattern
@@ -426,7 +434,7 @@ globalThis.__cdrCodexContextByThread[key]={text:text,turnCount:lines.length,upda
 } else if (!threadFile) {
   console.log("[warn] local-conversation-thread file not found, skipping transcript publisher");
 } else {
-  console.log("[skip] transcript publisher skipped (CDR_SKIP_TRANSCRIPT set)");
+  console.log("[skip] transcript publisher — handled by _apply-transcript-publisher-v1.js");
 }
 
 // ═══════════════════════════════════════════════════════════════
