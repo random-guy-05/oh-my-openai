@@ -894,17 +894,24 @@ function verifySelectorBundle(source, filePath) {
     "codex-rebuild:sticky-chat-v43:durable-mode",
     "codex-rebuild:sticky-chat-v43:durable-sync",
     "CDRChatItem",
-    // The chat interceptor is critical: without it, clicking Chat calls
-    // upstream onModeSelect("chat") which is silently dropped (upstream
-    // only knows codex/work). If this string is missing the click does
-    // nothing — exactly the bug this verify check exists to catch.
-    "CDRSetMode(`chat`)",
   ]) {
     if (!source.includes(needle)) {
       console.warn(
         `  [warn] ${relPath(filePath)} soft-drift selector marker missing: ${needle}`,
       );
     }
+  }
+  // The chat interceptor is FATAL: without it, clicking Chat calls
+  // upstream onModeSelect("chat") which is silently dropped (upstream
+  // only knows codex/work). If this string is missing the click does
+  // nothing — exactly the bug this verify check exists to catch. A
+  // hard throw (not a soft warning) ensures a future re-patch that
+  // hits the controllerAlreadyInjected guard cannot silently ship a
+  // broken chat button.
+  if (!source.includes("CDRSetMode(`chat`)")) {
+    throw new Error(
+      `${relPath(filePath)} chat interceptor missing (CDRSetMode(\`chat\`)); clicking Chat would call upstream onModeSelect("chat") which is silently dropped. This is the exact bug the fix addresses — the interceptor MUST be present.`,
+    );
   }
   // Parse failures throw so the soft-fail wrapper above catches them and
   // returns the unchanged source (i.e., we never write a syntactically
@@ -1416,10 +1423,17 @@ function verifySelectorPatched(source) {
   // Chat preset JSX (e.g. RightIcon variable missing) is treated as drift
   // rather than "applied" — the verifiedPatch probe asserts user-visible
   // feature mount, not just comment insertion.
+  //
+  // The chat interceptor (CDRSetMode(`chat`)) is also required: without
+  // it, clicking Chat calls upstream onModeSelect("chat") which is
+  // silently dropped — the exact bug this fix addresses. Kept in sync
+  // with the hard throw in verifySelectorBundle so tests catch the same
+  // failure mode the patcher does.
   return (
     source.includes(SELECTOR_MARKER) &&
     source.includes("CDRChatItem") &&
-    source.includes("codex-rebuild:sticky-chat-v43:durable-mode")
+    source.includes("codex-rebuild:sticky-chat-v43:durable-mode") &&
+    source.includes("CDRSetMode(`chat`)")
   );
 }
 function verifyComposerPatched(source) {
