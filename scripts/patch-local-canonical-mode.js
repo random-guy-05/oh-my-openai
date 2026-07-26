@@ -793,14 +793,14 @@ function patchContextBundle(source, filePath) {
 
 function patchContextBundleInner(source, filePath) {
   const ast = parseBundle(source, filePath);
-  // Reduce legacy four-needle set to the durable identifiers; model:void
-  // 0 / thinking:void 0 are present in many functions across the bundle
-  // but pairing them with the error-string is enough to disambiguate.
+  // 26.721.41059 removed the "ChatGPT conversation does not have a server id"
+  // string. Use string literals that exist INSIDE the function body
+  // (not in parameter destructuring, which is excluded by functionBodyText).
   const handoffNode = findFunction(
     source,
     filePath,
     [
-      "ChatGPT conversation does not have a server id",
+      "mcpAppModelContextAttachments",
       "chatGptConversationContexts",
     ],
     ast,
@@ -1291,37 +1291,72 @@ function main() {
     );
     return;
   }
-  const patches = [
+
+  // CRITICAL: Apply patches SEQUENTIALLY so they compose properly.
+  // All four patches (selector, composer, context) modify the SAME
+  // monolith file. If each reads from the original source and writes
+  // independently, only the LAST write survives (the others get
+  // overwritten). By applying sequentially to a shared mutable source,
+  // each patcher builds on the previous one's changes.
+  const PATCH_ORDER = [
     ["selector", patchSelectorBundle],
     ["composer", patchComposerBundle],
     ["context", patchContextBundle],
-    ["css", patchCss],
-  ].map(([key, patcher]) => {
-    const filePath = targets[key];
-    const source = fs.readFileSync(filePath, "utf8");
-    try {
-      return { filePath, next: patcher(source, filePath), source };
-    } catch (error) {
-      console.warn(`  [warn] ${relPath(filePath)} ${key} patch failed: ${error.message}`);
-      return { filePath, next: source, source };
-    }
-  });
+  ];
+  const cssFilePath = targets.css;
+  const cssSource = fs.readFileSync(cssFilePath, "utf8");
 
+  // All three JS patches target the same monolith
+  const sharedPath = targets.selector;
+  const originalSource = fs.readFileSync(sharedPath, "utf8");
+  let source = originalSource;
+  let anyChanged = false;
+
+  // In check-only mode, run each patcher independently (read-only)
+  // so we can verify which patches would apply without modifying files.
   if (checkOnly) {
+    let allSkip = true;
+    for (const [key, patcher] of PATCH_ORDER) {
+      const filePath = targets[key];
+      const patcherSource = (filePath === sharedPath) ? originalSource : fs.readFileSync(filePath, "utf8");
+      const freshSource = fs.readFileSync(filePath, "utf8"); // re-read for each patcher
+      const next = patcher(freshSource, filePath);
+      if (next !== freshSource) {
+        allSkip = false;
+      }
+    }
     console.log(
       `  [ok] ${platform}: local canonical modes are ${
-        patches.every((patch) => patch.next === patch.source)
-          ? "installed"
-          : "patchable"
+        allSkip ? "installed" : "patchable"
       }`,
     );
     return;
   }
-  for (const patch of patches) {
-    if (patch.next !== patch.source) {
-      fs.writeFileSync(patch.filePath, patch.next);
+
+  for (const [key, patcher] of PATCH_ORDER) {
+    const filePath = targets[key];
+    if (filePath !== sharedPath) continue; // safety: all should be same file
+    try {
+      const next = patcher(source, filePath);
+      if (next !== source) {
+        source = next;
+        anyChanged = true;
+      }
+    } catch (error) {
+      console.warn(`  [warn] ${relPath(filePath)} ${key} patch failed: ${error.message}`);
     }
   }
+
+  if (anyChanged) {
+    fs.writeFileSync(sharedPath, source);
+  }
+
+  // Apply CSS patch independently (different file)
+  const cssNext = patchCss(cssSource, cssFilePath);
+  if (cssNext !== cssSource) {
+    fs.writeFileSync(cssFilePath, cssNext);
+  }
+
   console.log(
     `  [ok] ${platform}: installed in-task Chat / Work / Codex presets`,
   );
