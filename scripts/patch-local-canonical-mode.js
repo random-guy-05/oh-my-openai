@@ -525,8 +525,12 @@ function patchSelectorBundleInner(source, filePath) {
   }
 
   if (!controllerAlreadyInjected) {
-    // Change memo dependency from f to CDRMode
-    controller = tryReplace(
+    // Change memo dependency from f to CDRMode. Uses replaceOne (hard
+    // throw) not tryReplace: if this silently skips, the selector's memo
+    // won't recompute when CDRMode changes — the highlight won't update
+    // even though CDRSetMode was called. That's a silent regression of
+    // the exact feature this fix enables.
+    controller = replaceOne(
       controller,
       "t[8]!==u||t[9]!==n||t[10]!==f||t[11]!==p",
       "t[8]!==u||t[9]!==n||t[10]!==CDRMode||t[11]!==p",
@@ -543,8 +547,9 @@ function patchSelectorBundleInner(source, filePath) {
       "mode controller prop (with chat interceptor)",
     );
 
-    // Change memo assignment from f to CDRMode
-    controller = tryReplace(
+    // Change memo assignment from f to CDRMode. Same rationale as the
+    // memo dependency above: a silent skip would prevent re-render.
+    controller = replaceOne(
       controller,
       "t[8]=u,t[9]=n,t[10]=f,t[11]=p",
       "t[8]=u,t[9]=n,t[10]=CDRMode,t[11]=p",
