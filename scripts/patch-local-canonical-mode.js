@@ -458,13 +458,20 @@ function patchSelectorBundleInner(source, filePath) {
   // and the upstream has renamed every one of them in 26.721+, so the old
   // patch threw and the selector patch short-circuited.
   //
-  // The replacement is more durable: subscribe to the controller's `e`
-  // parameter (the upstream currentMode prop) as the single source of truth,
-  // and route it into CDRRuntime.setMode whenever it changes. The upstream
-  // will pass through whatever currentMode the controller's parent already
-  // selected; CDRRuntime stores it as `cdr-product-mode`. The downstream
-  // composer + model-picker patches already read from CDRRuntime, so this
-  // single subscription wires the whole feature set.
+  // The replacement is more durable: compute CDRUpstreamMode (a stable
+  // string primitive) from the controller's `e` parameter, then sync it
+  // into both CDRRuntime.setMode AND CDRSetMode (local React state) via a
+  // useEffect with [CDRUpstreamMode] deps. Using a primitive dep (not the
+  // props object `e`) ensures the effect only fires when the actual mode
+  // VALUE changes, not on every parent re-render. CDRSetMode is critical:
+  // without it, CDRMode (local state) never updates and the selector
+  // highlight / model picker / send-button color never change.
+  //
+  // The onModeSelect callback is ALSO wrapped (see tryReplace below) so
+  // that clicking "chat" is intercepted locally — upstream only knows
+  // "codex"/"work" and would silently drop "chat". The wrapper calls
+  // CDRSetMode("chat") + CDRRuntime.setMode("chat") directly for "chat",
+  // and passes "work"/"codex" through to the upstream handler p.
   // AST-based injection: works on FunctionDeclaration (matches legacy
   // `function XXX(e){…}`), ArrowFunctionExpression assign-to-const (the
   // 26.721 controller refactor), AND FunctionExpression. We read the
@@ -474,12 +481,13 @@ function patchSelectorBundleInner(source, filePath) {
   const param = controllerNode.params[0]?.name || "e";
   const injection =
     `let CDRRuntime=${RUNTIME_SOURCE},` +
-    `[CDRMode,CDRSetMode]=(0,L$.useState)(()=>CDRRuntime.mode(\`codex\`));` +
+    `[CDRMode,CDRSetMode]=(0,L$.useState)(()=>CDRRuntime.mode(\`codex\`)),` +
+    `CDRUpstreamMode=(typeof ${param}===\"string\"&&(${param}===\"chat\"||${param}===\"work\"||${param}===\"codex\"))?${param}:` +
+    `((${param}&&typeof ${param}===\"object\"&&(typeof ${param}.currentMode===\"string\"||typeof ${param}.mode===\"string\"))?(${param}.currentMode||${param}.mode||\"codex\"):` +
+    `\"codex\");` +
     `/* codex-rebuild:sticky-chat-v43:durable-mode */` +
     `/* codex-rebuild:sticky-chat-v43:durable-sync */` +
-    `(0,L$.useEffect)(()=>{const CDRSrc=(typeof ${param}===\"string\"&&(${param}===\"chat\"||${param}===\"work\"||${param}===\"codex\"))?${param}:` +
-    `((${param}&&typeof ${param}===\"object\"&&(typeof ${param}.currentMode===\"string\"||typeof ${param}.mode===\"string\"))?(${param}.currentMode||${param}.mode||\"codex\"):` +
-    `\"codex\");CDRRuntime.setMode(CDRSrc)},[${param}]);` +
+    `(0,L$.useEffect)(()=>{CDRRuntime.setMode(CDRUpstreamMode);CDRSetMode(CDRUpstreamMode)},[CDRUpstreamMode]);` +
     `/* ${SEND_MARKER} */` +
     `(0,L$.useEffect)(()=>{try{if(typeof document===\"undefined\"||!document.querySelectorAll)return;` +
     `document.querySelectorAll(\`button[aria-label],[role="button"][aria-label]\`)` +
@@ -525,12 +533,14 @@ function patchSelectorBundleInner(source, filePath) {
       "mode controller memo dependency",
     );
 
-    // Change mode prop in mLl call from f to CDRMode
-    controller = tryReplace(
+    // Change mode prop in mLl call: use CDRMode for display, wrap onModeSelect
+    // so "chat" is handled locally (upstream doesn't know "chat" — it would
+    // silently drop it). "work"/"codex" pass through to upstream p.
+    controller = replaceOne(
       controller,
       "mode:f,onModeSelect:p",
-      "mode:CDRMode,onModeSelect:p",
-      "mode controller prop",
+      "mode:CDRMode,onModeSelect:(CDRM)=>{if(CDRM===`chat`){CDRSetMode(`chat`);CDRRuntime.setMode(`chat`)}else{p(CDRM)}}",
+      "mode controller prop (with chat interceptor)",
     );
 
     // Change memo assignment from f to CDRMode
@@ -891,6 +901,18 @@ function verifySelectorBundle(source, filePath) {
       );
     }
   }
+  // The chat interceptor is FATAL: without it, clicking Chat calls
+  // upstream onModeSelect("chat") which is silently dropped (upstream
+  // only knows codex/work). If this string is missing the click does
+  // nothing — exactly the bug this verify check exists to catch. A
+  // hard throw (not a soft warning) ensures a future re-patch that
+  // hits the controllerAlreadyInjected guard cannot silently ship a
+  // broken chat button.
+  if (!source.includes("CDRSetMode(`chat`)")) {
+    throw new Error(
+      `${relPath(filePath)} chat interceptor missing (CDRSetMode(\`chat\`)); clicking Chat would call upstream onModeSelect("chat") which is silently dropped. This is the exact bug the fix addresses — the interceptor MUST be present.`,
+    );
+  }
   // Parse failures throw so the soft-fail wrapper above catches them and
   // returns the unchanged source (i.e., we never write a syntactically
   // broken bundle to disk). The wrapper logs the acorn error and stack
@@ -1148,7 +1170,12 @@ function stripControllerInjection(source, filePath) {
       // `},[CDRMode]);`). Pick whichever sits LATER in the function
       // body, so a fully-patched bundle has BOTH useEffects removed
       // (not just the first — leaving the second orphaned).
-      const closedIdx = fnSource.indexOf("CDRRuntime.setMode(CDRSrc)}", startIdx);
+      // Search for both new (CDRUpstreamMode) and legacy (CDRSrc) variable
+      // names so --reset can strip injections from either patch generation.
+      let closedIdx = fnSource.indexOf("CDRRuntime.setMode(CDRUpstreamMode)}", startIdx);
+      if (closedIdx < 0) {
+        closedIdx = fnSource.indexOf("CDRRuntime.setMode(CDRSrc)}", startIdx);
+      }
       if (closedIdx < 0) return null;
       // Find the close of the FIRST useEffect after `closedIdx`: scan
       // forward for `},[IDENT]);` where IDENT is one of the controller's
@@ -1396,10 +1423,17 @@ function verifySelectorPatched(source) {
   // Chat preset JSX (e.g. RightIcon variable missing) is treated as drift
   // rather than "applied" — the verifiedPatch probe asserts user-visible
   // feature mount, not just comment insertion.
+  //
+  // The chat interceptor (CDRSetMode(`chat`)) is also required: without
+  // it, clicking Chat calls upstream onModeSelect("chat") which is
+  // silently dropped — the exact bug this fix addresses. Kept in sync
+  // with the hard throw in verifySelectorBundle so tests catch the same
+  // failure mode the patcher does.
   return (
     source.includes(SELECTOR_MARKER) &&
     source.includes("CDRChatItem") &&
-    source.includes("codex-rebuild:sticky-chat-v43:durable-mode")
+    source.includes("codex-rebuild:sticky-chat-v43:durable-mode") &&
+    source.includes("CDRSetMode(`chat`)")
   );
 }
 function verifyComposerPatched(source) {
