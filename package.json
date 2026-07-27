@@ -30,6 +30,10 @@
     "test:local-mode": "node scripts/test-local-canonical-mode-patch.js",
     "test:usage-controls": "node scripts/test-usage-controls-patch.js",
     "test:resource-saver": "node scripts/test-resource-saver-patch.js",
+    "test:handoff": "node scripts/test-handoff-sync.js",
+    "test:turn-usage": "node scripts/test-turn-usage.js",
+    "verify:features": "node --max-old-space-size=8192 scripts/verify-features.js mac-x64",
+    "test:live-handoff": "node scripts/_live-test-handoff.js",
     "check-update": "node scripts/check-update.js",
     "bump-version": "node scripts/bump-version.js",
     "rebuild:native": "electron-rebuild"
@@ -73,3 +77,4 @@
   "codexSparkleFeedUrl": "https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml",
   "codexSparklePublicKey": "mNfr1v9t63BfgDtlw4C8lRvSY6uMggIXABDOCi3tS6k="
 }
+

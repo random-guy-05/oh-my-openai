@@ -1,12 +1,15 @@
 cask "codex-desktop" do
   version "26.721.41059"
-  # Side-by-side DMG hash from local build including ALL custom features
+  # Side-by-side DMG hash for v26.721.41059-custom.1
+# (handoff-sync-v1 + turn-usage-v3 + noise cleanup).
+# Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
+# after every `npm run build:mac-x64` + `npm run build:side-by-side:x64`.
   # (patch-all.js 14/14 + _apply-26721-all-features + CDR markers).
   # Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
   # after every `npm run build:mac-x64` + `npm run build:side-by-side:x64`.
-  sha256 "37acf21b8fbc27805ee722ead85b8f7ba941229ef792ff32fe6f5320ae6e56ca"
+  sha256 "1fc14604999765ac82cf8aaa4a2134107e298029b8c81c3ec751be8f6114dc09"
 
-  url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}/Codex-side-by-side-mac-x64-#{version}.dmg",
+  url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}-custom.1/Codex-side-by-side-mac-x64-#{version}.dmg",
       verified: "github.com/random-guy-05/oh-my-openai/releases/"
   name "Codex Desktop"
   desc "Custom Codex build with ChatGPT models, usage controls, and per-turn tokens"

@@ -1,4 +1,31 @@
-# Codex Intel 26.721.31836 — custom build
+# Codex Intel 26.721.41059-custom.1
+
+## What's new in this release
+
+- **Bidirectional Codex ↔ Chat handoff** (`handoff-sync-v1`): context crosses
+  the Chat fork on every send in both directions, delta-synced and persisted,
+  not only at conversation creation.
+- **Genuine per-turn usage** (`turn-usage-v3`): each turn badge shows the
+  AppServer tokens for that turn, plus 5h/7d quota deltas measured across the
+  turn. Hover tip surfaces task cumulative % and `/limits` caps.
+- **Task limits** remain in `/status` and `/limits` (token / 5h / weekly caps).
+- **Noise cleanup**: removed ~300 diagnostic `_apply` / `_probe` / `_inspect` /
+  `_dump` / `_debug` scripts. Canonical patch pipeline kept.
+- **Hard fail on partial apply**: `_apply-26721-all-features.js` and
+  `patch-usage-controls --check` no longer soft-pass a broken tree.
+- **Feature gate**: `patch-all` ends with `verify-features` (9 behavioural
+  checks) before any build.
+
+## Install
+
+1. Download `Codex-side-by-side-mac-x64-26.721.41059.dmg` (side-by-side) or
+   `Codex-mac-x64-26.721.41059.dmg` (standard).
+2. Open the DMG, drag `Codex.app` to Applications, launch.
+3. Ad-hoc signed — if Gatekeeper blocks: Control-click → Open.
+
+---
+
+# Codex Intel 26.721.31836 — custom build (prior notes)
 
 ## Highlights
 
@@ -211,3 +238,4 @@ To actually mount features on the live bundle, restore a clean
 Vite-dev bundle at `src/mac-x64/_asar/webview/assets/` (one of the
 external sources named above), then run
 `node scripts/patch-all.js mac-x64` and verify the markers land.
+

@@ -61,6 +61,18 @@ const PATCHES = [
   // escaping bug). Must run AFTER _apply-26721-all-features.js so the
   // thread file is not already patched by the disabled block.
   "_apply-transcript-publisher-v1.js",
+  // Bidirectional Codex <-> Chat context handoff. Chat mode intentionally
+  // forks into a separate ChatGPT conversation (separate models, separate
+  // quota); this makes context cross that fork in both directions on every
+  // send instead of only at conversation creation. Must run last: it rewrites
+  // the bridge injected by _apply-26721-all-features.js and the publisher
+  // injected by _apply-transcript-publisher-v1.js.
+  "_apply-handoff-sync-v1.js",
+  // Replaces the fabricated per-turn badge (which rendered one thread-level
+  // counter identically on every turn) with usage bound to the turn that
+  // actually produced it, and drops the cumulative task badge that was being
+  // duplicated down the whole transcript. Must run after the badges exist.
+  "_apply-turn-usage-v2.js",
 ];
 
 function main() {
@@ -95,7 +107,27 @@ function main() {
     }
   }
 
-  console.log(`\n== Summary: ${PATCHES.length}/${PATCHES.length} succeeded ==`);
+  console.log(`\n== ${PATCHES.length}/${PATCHES.length} patch scripts ran without error ==`);
+
+  // Running without error is not the same as producing a working feature.
+  // Every patcher here can soft-fail, and the per-script "[verify]" lines
+  // only grep for marker comments the script itself just wrote. The gate
+  // below inspects the resulting bundle instead: required code present,
+  // pristine anchors gone, injected components actually rendered, and every
+  // identifier the injected code references resolvable in this bundle.
+  console.log("\n== verify-features (behavioural gate) ==");
+  const verifyArgs = platform && platform !== "unix" ? [platform] : [];
+  try {
+    execFileSync(
+      "node",
+      ["--max-old-space-size=8192", path.join(__dirname, "verify-features.js"), ...verifyArgs],
+      { stdio: "inherit" },
+    );
+  } catch {
+    console.error("\n[x] Feature verification failed — do not build or release this tree.");
+    process.exit(1);
+  }
 }
 
 main();
+

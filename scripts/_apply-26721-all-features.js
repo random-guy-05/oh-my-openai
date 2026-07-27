@@ -752,10 +752,10 @@ if (allOk) {
 }
 
 if (!allOk) {
-  console.warn("\n⚠️ Some critical features failed to apply. Check warnings above. Continuing anyway; the app will build but may lack custom features.");
-  // Do not exit with an error code; allow the build pipeline to continue.
-  // Set exitCode to 0 so callers that check the exit status do not abort.
-  process.exitCode = 0;
+  console.error("\n[x] Critical features failed to apply; see the warnings above.");
+  console.error("[x] Refusing to continue: a silent partial apply is how the 26.721");
+  console.error("[x] rebase shipped a DMG with fake usage badges and no usage panel.");
+  process.exit(1);
 }
 
 // ─── Write back ───
@@ -768,3 +768,4 @@ if (!process.argv.includes("--check")) {
 } else {
   console.log("\n✅ Check complete (no files written).");
 }
+

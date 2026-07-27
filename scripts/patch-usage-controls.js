@@ -764,14 +764,25 @@ function main() {
   const patchedTurn = patchTurnGuard(turnSource, targets.turn);
 
   if (checkOnly) {
-    console.log(
-      `  [ok] ${platform}: usage controls are ${
-        patchedStatus === statusSource && patchedTurn === turnSource
-          ? "installed"
-          : "patchable"
-      }`,
+    // `--check` is the release gate documented in CUSTOM_BUILD.md, so it has
+    // to assert "installed", not "could be installed". It previously printed
+    // `[ok] … patchable` and exited 0 for a tree where the status panel was
+    // entirely absent, which is how 26.721 shipped without the usage panel.
+    const statusInstalled = patchedStatus === statusSource;
+    const turnInstalled = patchedTurn === turnSource;
+    if (statusInstalled && turnInstalled) {
+      console.log(`  [ok] ${platform}: usage controls are installed`);
+      return;
+    }
+    const missing = [
+      !statusInstalled && `status bundle (${relPath(targets.status)})`,
+      !turnInstalled && `turn guard (${relPath(targets.turn)})`,
+    ].filter(Boolean);
+    console.error(
+      `  [x] ${platform}: usage controls are NOT installed — ${missing.join(", ")}`,
     );
-    return;
+    console.error("  [x] Run `node scripts/patch-all.js " + platform + "` before building.");
+    process.exit(1);
   }
   if (patchedStatus !== statusSource) fs.writeFileSync(targets.status, patchedStatus);
   if (patchedTurn !== turnSource) fs.writeFileSync(targets.turn, patchedTurn);
