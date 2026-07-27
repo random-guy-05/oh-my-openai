@@ -4,7 +4,7 @@ cask "codex-desktop" do
   # (chat catalog v5 + Codex-style picker + Work→Chat switch fix).
   # Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
   # after every `npm run build:mac-x64` + `npm run build:side-by-side:x64`.
-  sha256 "PLACEHOLDER_UPDATE_AFTER_BUILD"
+  sha256 "887d3313684347ec6f493fb165b0a958947aa3b8c1456023aed72a6ca068803c"
 
   url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}-custom.3/Codex-side-by-side-mac-x64-#{version}.dmg",
       verified: "github.com/random-guy-05/oh-my-openai/releases/"
