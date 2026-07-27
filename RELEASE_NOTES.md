@@ -1,3 +1,32 @@
+# Codex Intel 26.721.41059-custom.2
+
+## What's new
+
+- **Real ChatGPT Chat mode** (`chat-real-v2`): Chat uses ChatGPT models and
+  Chat quota — not Sol / Terra / Luna. The Chat picker is a ChatGPT-only
+  dropdown (live `/models` with Codex slugs filtered out, plus Auto /
+  GPT-5.1 / Thinking / o3 / o4-mini / GPT-4.1 / GPT-4o fallbacks).
+- **Sticky ChatGPT send**: Chat messages go through `CDRStickyChatSend` and
+  never fall through to AppServer / Codex quota. Codex model IDs are refused.
+- **Mode switch hotfix**: Chat ↔ Codex top-left label and model picker stay
+  in sync (`registerModelController`, Chat-preserving upstream sync).
+- **Context preserved**: bidirectional handoff sync still carries transcript
+  across Chat ↔ Codex switches.
+
+## Install
+
+1. Prefer `Codex-side-by-side-mac-x64-26.721.41059.dmg` (isolated profile).
+2. Or `Codex-mac-x64-26.721.41059.dmg`.
+3. Ad-hoc signed — if Gatekeeper blocks: Control-click → Open.
+
+Homebrew:
+
+```sh
+brew install --cask https://raw.githubusercontent.com/random-guy-05/oh-my-openai/main/Casks/codex-desktop.rb
+```
+
+---
+
 # Codex Intel 26.721.41059-custom.1
 
 ## What's new in this release
@@ -238,4 +267,5 @@ To actually mount features on the live bundle, restore a clean
 Vite-dev bundle at `src/mac-x64/_asar/webview/assets/` (one of the
 external sources named above), then run
 `node scripts/patch-all.js mac-x64` and verify the markers land.
+
 

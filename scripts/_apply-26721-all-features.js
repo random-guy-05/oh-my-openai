@@ -287,8 +287,12 @@ let logicalModel=globalThis.__cdrChatSelectedModel;
 try{logicalModel=logicalModel||localStorage.getItem('cdr-chat-model-selection')}catch{}
 let powerRows=Array.isArray(globalThis.__cdrChatPowerRows)?globalThis.__cdrChatPowerRows:[];
 let selected=powerRows.find(r=>r.model===logicalModel)||powerRows.find(r=>r.model===globalThis.__cdrChatDefaultSlug)||powerRows[0];
-let model=selected?selected.apiModel:(n&&n.model)||'gpt-5.6-sol';
-let effort=selected?(selected.apiEffort==='none'||selected.apiEffort==='minimal'?void 0:selected.apiEffort):(n&&n.thinkingEffort&&(n.thinkingEffort==='none'||n.thinkingEffort==='minimal')?void 0:n&&n.thinkingEffort);
+let isCodexModel=m=>{let s=String(m||'').toLowerCase();return!s?!1:/gpt-5\\.6|\\bsol\\b|\\bterra\\b|\\bluna\\b|codex-|codex_|\\bcodex\\b/.test(s)};
+let model=selected&&selected.apiModel?selected.apiModel:(globalThis.__cdrChatDefaultApiSlug||null);
+if(!model||isCodexModel(model)){try{model=null}catch{}}
+if(!model){try{await client.models()}catch{}powerRows=Array.isArray(globalThis.__cdrChatPowerRows)?globalThis.__cdrChatPowerRows:[];selected=powerRows.find(r=>r.model===logicalModel)||powerRows.find(r=>r.model===globalThis.__cdrChatDefaultSlug)||powerRows[0];model=selected&&selected.apiModel?selected.apiModel:(globalThis.__cdrChatDefaultApiSlug||'auto');}
+if(isCodexModel(model)){upsert({role:'assistant',text:'[Chat] Refusing to send with a Codex model ('+model+'). Wait for Chat models to load, then retry.',source:'chat-error'});return!0}
+let effort=selected?(selected.apiEffort==='none'||selected.apiEffort==='minimal'?void 0:selected.apiEffort):void 0;
 let store={};
 try{store=JSON.parse(localStorage.getItem('cdr-chat-thread-state-v1')||'{}')||{}}catch{}
 store.byLocal=store.byLocal&&typeof store.byLocal==='object'?store.byLocal:{};

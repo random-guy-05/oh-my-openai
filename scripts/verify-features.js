@@ -87,7 +87,8 @@ const FEATURES = [
     description: "Chat / Work / Codex presets on the same native task",
     present: [
       ["let CDRRuntime=", "mode runtime binding"],
-      ["CDRSetMode(`chat`)", "chat preset selection"],
+      [["CDRSetMode(`chat`)", "CDRSetMode(CDRM)"], "chat preset selection"],
+      ["CDRRuntime.registerModelController(", "model picker sync"],
       ["__cdrLocalModeV4", "mode runtime global"],
     ],
     resolves: [],
@@ -427,7 +428,10 @@ function main() {
     const problems = [];
 
     for (const [needle, why] of feature.present || []) {
-      if (!src.includes(needle)) problems.push(`missing ${why} — "${needle}"`);
+      const needles = Array.isArray(needle) ? needle : [needle];
+      if (!needles.some((n) => src.includes(n))) {
+        problems.push(`missing ${why} — ${needles.map((n) => `"${n}"`).join(" | ")}`);
+      }
     }
 
     for (const [needle, why] of feature.absent || []) {

@@ -50,8 +50,8 @@ function installLocalModeRuntime() {
   // chat, Terra Light for work, Sol High for codex).
   const presetSettings = Object.freeze({
     chat: Object.freeze({
-      model: "gpt-5.6-sol",
-      reasoningEffort: "medium",
+      model: "auto",
+      reasoningEffort: "none",
     }),
     work: Object.freeze({
       model: "gpt-5.6-terra",
@@ -487,7 +487,10 @@ function patchSelectorBundleInner(source, filePath) {
     `\"codex\");` +
     `/* codex-rebuild:sticky-chat-v43:durable-mode */` +
     `/* codex-rebuild:sticky-chat-v43:durable-sync */` +
-    `(0,L$.useEffect)(()=>{CDRRuntime.setMode(CDRUpstreamMode);CDRSetMode(CDRUpstreamMode)},[CDRUpstreamMode]);` +
+    // Upstream stays on codex while Chat is a local-only preset. Never let
+    // an upstream "codex" reading clobber an intentional local "chat"
+    // selection (that used to reset the top-left label on remount).
+    `(0,L$.useEffect)(()=>{if(CDRUpstreamMode===\`codex\`){try{if(CDRRuntime.mode(\`codex\`)===\`chat\`)return}catch{}}CDRRuntime.setMode(CDRUpstreamMode);CDRSetMode(CDRUpstreamMode)},[CDRUpstreamMode]);` +
     `/* ${SEND_MARKER} */` +
     `(0,L$.useEffect)(()=>{try{if(typeof document===\"undefined\"||!document.querySelectorAll)return;` +
     `document.querySelectorAll(\`button[aria-label],[role="button"][aria-label]\`)` +
@@ -538,12 +541,15 @@ function patchSelectorBundleInner(source, filePath) {
     );
 
     // Change mode prop in mLl call: use CDRMode for display, wrap onModeSelect
-    // so "chat" is handled locally (upstream doesn't know "chat" — it would
-    // silently drop it). "work"/"codex" pass through to upstream p.
+    // so EVERY preset updates local React state + runtime. "chat" is local-only
+    // (upstream doesn't know it and would silently drop it). "work"/"codex"
+    // also update local state BEFORE calling upstream — otherwise chat→codex
+    // is a no-op for the top-left label because upstream was already "codex"
+    // and CDRUpstreamMode never changes.
     controller = replaceOne(
       controller,
       "mode:f,onModeSelect:p",
-      "mode:CDRMode,onModeSelect:(CDRM)=>{if(CDRM===`chat`){CDRSetMode(`chat`);CDRRuntime.setMode(`chat`)}else{p(CDRM)}}",
+      "mode:CDRMode,onModeSelect:(CDRM)=>{CDRSetMode(CDRM);CDRRuntime.setMode(CDRM);if(CDRM!==`chat`)p(CDRM)}",
       "mode controller prop (with chat interceptor)",
     );
 
@@ -724,43 +730,45 @@ function patchComposerBundleInner(source, filePath) {
         `${match}/* ${MODEL_PICKER_MARKER} */let CDRRuntime=${RUNTIME_SOURCE};`,
     );
   }
-  // 26.721: the noop useEffect was removed; try to find any useEffect with
-  // model/reasoningEffort deps, or skip model controller registration.
-  // The old pattern: (0,_k.useEffect)(()=>{},[!1,S.model,S.reasoningEffort,T,w]);
-  // Try common variable name patterns for 26.721
-  const modelPickerEffectPatterns = [
-    "(0,XM.useEffect)(()=>{},[!1,S.model,S.reasoningEffort,T,w]);",
-    "(0,XM.useEffect)(()=>{},[!1,S.model,S.reasoningEffort,T,W]);",
-  ];
-  let modelPickerEffectReplaced = false;
-  for (const pat of modelPickerEffectPatterns) {
-    if (modelPicker.includes(pat)) {
-      const wVar = pat.includes(",w];") ? "w" : "W";
-      modelPicker = replaceOne(
-        modelPicker,
-        pat,
-        `(0,XM.useEffect)(()=>CDRRuntime.registerModelController(({model:CDRModel,reasoningEffort:CDREffort})=>${wVar}(CDRModel,CDREffort)),[CDRRuntime,${wVar}]);`,
-        "native model picker synchronization",
-      );
-      modelPickerEffectReplaced = true;
-      break;
-    }
-  }
-  // If noop useEffect not found, try adding registration after CDRRuntime.
-  // CAUTION: do NOT re-inject CDRRuntime — it's already declared above.
-  // Instead, find the setModelAndReasoningEffort callback variable and inject
-  // a useEffect right after the CDRRuntime declaration (already present).
-  if (!modelPickerEffectReplaced) {
-    const cbMatch = modelPicker.match(/([a-zA-Z_$][\w$]*)=XM\.useCallback/);
-    if (cbMatch) {
-      const setterVar = cbMatch[1];
-      // Insert the useEffect AFTER the CDRRuntime declaration (which was
-      // already added by the function signature replace above)
-      modelPicker = modelPicker.replace(
-        `let CDRRuntime=${RUNTIME_SOURCE};`,
-        `let CDRRuntime=${RUNTIME_SOURCE};(0,XM.useEffect)(()=>CDRRuntime.registerModelController(({model:CDRModel,reasoningEffort:CDREffort})=>${setterVar}(CDRModel,CDREffort)),[CDRRuntime,${setterVar}]);`,
+  // 26.721+: setModelAndReasoningEffort comes from a hook destructure
+  // (`{setModelAndReasoningEffort:g}=JMs(...)`), not a useCallback / noop
+  // useEffect. Register that setter with the local-mode runtime so preset
+  // clicks actually drive the visible model picker.
+  if (!modelPicker.includes("CDRRuntime.registerModelController(")) {
+    const setterMatch = modelPicker.match(
+      /setModelAndReasoningEffort:([A-Za-z_$][\w$]*)/,
+    );
+    const reactMatch = modelPicker.match(
+      /\(0,([A-Za-z_$][\w$]*)\.(?:useRef|useEffect|useState|useCallback)\)/,
+    );
+    if (!setterMatch) {
+      throw new Error(
+        `${relPath(filePath)} model picker: setModelAndReasoningEffort alias not found`,
       );
     }
+    if (!reactMatch) {
+      throw new Error(
+        `${relPath(filePath)} model picker: React hooks alias not found`,
+      );
+    }
+    const setterVar = setterMatch[1];
+    const reactAlias = reactMatch[1];
+    const registerEffect =
+      `(0,${reactAlias}.useEffect)(()=>CDRRuntime.registerModelController(` +
+      `({model:CDRModel,reasoningEffort:CDREffort})=>${setterVar}(CDRModel,CDREffort)),[${setterVar}]);` +
+      `/* ${MODEL_PICKER_MARKER}:sync */`;
+    const anchor = modelPicker.match(
+      /let\{[^}]*setModelAndReasoningEffort:[A-Za-z_$][\w$]*[^}]*\}=[^;]+;/,
+    );
+    if (!anchor) {
+      throw new Error(
+        `${relPath(filePath)} model picker: could not locate setModelAndReasoningEffort destructure`,
+      );
+    }
+    modelPicker = modelPicker.replace(anchor[0], anchor[0] + registerEffect);
+    console.log(
+      `  [ok] ${relPath(filePath)} model picker sync via ${setterVar} (${reactAlias}.useEffect)`,
+    );
   }
 
   // ── Send button JSX fallback (ancient builds) ───────────────────────────
@@ -924,9 +932,12 @@ function verifySelectorBundle(source, filePath) {
   // hard throw (not a soft warning) ensures a future re-patch that
   // hits the controllerAlreadyInjected guard cannot silently ship a
   // broken chat button.
-  if (!source.includes("CDRSetMode(`chat`)")) {
+  if (
+    !source.includes("CDRSetMode(`chat`)") &&
+    !source.includes("CDRSetMode(CDRM)")
+  ) {
     throw new Error(
-      `${relPath(filePath)} chat interceptor missing (CDRSetMode(\`chat\`)); clicking Chat would call upstream onModeSelect("chat") which is silently dropped. This is the exact bug the fix addresses — the interceptor MUST be present.`,
+      `${relPath(filePath)} chat interceptor missing (CDRSetMode(CDRM) / CDRSetMode(\`chat\`)); clicking Chat would call upstream onModeSelect("chat") which is silently dropped. This is the exact bug the fix addresses — the interceptor MUST be present.`,
     );
   }
   // Parse failures throw so the soft-fail wrapper above catches them and
@@ -1449,7 +1460,7 @@ function verifySelectorPatched(source) {
     source.includes(SELECTOR_MARKER) &&
     source.includes("CDRChatItem") &&
     source.includes("codex-rebuild:sticky-chat-v43:durable-mode") &&
-    source.includes("CDRSetMode(`chat`)")
+    (source.includes("CDRSetMode(`chat`)") || source.includes("CDRSetMode(CDRM)"))
   );
 }
 function verifyComposerPatched(source) {
@@ -1465,3 +1476,4 @@ function verifyContextPatched(source) {
     source.includes(CONTEXT_MARKER) && source.includes("model:`gpt-5.6-luna`")
   );
 }
+

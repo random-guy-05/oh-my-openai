@@ -73,6 +73,12 @@ const PATCHES = [
   // actually produced it, and drops the cumulative task badge that was being
   // duplicated down the whole transcript. Must run after the badges exist.
   "_apply-turn-usage-v2.js",
+  // Chat UX: live ChatGPT model selector in Chat mode + never fall through
+  // to the Codex send path (which burns Codex quota) while Chat is active.
+  "_apply-chat-ux-v1.js",
+  // Chat-real-v2: Chat mode uses ChatGPT models/quota only (never Sol/Terra/Luna),
+  // flat selector gated on runtime mode, catalog filters Codex slugs.
+  "_apply-chat-real-v2.js",
 ];
 
 function main() {
