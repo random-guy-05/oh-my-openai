@@ -487,10 +487,10 @@ function patchSelectorBundleInner(source, filePath) {
     `\"codex\");` +
     `/* codex-rebuild:sticky-chat-v43:durable-mode */` +
     `/* codex-rebuild:sticky-chat-v43:durable-sync */` +
-    // Upstream stays on codex while Chat is a local-only preset. Never let
-    // an upstream "codex" reading clobber an intentional local "chat"
-    // selection (that used to reset the top-left label on remount).
-    `(0,L$.useEffect)(()=>{if(CDRUpstreamMode===\`codex\`){try{if(CDRRuntime.mode(\`codex\`)===\`chat\`)return}catch{}}CDRRuntime.setMode(CDRUpstreamMode);CDRSetMode(CDRUpstreamMode)},[CDRUpstreamMode]);` +
+    // Chat is local-only (upstream never adopts it). Never let an upstream
+    // "codex" OR "work" (ChatGPT Work) reading clobber an intentional local
+    // "chat" selection — work→chat used to snap back immediately.
+    `(0,L$.useEffect)(()=>{/* codex-rebuild:mode-switch-work-v1:durable-sync */if(CDRUpstreamMode!==\`chat\`){try{if(CDRRuntime.mode(\`codex\`)===\`chat\`)return}catch{}}CDRRuntime.setMode(CDRUpstreamMode);CDRSetMode(CDRUpstreamMode)},[CDRUpstreamMode]);` +
     `/* ${SEND_MARKER} */` +
     `(0,L$.useEffect)(()=>{try{if(typeof document===\"undefined\"||!document.querySelectorAll)return;` +
     `document.querySelectorAll(\`button[aria-label],[role="button"][aria-label]\`)` +

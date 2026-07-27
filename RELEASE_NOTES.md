@@ -1,3 +1,31 @@
+# Codex Intel 26.721.41059-custom.3
+
+## What's new
+
+- **ChatGPT-web model catalog** (`chat-catalog-v5`): Chat picker shows current
+  consumer ChatGPT families (proper labels, no unlabeled Instant/High, no
+  Codex Terra/Luna junk). GPT-5.5 Thinking replaced with **GPT-5.6 Sol Medium**
+  and **GPT-5.6 Sol High**.
+- **Codex-style Chat picker UI** (`chat-picker-style-v1`): Chat model control
+  matches Codex mode (ghost composer trigger + native dropdown + checkmarks).
+- **Work → Chat mode switch fix** (`mode-switch-work-v1`): selecting Chat from
+  ChatGPT Work no longer snaps back (durable sync now preserves local Chat
+  against any non-chat upstream).
+
+## Install
+
+1. Prefer `Codex-side-by-side-mac-x64-26.721.41059.dmg` (isolated profile).
+2. Or `Codex-mac-x64-26.721.41059.dmg`.
+3. Ad-hoc signed — if Gatekeeper blocks: Control-click → Open.
+
+Homebrew:
+
+```sh
+brew install --cask https://raw.githubusercontent.com/random-guy-05/oh-my-openai/main/Casks/codex-desktop.rb
+```
+
+---
+
 # Codex Intel 26.721.41059-custom.2
 
 ## What's new
@@ -267,5 +295,6 @@ To actually mount features on the live bundle, restore a clean
 Vite-dev bundle at `src/mac-x64/_asar/webview/assets/` (one of the
 external sources named above), then run
 `node scripts/patch-all.js mac-x64` and verify the markers land.
+
 
 

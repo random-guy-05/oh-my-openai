@@ -79,6 +79,14 @@ const PATCHES = [
   // Chat-real-v2: Chat mode uses ChatGPT models/quota only (never Sol/Terra/Luna),
   // flat selector gated on runtime mode, catalog filters Codex slugs.
   "_apply-chat-real-v2.js",
+  // Expand Chat picker to ALL ChatGPT versionOptions (not just first version).
+  "_apply-chat-catalog-v3.js",
+  "_apply-chat-catalog-v3b.js",
+  "_apply-chat-catalog-v3c.js",
+  "_apply-chat-catalog-v4.js",
+  "_apply-chat-catalog-v5.js",
+  "_apply-chat-picker-style-v1.js",
+  "_apply-mode-switch-work-v1.js",
 ];
 
 function main() {
@@ -136,4 +144,5 @@ function main() {
 }
 
 main();
+
 

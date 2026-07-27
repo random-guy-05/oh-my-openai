@@ -1,12 +1,12 @@
 cask "codex-desktop" do
   version "26.721.41059"
-  # Side-by-side DMG hash for v26.721.41059-custom.2
-  # (chat-real-v2 ChatGPT models/quota + mode-switch hotfix).
+  # Side-by-side DMG hash for v26.721.41059-custom.3
+  # (chat catalog v5 + Codex-style picker + Work→Chat switch fix).
   # Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
   # after every `npm run build:mac-x64` + `npm run build:side-by-side:x64`.
-  sha256 "842d5e5e3e82ec82b8074e00f92755b6267db5903816fc24323bc7e1f278d785"
+  sha256 "PLACEHOLDER_UPDATE_AFTER_BUILD"
 
-  url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}-custom.2/Codex-side-by-side-mac-x64-#{version}.dmg",
+  url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}-custom.3/Codex-side-by-side-mac-x64-#{version}.dmg",
       verified: "github.com/random-guy-05/oh-my-openai/releases/"
   name "Codex Desktop"
   desc "Custom Codex build with ChatGPT models, usage controls, and per-turn tokens"
