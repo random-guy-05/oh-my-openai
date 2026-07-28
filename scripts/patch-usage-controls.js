@@ -761,7 +761,14 @@ function main() {
   const statusSource = fs.readFileSync(targets.status, "utf8");
   const turnSource = fs.readFileSync(targets.turn, "utf8");
   const patchedStatus = patchStatusBundle(statusSource, targets.status);
-  const patchedTurn = patchTurnGuard(turnSource, targets.turn);
+  // 26.721 consolidates the status panel and token guard into app-initial.
+  // Apply the second transformation to the first transformation's output;
+  // writing `patchedTurn` derived from the stale source would erase the newly
+  // installed usage rows and limits whenever both targets are the same file.
+  const patchedTurn = patchTurnGuard(
+    targets.turn === targets.status ? patchedStatus : turnSource,
+    targets.turn,
+  );
 
   if (checkOnly) {
     // `--check` is the release gate documented in CUSTOM_BUILD.md, so it has
@@ -784,8 +791,12 @@ function main() {
     console.error("  [x] Run `node scripts/patch-all.js " + platform + "` before building.");
     process.exit(1);
   }
-  if (patchedStatus !== statusSource) fs.writeFileSync(targets.status, patchedStatus);
-  if (patchedTurn !== turnSource) fs.writeFileSync(targets.turn, patchedTurn);
+  if (targets.status === targets.turn) {
+    if (patchedTurn !== turnSource) fs.writeFileSync(targets.status, patchedTurn);
+  } else {
+    if (patchedStatus !== statusSource) fs.writeFileSync(targets.status, patchedStatus);
+    if (patchedTurn !== turnSource) fs.writeFileSync(targets.turn, patchedTurn);
+  }
   console.log(`  [ok] ${platform}: installed usage telemetry and task limits`);
 }
 

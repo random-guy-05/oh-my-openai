@@ -133,6 +133,35 @@ function findSendFunction(src) {
   return m[1];
 }
 
+// The local Codex composer uses a separate AppServer submitter from the
+// ChatGPT Web composer above.  Its minified name is not stable, so locate the
+// function by the durable turn/start lifecycle calls and patch that exact
+// function rather than guessing an alias from a previous release.
+function findLocalTurnSubmitFunction(src) {
+  const ast = acorn.parse(src, { ecmaVersion: "latest", sourceType: "module" });
+  const candidates = [];
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)) {
+      const body = src.slice(node.start, node.end);
+      if (
+        body.includes("markRequestDispatched") &&
+        body.includes("sendRequest(`turn/start`") &&
+        body.includes("clientUserMessageId") &&
+        body.includes("updateConversationState")
+      ) candidates.push(node);
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value?.type) visit(value);
+    }
+  };
+  visit(ast);
+  candidates.sort((a, b) => a.end - a.start - (b.end - b.start));
+  if (!candidates[0]) throw new Error("Could not locate local Codex turn/start submit function");
+  return candidates[0];
+}
+
 // ─── Read source and detect minified aliases ───
 
 let mono = fs.readFileSync(MONO, "utf8");
@@ -141,12 +170,32 @@ const REACT = findReactAlias(mono);
 const JSX = findJsxAlias(mono);
 const SEND_FN = findSendFunction(mono);
 const SEND_ANCHOR = `async function ${SEND_FN}(e,{attachments:`;
+const CHAT_UPSERT_V0 = "let upsert=turn=>{try{let rows=JSON.parse(localStorage.getItem(extrasKey)||'[]');if(!Array.isArray(rows))rows=[];let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);localStorage.setItem(extrasKey,JSON.stringify(rows));notify();return val.id}catch{return turn.id||null}};";
+const CHAT_UPSERT_V1 = "let historyStore=()=>{if(globalThis.__cdrChatHistoryStore)return globalThis.__cdrChatHistoryStore;let open=()=>new Promise((resolve,reject)=>{let req=indexedDB.open('cdr-chat-history-v1',1);req.onupgradeneeded=()=>{let db=req.result;if(!db.objectStoreNames.contains('threads'))db.createObjectStore('threads')};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)});let api={load:key=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readonly'),req=tx.objectStore('threads').get(key);req.onsuccess=()=>resolve(Array.isArray(req.result)?req.result:[]);req.onerror=()=>reject(req.error)})),save:(key,rows)=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readwrite');tx.objectStore('threads').put(rows,key);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)}))};globalThis.__cdrChatHistoryStore=api;return api};let durableRows=await historyStore().load(extrasKey).catch(()=>[]);let upsert=turn=>{let rows=Array.isArray(durableRows)?durableRows:[];if(!rows.length){try{rows=JSON.parse(localStorage.getItem(extrasKey)||'[]')}catch{}if(!Array.isArray(rows))rows=[]}let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);durableRows=rows;try{localStorage.setItem(extrasKey,JSON.stringify(rows.slice(-100)))}catch{}try{historyStore().save(extrasKey,rows).catch(()=>{})}catch{}notify();return val.id};";
 console.log(`[detect] React hooks/JSX alias: ${REACT}, JSX alias: ${JSX}`);
 console.log(`[detect] Send function: ${SEND_FN}`);
+const CHAT_UPSERT_V1_GLOBAL = CHAT_UPSERT_V1.replaceAll("indexedDB.open", "globalThis.indexedDB.open");
 
 // Idempotency
 if (mono.includes(MARKER + ":applied")) {
-  console.log("Already patched, skipping.");
+  const upgrades = [
+    [CHAT_UPSERT_V0, CHAT_UPSERT_V1_GLOBAL],
+    [CHAT_UPSERT_V1, CHAT_UPSERT_V1_GLOBAL],
+    ["upsert({role:'user',text:text.slice(0,8000),source:'chat'});", "upsert({role:'user',text:text,source:'chat'});"],
+    ["upsert({id:assistantId,role:'assistant',text:assistant.slice(0,16000),source:'chat',status:'completed'});", "upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'completed'});"],
+    ["localStorage.setItem(extrasKey,JSON.stringify(rows.slice(-400)))", "localStorage.setItem(extrasKey,JSON.stringify(rows))"],
+  ];
+  let changed = false;
+  for (const [before, after] of upgrades) {
+    if (mono.includes(before)) { mono = mono.split(before).join(after); changed = true; }
+  }
+  if (changed) {
+    parseOk("monolith history-preservation upgrade", mono);
+    if (!process.argv.includes("--check")) fs.writeFileSync(MONO, mono);
+    console.log("Existing patch upgraded for uncapped Chat history.");
+  } else {
+    console.log("Already patched, skipping.");
+  }
   process.exit(0);
 }
 
@@ -268,14 +317,15 @@ try{if(document.documentElement.getAttribute('data-codex-product-mode')==='chat'
 try{return String(localStorage.getItem('cdr-product-mode')||'').replace(/^["']|["']$/g,'')==='chat'}catch{return!1}
 }
 if(!chatMode())return!1;
+try{globalThis.__cdrChatTransportAudit={...(globalThis.__cdrChatTransportAudit||{}),route:'chat',threadId:t,startedAt:Date.now()}}catch{}
 function textOf(v){if(v==null)return'';if(typeof v==='string')return v;if(Array.isArray(v))return v.map(textOf).filter(Boolean).join('\\n');if(typeof v==='object'){if(typeof v.text==='string')return v.text;if(typeof v.content==='string')return v.content;if(Array.isArray(v.parts))return v.parts.map(textOf).filter(Boolean).join('\\n');if(Array.isArray(v.content))return v.content.map(textOf).filter(Boolean).join('\\n')}return''}
 let text=String(textOf(n&&n.input)||'').trim();
 if(!text)return'absorbed';
 let key=String(t||'').includes(':')?String(t):'local:'+t;
 let extrasKey='cdr-thread-extras:'+key;
 let notify=()=>{try{window.dispatchEvent(new CustomEvent('cdr-thread-extras-change',{detail:{key}}))}catch{}};
-let upsert=turn=>{try{let rows=JSON.parse(localStorage.getItem(extrasKey)||'[]');if(!Array.isArray(rows))rows=[];let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);localStorage.setItem(extrasKey,JSON.stringify(rows.slice(-400)));notify();return val.id}catch{return turn.id||null}};
-upsert({role:'user',text:text.slice(0,8000),source:'chat'});
+${CHAT_UPSERT_V1_GLOBAL}
+upsert({role:'user',text:text,source:'chat'});
 let client=null;
 try{if(typeof MH!=='undefined')client=e.get(MH)}catch{}
 if(!client||typeof client.startCompletionStream!=='function'){try{client=globalThis.__cdrChatClient}catch{}}
@@ -287,7 +337,10 @@ let logicalModel=globalThis.__cdrChatSelectedModel;
 try{logicalModel=logicalModel||localStorage.getItem('cdr-chat-model-selection')}catch{}
 let powerRows=Array.isArray(globalThis.__cdrChatPowerRows)?globalThis.__cdrChatPowerRows:[];
 let selected=powerRows.find(r=>r.model===logicalModel)||powerRows.find(r=>r.model===globalThis.__cdrChatDefaultSlug)||powerRows[0];
-let isCodexModel=m=>{let s=String(m||'').toLowerCase();return!s?!1:/gpt-5\\.6|\\bsol\\b|\\bterra\\b|\\bluna\\b|codex-|codex_|\\bcodex\\b/.test(s)};
+// The response comes from ChatGPT Web's own models payload. Do not reject
+// legitimate ChatGPT slugs such as gpt-5.6-sol merely because Codex also has
+// a similarly named local model; only explicit Codex namespaces are blocked.
+let isCodexModel=m=>{let s=String(m||'').toLowerCase();return!s?!1:/(?:^|[-_])codex(?:$|[-_])/.test(s)};
 let model=selected&&selected.apiModel?selected.apiModel:(globalThis.__cdrChatDefaultApiSlug||null);
 if(!model||isCodexModel(model)){try{model=null}catch{}}
 if(!model){try{await client.models()}catch{}powerRows=Array.isArray(globalThis.__cdrChatPowerRows)?globalThis.__cdrChatPowerRows:[];selected=powerRows.find(r=>r.model===logicalModel)||powerRows.find(r=>r.model===globalThis.__cdrChatDefaultSlug)||powerRows[0];model=selected&&selected.apiModel?selected.apiModel:(globalThis.__cdrChatDefaultApiSlug||'auto');}
@@ -342,7 +395,7 @@ onError:done(err=>reject(err&&err.error?err.error:err))
 });
 flush();
 if(!assistant)assistant='Chat returned no displayable text.';
-upsert({id:assistantId,role:'assistant',text:assistant.slice(0,16000),source:'chat',status:'completed'});
+upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'completed'});
 if(seenConv&&nextParent){
 store.byLocal[key]={conversationId:seenConv,parentMessageId:nextParent,model:model,updatedAt:Date.now()};
 try{localStorage.setItem('cdr-chat-thread-state-v1',JSON.stringify(store))}catch{}
@@ -374,6 +427,25 @@ const sendHookReplacement = "let v=CH(),y=l.trim();{/* " + MARKER + ":send-hook 
 if (!mono.includes(MARKER + ":send-hook")) {
   mono = tryReplace(mono, sendHookAnchor, sendHookReplacement, `inject send hook into ${SEND_FN}`);
   console.log(`[ok] send hook injected into ${SEND_FN}`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 4b. LOCAL CODEX SUBMIT ROUTE — Chat mode must never call turn/start
+// ═══════════════════════════════════════════════════════════════
+
+const LOCAL_SUBMIT_MARKER = MARKER + ":local-submit-hook";
+if (!mono.includes(LOCAL_SUBMIT_MARKER)) {
+  const localNode = findLocalTurnSubmitFunction(mono);
+  let localSubmit = mono.slice(localNode.start, localNode.end);
+  const localOptions = localSubmit.match(/let\{beforeSendRequest:[\s\S]*?\}=n,c=[^;]+;/)?.[0];
+  if (!localOptions) {
+    throw new Error("Local turn/start submit function options destructure drifted");
+  }
+  const localRoute = `/* ${LOCAL_SUBMIT_MARKER} */try{let _cdrChatMode=!1;try{_cdrChatMode=!!(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat')}catch{}try{_cdrChatMode=_cdrChatMode||(typeof document!=='undefined'&&document.documentElement&&document.documentElement.getAttribute('data-codex-product-mode')==='chat')}catch{}if(_cdrChatMode){globalThis.__cdrChatTransportAudit={route:'chat',threadId:t,at:Date.now(),model:s?.model??null};let _cdrHandled=await CDRStickyChatSend(e,t,{input:s?.input,model:s?.model,thinkingEffort:s?.effort,attachments:s?.attachments});if(_cdrHandled){let _cdrSyntheticTurnId='cdr-chat-turn-'+String(c);return{turn:{id:_cdrSyntheticTurnId,status:'completed'}}}}}catch(_cdrChatError){try{console.error('[cdr] local Chat route error',_cdrChatError)}catch{}}`;
+  localSubmit = localSubmit.replace(localOptions, localOptions + localRoute);
+  mono = mono.slice(0, localNode.start) + localSubmit + mono.slice(localNode.end);
+  parseOk("local Chat submit route", mono);
+  console.log("[ok] local Codex turn/start submit routes Chat mode to CDRStickyChatSend");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -772,4 +844,3 @@ if (!process.argv.includes("--check")) {
 } else {
   console.log("\n✅ Check complete (no files written).");
 }
-

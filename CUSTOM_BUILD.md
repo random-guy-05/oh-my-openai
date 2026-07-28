@@ -1,12 +1,14 @@
 # Intel Codex custom build
 
-Supported upstream: official Intel macOS app `26.715.31925` (`5551`).
+Supported upstream: official Intel macOS app `26.721.41059` (`5848`).
 
 ## Conversation architecture
 
 Chat, ChatGPT Work, and Codex are local presets on the same native Codex task.
-Preset selection never changes the route, AppServer task ID, sidebar data,
-transcript owner, or submit transport.
+Preset selection never changes the route, task ID, sidebar data, or native
+history owner. Work/Codex use AppServer; Chat is intercepted in the local
+submitter and uses the signed-in ChatGPT Web `startCompletionStream` client,
+while keeping the local task identity and transcript.
 
 `scripts/patch-local-canonical-mode.js`:
 
@@ -18,6 +20,14 @@ transcript owner, or submit transport.
 - leaves `thread/read`, `thread/turns/list`, and history hydration unchanged;
 - routes model-consuming ChatGPT context handoffs and background resumes through
   GPT-5.6 Luna Light.
+
+`_apply-26721-all-features.js` owns the Chat transport and live model catalog.
+The picker consumes the current ChatGPT Web `models()` response directly; it
+does not invent obsolete fallback rows, and filters only explicit Codex
+namespaces. `CDRStickyChatSend` persists every Chat user/assistant row under
+`cdr-thread-extras:local:<task-id>`. `_apply-chat-extras-render-v1.js` overlays
+those rows into the native task transcript, so switching tasks and modes does
+not hide or replace prior history.
 
 Referenced-thread context uses upstream `thread/read` with `includeTurns: true`.
 Background transcript hydration also retains full turns. These reads are local
@@ -35,22 +45,32 @@ reducing detached inactive-browser defaults from 32 pages / 30 minutes to
 
 ## Rebuild workflow
 
+For a newly installed official Intel Codex base, the supported upgrade path is
+one command:
+
 ```sh
-npm run sync:installed:x64
-node scripts/patch-all.js mac-x64
-npm run test:latest-models
-npm run test:local-mode
-npm run test:usage-controls
-npm run test:resource-saver
-node scripts/patch-all.js mac-x64 --check
-npm run build:mac-x64
-npm run build:side-by-side:x64
+npm run upgrade:x64
 ```
 
-Patches structurally identify one expected target, parse modified JavaScript
-again with Acorn, verify invariants, and fail closed on upstream drift.
+This snapshots the last-good source, imports the installed upstream, performs a
+clean-source audit, applies the canonical feature manifest, runs every test and
+the patched audit, reapplies the manifest to prove byte-for-byte idempotency,
+then builds the runtime and side-by-side app. A failure restores the last-good
+source and leaves a JSON report under `out/.reapply-runs/`.
+
+Useful narrower commands:
+
+```sh
+npm run reapply:x64             # reapply and verify the current source
+npm run reapply -- --plan       # print the ordered feature/test plan
+npm run audit:clean             # audit a freshly synced upstream
+npm run audit:patched           # audit a customized source
+```
+
+The manifest intentionally supports only `mac-x64` until every binary patcher
+has a platform-neutral target resolver. Unsupported platforms fail instead of
+silently producing a partly customized build.
 
 The outer launcher atomically installs its fingerprinted private runtime under
 `~/Library/Application Support/CodexDesktop-Rebuild/Codex.app`. The isolated
 profile and Codex home survive runtime upgrades.
-

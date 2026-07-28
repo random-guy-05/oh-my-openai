@@ -1,12 +1,11 @@
 cask "codex-desktop" do
   version "26.721.41059"
-  # Side-by-side DMG hash for v26.721.41059-custom.3
-  # (chat catalog v5 + Codex-style picker + Work→Chat switch fix).
-  # Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
-  # after every `npm run build:mac-x64` + `npm run build:side-by-side:x64`.
-  sha256 "887d3313684347ec6f493fb165b0a958947aa3b8c1456023aed72a6ca068803c"
+  # Standard unsigned DMG hash for v26.721.41059-custom.4.
+  # Recompute via `shasum -a 256 out/Codex-mac-x64-*.dmg`
+  # after every `npm run build:mac-x64`.
+  sha256 "0515644b0f420bc3662db99fe404804030db56ec21e70427326d8410cb38fde6"
 
-  url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}-custom.3/Codex-side-by-side-mac-x64-#{version}.dmg",
+  url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}-custom.4/Codex-mac-x64-#{version}.dmg",
       verified: "github.com/random-guy-05/oh-my-openai/releases/"
   name "Codex Desktop"
   desc "Custom Codex build with ChatGPT models, usage controls, and per-turn tokens"
@@ -34,7 +33,7 @@ cask "codex-desktop" do
       Codex Desktop is an Intel (x86_64) build — runs natively on Intel Macs
       and via Rosetta 2 on Apple Silicon.
 
-      The app is ad-hoc signed (not notarized). Quarantine is stripped
+      The app is unsigned (not notarized). Quarantine is stripped
       automatically, but if macOS still blocks launch:
         Control-click Codex.app → Open → Open
 
@@ -42,4 +41,3 @@ cask "codex-desktop" do
     EOS
   end
 end
-

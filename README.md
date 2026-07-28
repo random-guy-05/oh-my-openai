@@ -54,17 +54,16 @@ brew uninstall --zap --cask codex-desktop
 ## What makes Community Codex different (novel features)
 These are the actual features implemented in the repository (look in `scripts/` and `src/mac-x64/_asar/` for the code):
 
-1) Chat first, sticky chat behavior
-- Implements a ChatGPT‑style chat mode that is "sticky": the composer, send control, and conversation flow behave like a chat app without breaking native Codex history. Look at `scripts/_apply-sticky-chat-v43.js` and `scripts/_apply-chat-models-v37.js` for the runtime hooks and ASAR injection.
-- Sticky send: the patched send flow (`CDRStickyChatSend` and associated bridge hooks) ensures new messages are appended to the existing conversation rather than triggering navigations or undesired surface changes.
+1) Chat first, same-task behavior
+- Chat, ChatGPT Work, and Codex are local presets; switching them never swaps the sidebar, route, task ID, or native history.
+- The local Codex submitter routes Chat turns through ChatGPT Web's `startCompletionStream`; `CDRStickyChatSend` persists every Chat row and the transcript overlay renders it in the same task.
 - Background resume & handoffs are routed to a lightweight GPT-5.6 flavor (Luna Light) to resume state or fetch context without consuming the heavier model budget.
 
-2) Chat model picker mapped to AppServer models
-- The Chat mode originally used a ChatGPT catalog; Community Codex maps that catalog back to the local AppServer model picker so users can keep the familiar ChatGPT UI while running Sol/Terra/Luna models provided by the Codex backend.
-- See `scripts/_apply-chat-models-v37.js` and `scripts/_inspect-model-picker-state2.js` for how the patch extracts model picker helpers and publishes AppServer-compatible model lists.
+2) Live ChatGPT model picker
+- Chat mode reads the signed-in ChatGPT Web `models()` response as its source of truth, shows the current selectable models, and filters only explicit Codex namespaces. It does not use obsolete hard-coded fallback families.
 
 3) UI‑visible presets (Chat, ChatGPT Work, Codex) with safe semantics
-- Three presets are exposed in the selector but they intentionally do not change route, AppServer task id, transcript ownership, or history hydration. The code stores only the selected preset (`cdr-product-mode`) and updates the visible native selector for the *next* turn only.
+- Three presets are exposed in the selector without changing route, task id, transcript ownership, or history hydration. The model selector updates immediately on every mode click.
 - The selector colorization and model/effort mapping are local UI conveniences; authoritative history remains on AppServer and all thread reads/hydration use upstream `thread/read` with `includeTurns: true` (see `CUSTOM_BUILD.md` and `scripts/patch-local-canonical-mode.js`).
 
 4) Seamless chat + minimal server-side mutation
@@ -86,8 +85,8 @@ These are the actual features implemented in the repository (look in `scripts/` 
 ## Why this is a ChatGPT-style app for Codex
 Community Codex adapts the ChatGPT UX and conversation semantics into the Codex client by:
 
-- Mapping ChatGPT model listings to AppServer models, so the Chat UI selects Sol/Terra/Luna models rather than the original ChatGPT cloud catalog.
-- Providing a sticky, chat‑like composer and send flow so conversations feel like a chat app and messages append naturally.
+- Reading the real ChatGPT Web model catalog and using the ChatGPT stream transport for Chat turns.
+- Providing a same-task composer and transcript overlay so messages remain visible after task/mode switches.
 - Preserving server‑authoritative task history and thread reads (no covert server-side rewriting), so the rebuild is UX‑focused rather than invasive.
 
 In short: the repo makes Codex behave like ChatGPT's chat app while keeping data, IDs, and history consistent with the original Codex AppServer.
@@ -96,34 +95,38 @@ In short: the repo makes Codex behave like ChatGPT's chat app while keeping data
 
 ## Files to inspect (where the magic lives)
 - scripts/patch-local-canonical-mode.js — selector/composer/controller patches and durable notes
-- scripts/_apply-sticky-chat-v43.js — sticky chat assembly, installs a patched ASAR
-- scripts/_apply-chat-models-v37.js — converts ChatGPT catalog entries into AppServer model picker lists
+- scripts/_apply-26721-all-features.js — ChatGPT stream bridge, local submit route, live catalog, usage runtime
+- scripts/_apply-chat-real-v2.js — catalog-backed Chat picker behavior
+- scripts/_apply-chat-extras-render-v1.js — same-task Chat transcript overlay
 - scripts/patch-usage-controls.js — token counters, `/limits` logic
 - scripts/patch-resource-saver.js — lifecycle and detached tab defaults
 - scripts/patch-latest-models.js — keeps Sol/Terra/Luna variants surfaced
 - scripts/patch-all.js — runs all patches in a deterministic sequence
+- scripts/custom-features.js — canonical ordered feature/platform/dependency manifest
+- scripts/reapply-customizations.js — transactional one-command reapply, verification, rollback, and build workflow
 - scripts/test-*.js — local tests that verify patch invariants using Acorn-based parsing and targeted asserts
 - src/mac-x64/_asar/ — patched runtime assets after the patches are applied
 
 ---
 
 ## Quick build & verification
-Follow the repo canonical sequence (these scripts are in package.json):
+
+After updating the official Intel Codex app, reapply every customization and
+build the side-by-side app with one command:
 
 ```bash
 npm ci
-npm run sync:installed:x64
-node scripts/patch-all.js mac-x64
-npm run test:latest-models
-npm run test:local-mode
-npm run test:usage-controls
-npm run test:resource-saver
-node scripts/patch-all.js mac-x64 --check
-npm run build:mac-x64
-npm run build:side-by-side:x64
+npm run upgrade:x64
 ```
 
-If you want the side‑by‑side launcher only, `npm run build:side-by-side:x64` packages the patched runtime into the launcher (after building the runtime).
+The command snapshots the last-good `src/mac-x64`, syncs the installed official
+base, audits it as clean, applies the feature manifest, runs regression and
+post-patch verification, proves a second apply is byte-identical, and builds.
+Failures automatically restore the snapshot. Each run writes a machine-readable
+report under `out/.reapply-runs/`.
+
+Use `npm run reapply:x64` to safely reapply/verify the source already in this
+checkout, or `npm run reapply -- --plan` to inspect the exact ordered plan.
 
 ---
 
@@ -148,5 +151,3 @@ Community Codex is released under the MIT license.
 ## Contributing
 - Read the patch scripts in `scripts/` and run their `test-*.js` helpers before opening PRs.
 - Keep patches focused and reversible; all patch scripts parse target bundles with Acorn and fail closed on unexpected upstream drift.
-
-

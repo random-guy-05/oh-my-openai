@@ -1,22 +1,27 @@
-# Codex Intel 26.721.41059-custom.3
+# Codex Intel 26.721.41059-custom.4
 
 ## What's new
 
-- **ChatGPT-web model catalog** (`chat-catalog-v5`): Chat picker shows current
-  consumer ChatGPT families (proper labels, no unlabeled Instant/High, no
-  Codex Terra/Luna junk). GPT-5.5 Thinking replaced with **GPT-5.6 Sol Medium**
-  and **GPT-5.6 Sol High**.
+- **Authoritative ChatGPT model catalog**: Chat mode now consumes the signed-in
+  ChatGPT Web `models()` response directly; only explicit Codex namespaces are
+  filtered, so legitimate names such as `gpt-5.6-sol` remain selectable.
 - **Codex-style Chat picker UI** (`chat-picker-style-v1`): Chat model control
   matches Codex mode (ghost composer trigger + native dropdown + checkmarks).
+- **Real same-task Chat transport**: the local Codex submitter intercepts Chat
+  before AppServer `turn/start` and calls ChatGPT `startCompletionStream`, while
+  preserving the local task/sidebar/history identity.
+- **Full Chat history overlay** (`chat-extras-render-v1`): every persisted Chat
+  user/assistant row is rendered in the native task transcript after switching
+  modes or tasks.
 - **Work → Chat mode switch fix** (`mode-switch-work-v1`): selecting Chat from
   ChatGPT Work no longer snaps back (durable sync now preserves local Chat
   against any non-chat upstream).
 
 ## Install
 
-1. Prefer `Codex-side-by-side-mac-x64-26.721.41059.dmg` (isolated profile).
-2. Or `Codex-mac-x64-26.721.41059.dmg`.
-3. Ad-hoc signed — if Gatekeeper blocks: Control-click → Open.
+1. Download `Codex-mac-x64-26.721.41059.dmg`.
+2. Drag `Codex.app` into Applications.
+3. This build is unsigned; if Gatekeeper blocks it, Control-click → Open.
 
 Homebrew:
 
@@ -295,6 +300,4 @@ To actually mount features on the live bundle, restore a clean
 Vite-dev bundle at `src/mac-x64/_asar/webview/assets/` (one of the
 external sources named above), then run
 `node scripts/patch-all.js mac-x64` and verify the markers land.
-
-
 

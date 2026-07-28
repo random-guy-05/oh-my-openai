@@ -67,7 +67,7 @@ const FEATURES = [
   {
     id: "usage-panel",
     owner: "patch-usage-controls.js",
-    bundle: "app-initial",
+    bundle: "usage-status",
     critical: true,
     description: "Honest thread-level usage panel (exact AppServer counters)",
     present: [
@@ -116,6 +116,34 @@ const FEATURES = [
     description: "Chat-mode send interception",
     present: [["await CDRStickyChatSend(", "send hook invokes the bridge"]],
     resolves: ["CDRStickyChatSend"],
+    mounted: [],
+  },
+  {
+    id: "local-chat-submit-route",
+    owner: "_apply-26721-all-features.js",
+    bundle: "app-initial",
+    critical: true,
+    description: "Local task Chat sends use ChatGPT transport before AppServer turn/start",
+    present: [
+      ["codex-rebuild:all-features-26721-v1:local-submit-hook", "local submit hook"],
+      ["await CDRStickyChatSend(e,t", "same-task Chat bridge call"],
+      ["cdr-chat-turn-", "synthetic local turn identity"],
+    ],
+    resolves: ["CDRStickyChatSend"],
+    mounted: [],
+  },
+  {
+    id: "chat-history-render",
+    owner: "_apply-chat-extras-render-v1.js",
+    bundle: "local-conversation-thread",
+    critical: true,
+    description: "Persisted Chat rows render inside the native task transcript",
+    present: [
+      ["codex-rebuild:chat-extras-render-v1:overlay", "same-task transcript overlay"],
+      ["cdr-thread-extras:local:", "per-task Chat history store"],
+      ["CDRExtraMapped", "Chat rows mapped to native turn shape"],
+    ],
+    resolves: [],
     mounted: [],
   },
   {
@@ -180,7 +208,7 @@ const FEATURES = [
   {
     id: "task-limits",
     owner: "patch-usage-controls.js",
-    bundle: "app-initial",
+    bundle: "usage-status",
     critical: true,
     description: "Configurable task caps surfaced in the status panel",
     present: [
@@ -202,9 +230,20 @@ function assetsDir(platform) {
 function findBundle(platform, prefix) {
   const dir = assetsDir(platform);
   if (!fs.existsSync(dir)) throw new Error(`missing assets dir: ${dir}`);
-  const name = fs
-    .readdirSync(dir)
-    .find((f) => f.startsWith(prefix + "-") && f.endsWith(".js"));
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
+  const name = prefix === "usage-status"
+    ? files.find((f) => {
+        const source = fs.readFileSync(path.join(dir, f), "utf8");
+        // Keep this selector in lockstep with patch-usage-controls.js. The
+        // status panel is a separate bundle on 26.721; looking for a custom
+        // marker or a particular rendered label is not a reliable locator.
+        return source.includes("composer.statusPlain.contextValueMetadata") &&
+          source.includes("composer.statusSlashCommand.description") &&
+          source.includes("modelContextWindow") &&
+          source.includes("rateLimitRows") &&
+          source.includes("contextUsage");
+      })
+    : files.find((f) => f.startsWith(prefix + "-") && f.endsWith(".js"));
   if (!name) throw new Error(`no bundle matching "${prefix}-*.js" in ${dir}`);
   return path.join(dir, name);
 }

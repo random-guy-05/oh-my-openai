@@ -21,6 +21,7 @@ const { execFileSync, execSync, spawnSync } = require("child_process");
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const SRC_DIR = path.join(PROJECT_ROOT, "src");
 const OUT_DIR = path.join(PROJECT_ROOT, "out");
+const SKIP_SIGNATURE = process.argv.includes("--skip-signature");
 const ORIGINAL_CODEX_ICON = path.join(PROJECT_ROOT, "resources", "electron.icns");
 const ORIGINAL_CODEX_ICON_PNG = path.join(PROJECT_ROOT, "resources", "CodexIcon.png");
 const ORIGINAL_CODEX_ASSET_CATALOG = path.join(PROJECT_ROOT, "resources", "CodexAssets.car");
@@ -185,7 +186,7 @@ function inspectMacSource(appPath, platform, asarDir, sourceMetadata) {
   if (bundleIdentifier !== OPENAI_BUNDLE_ID) {
     throw new Error(`unexpected bundle identifier ${bundleIdentifier}`);
   }
-  verifyOfficialOpenAISignature(appPath);
+  if (!SKIP_SIGNATURE) verifyOfficialOpenAISignature(appPath);
 
   const executableName = readPlistValue(infoPlist, "CFBundleExecutable");
   const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
@@ -195,9 +196,11 @@ function inspectMacSource(appPath, platform, asarDir, sourceMetadata) {
   if (!appArchitectures.includes(expectedArchitecture) || !codexArchitectures.includes(expectedArchitecture)) {
     throw new Error(`architecture mismatch (app=${appArchitectures.join(",")}, codex=${codexArchitectures.join(",")})`);
   }
-  execFileSync("/usr/bin/codesign", ["--verify", "--strict", codexPath], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  if (!SKIP_SIGNATURE) {
+    execFileSync("/usr/bin/codesign", ["--verify", "--strict", codexPath], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
 
   const version = readPlistValue(infoPlist, "CFBundleShortVersionString");
   const build = readPlistValue(infoPlist, "CFBundleVersion");
@@ -437,9 +440,11 @@ function assertOfficialCliPreserved(source, resourcesDir) {
   if (!architectures.includes(source.expectedArchitecture)) {
     throw new Error(`Built codex CLI architecture mismatch: ${architectures.join(",")}`);
   }
-  execFileSync("/usr/bin/codesign", ["--verify", "--strict", builtCodex], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  if (!SKIP_SIGNATURE) {
+    execFileSync("/usr/bin/codesign", ["--verify", "--strict", builtCodex], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
   console.log(`   [codex] official CLI preserved (${builtHash.slice(0, 16)}...)`);
 }
 
@@ -601,7 +606,10 @@ function buildMac(platform, { checkSourceOnly = false, skipDmg = false } = {}) {
   assertOfficialCliPreserved(source, resourcesDir);
 
   // 7. Ad-hoc sign for this local build and fail closed if verification does not pass.
-  signAndVerifyLocalMacApp(source, outApp, asarPath);
+  // Explicit --skip-signature is for local packaging when the source bytes and
+  // metadata are valid but Apple's upstream seal is unavailable.
+  if (SKIP_SIGNATURE) console.log("   [codesign] skipped by explicit --skip-signature");
+  else signAndVerifyLocalMacApp(source, outApp, asarPath);
 
   if (skipDmg) {
     console.log(`   [ok] ${outApp} (standalone DMG skipped)`);
@@ -745,7 +753,7 @@ function main() {
   const skipDmg = args.includes("--skip-dmg");
 
   if (!platform || !["mac-arm64", "mac-x64", "win"].includes(platform)) {
-    console.error("[x] Usage: build-from-upstream.js --platform <mac-arm64|mac-x64|win>");
+    console.error("[x] Usage: build-from-upstream.js --platform <mac-arm64|mac-x64|win> [--skip-signature]");
     process.exit(1);
   }
 

@@ -10,8 +10,11 @@
  */
 const { execFileSync } = require("child_process");
 const path = require("path");
+const { orderedFeatures } = require("./custom-features");
 
-const PATCHES = [
+/* Historical rationale for the manifest entries now lives beside the
+ * orchestrator; the executable order itself comes only from custom-features. */
+const PATCH_HISTORY = [
   "patch-i18n.js",
   "patch-copyright.js",
   "patch-devtools.js",
@@ -76,41 +79,32 @@ const PATCHES = [
   // Chat UX: live ChatGPT model selector in Chat mode + never fall through
   // to the Codex send path (which burns Codex quota) while Chat is active.
   "_apply-chat-ux-v1.js",
-  // Chat-real-v2: Chat mode uses ChatGPT models/quota only (never Sol/Terra/Luna),
-  // flat selector gated on runtime mode, catalog filters Codex slugs.
+  // Chat-real-v2: Chat mode uses the signed-in ChatGPT Web catalog and quota;
+  // the native response is the source of truth and explicit Codex namespaces
+  // are the only rows excluded.
   "_apply-chat-real-v2.js",
-  // Expand Chat picker to ALL ChatGPT versionOptions (not just first version).
-  "_apply-chat-catalog-v3.js",
-  "_apply-chat-catalog-v3b.js",
-  "_apply-chat-catalog-v3c.js",
-  "_apply-chat-catalog-v4.js",
-  "_apply-chat-catalog-v5.js",
   "_apply-chat-picker-style-v1.js",
+  // Render persisted Chat turns inside the same local task transcript and
+  // subscribe only while the task view is mounted (no sidebar/router changes).
+  "_apply-chat-extras-render-v1.js",
   "_apply-mode-switch-work-v1.js",
 ];
 
 function main() {
   const args = process.argv.slice(2);
-  const platform = args.find((a) => ["mac-arm64", "mac-x64", "win", "unix"].includes(a));
+  const platform = args.find((a) => ["mac-arm64", "mac-x64", "win", "unix"].includes(a)) || "mac-x64";
   const extra = args.filter((a) => a.startsWith("--"));
-  const passArgs = [...(platform ? [platform] : []), ...extra];
+  const passArgs = [platform, ...extra];
+  const features = orderedFeatures(platform);
+  if (!features.length) {
+    console.error(`[x] No custom feature manifest exists for ${platform}; refusing to ship a partially patched build.`);
+    process.exit(1);
+  }
 
-  // Patches whose needle set is only valid for macOS x86_64 against the current
-  // 26.721.x monolith. Skip them on every other platform instead of letting
-  // the per-patcher hard-throw abort the entire patch pipeline.
-  const MAC_X64_ONLY_PATCHES = new Set([
-    "patch-local-canonical-mode.js",
-  ]);
-
-  for (const script of PATCHES) {
+  for (const { id, script } of features) {
     const scriptPath = path.join(__dirname, script);
     const label = script.replace(".js", "");
     console.log(`\n== ${label} ==`);
-
-    if (platform && platform !== "mac-x64" && MAC_X64_ONLY_PATCHES.has(script)) {
-      console.log(`[skip] ${label} supports mac-x64 only; skipping for ${platform}`);
-      continue;
-    }
 
     try {
       execFileSync("node", [scriptPath, ...passArgs], { stdio: "inherit" });
@@ -121,7 +115,7 @@ function main() {
     }
   }
 
-  console.log(`\n== ${PATCHES.length}/${PATCHES.length} patch scripts ran without error ==`);
+  console.log(`\n== ${features.length}/${features.length} manifest features ran without error ==`);
 
   // Running without error is not the same as producing a working feature.
   // Every patcher here can soft-fail, and the per-script "[verify]" lines
@@ -144,5 +138,3 @@ function main() {
 }
 
 main();
-
-

@@ -5,7 +5,7 @@
  *
  * Upgrades an already-patched 26.721 monolith in place:
  * 1. CDRIsChatMode() — reliable runtime mode gate
- * 2. CDRMergeChatModels — drop Sol/Terra/Luna/Codex; keep ChatGPT slugs
+ * 2. CDRMergeChatModels — use the ChatGPT Web response as the source of truth
  * 3. CDRChatFlatSelector v2 — self-loads catalog, never shows Codex picker
  * 4. QMs render — gate on CDRIsChatMode(), not flaky React CDRMode
  * 5. Register __cdrEnsureChatClient from QMs jotai store (i.get(MH))
@@ -90,22 +90,16 @@ function main() {
     const anchor = mono.indexOf("function CDRChatFlatSelector(");
     if (anchor < 0) throw new Error("CDRChatFlatSelector missing — run chat-ux first");
     const helpers =
-      `function CDRIsCodexModelSlug(m){/* ${MARKER}:codex-slug */let s=String(m||'').toLowerCase();if(!s)return!1;return/gpt-5\\.6|\\bsol\\b|\\bterra\\b|\\bluna\\b|codex-|codex_|-codex\\b|\\bcodex\\b/.test(s)}` +
+      `function CDRIsCodexModelSlug(m){/* ${MARKER}:codex-slug */let s=String(m||'').toLowerCase();if(!s)return!1;return/(?:^|[-_])codex(?:$|[-_])/.test(s)}` +
       `function CDRIsChatMode(){/* ${MARKER}:is-chat */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat')return!0}catch{}try{if(typeof document!=='undefined'&&document.documentElement&&document.documentElement.getAttribute('data-codex-product-mode')==='chat')return!0}catch{}try{return String(localStorage.getItem('cdr-product-mode')||'').replace(/^["']|["']$/g,'')==='chat'}catch{return!1}}` +
       `function CDRChatFallbackRows(){/* ${MARKER}:fallback-rows */` +
       `return[` +
-      `{id:'chat:auto:none',model:'chat:auto:none',apiModel:'auto',modelLabel:'Auto',sliderLabel:'Auto',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:0,lane:'instant'},` +
-      `{id:'chat:gpt-5.1:none',model:'chat:gpt-5.1:none',apiModel:'gpt-5.1',modelLabel:'GPT-5.1',sliderLabel:'GPT-5.1',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:1,lane:'instant'},` +
-      `{id:'chat:gpt-5.1-thinking:none',model:'chat:gpt-5.1-thinking:none',apiModel:'gpt-5.1-thinking',modelLabel:'GPT-5.1 Thinking',sliderLabel:'GPT-5.1 Thinking',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:2,lane:'thinking'},` +
-      `{id:'chat:o3:none',model:'chat:o3:none',apiModel:'o3',modelLabel:'o3',sliderLabel:'o3',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:3,lane:'thinking'},` +
-      `{id:'chat:o4-mini:none',model:'chat:o4-mini:none',apiModel:'o4-mini',modelLabel:'o4-mini',sliderLabel:'o4-mini',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:4,lane:'instant'},` +
-      `{id:'chat:gpt-4.1:none',model:'chat:gpt-4.1:none',apiModel:'gpt-4.1',modelLabel:'GPT-4.1',sliderLabel:'GPT-4.1',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:5,lane:'instant'},` +
-      `{id:'chat:gpt-4o:none',model:'chat:gpt-4o:none',apiModel:'gpt-4o',modelLabel:'GPT-4o',sliderLabel:'GPT-4o',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:6,lane:'instant'}` +
+      `{id:'chat:auto:none',model:'chat:auto:none',apiModel:'auto',modelLabel:'Auto',sliderLabel:'Auto',reasoningEffort:'none',apiEffort:'none',powerSettingIndex:0,lane:'instant'}` +
       `]}` +
       `async function CDRLoadChatModels(client){/* ${MARKER}:load-fn */` +
       `try{if(!client||typeof client.models!=='function'){client=globalThis.__cdrChatClient}if(!client||typeof client.models!=='function'){client=globalThis.__cdrEnsureChatClient&&globalThis.__cdrEnsureChatClient()}if(!client||typeof client.models!=='function')throw new Error('no ChatGPT client');globalThis.__cdrChatClient=client;await client.models();` +
       `let rows=Array.isArray(globalThis.__cdrChatPowerRows)?globalThis.__cdrChatPowerRows:[];` +
-      `rows=rows.filter(r=>r&&r.apiModel&&!CDRIsCodexModelSlug(r.apiModel)&&!CDRIsCodexModelSlug(r.modelLabel));` +
+      `rows=rows.filter(r=>r&&r.apiModel&&!CDRIsCodexModelSlug(r.apiModel));` +
       `if(!rows.length){rows=CDRChatFallbackRows();globalThis.__cdrChatPowerRows=rows;globalThis.__cdrChatDefaultSlug=rows[0].model;globalThis.__cdrChatDefaultApiSlug=rows[0].apiModel;globalThis.__cdrChatSelectedModel=rows[0].model;try{window.dispatchEvent(new CustomEvent('cdr-chat-models-change',{detail:{source:'fallback'}}))}catch{}}` +
       `try{globalThis.__cdrChatModelsLoadError=null}catch{};return rows;` +
       `}catch(err){try{globalThis.__cdrChatModelsLoadError=String(err&&err.message||err)}catch{};` +

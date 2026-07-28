@@ -3,11 +3,12 @@
 
 /**
  * Add Chat / Work / Codex presets to local tasks without changing routes,
- * task identity, transcript ownership, sidebar state, or transport.
+ * task identity, transcript ownership, or sidebar state. Work/Codex keep the
+ * native AppServer transport; Chat is intercepted by the ChatGPT stream bridge
+ * mounted in _apply-26721-all-features.js.
  *
- * All three presets continue through the native AppServer composer. A mode
- * switch changes only the selected preset, the effective model, and the send
- * button color.
+ * A mode switch changes only the selected preset, effective model, and send
+ * button color; it never navigates or swaps the sidebar/history source.
  *
  * Updated for 26.721 base: variable name remapping (TG→U8, EG→W8, Y→Z,
  * Dr→Ym, VO→yz, BI→L$, vW→L$, _k→XM, sae→Kac, zT→hH, Hg→oX, $→aZ),
@@ -91,7 +92,7 @@ function installLocalModeRuntime() {
     applyRoot(next);
     for (const controller of modelControllers) {
       try {
-        let CDRApply=presetSettings[next];if(next===`chat`){try{let slug=globalThis.__cdrChatDefaultSlug||globalThis.__cdrChatPickerModels?.[0]?.model;if(slug){let hit=(globalThis.__cdrChatPickerModels||[]).find(e=>e.model===slug);CDRApply={model:slug,reasoningEffort:hit?.supportedReasoningEfforts?.[0]?.reasoningEffort||`medium`}}}catch{}}const result = controller(CDRApply);
+        let CDRApply=presetSettings[next];if(next===`chat`){try{let slug=globalThis.__cdrChatSelectedModel||localStorage.getItem(`cdr-chat-model-selection`)||globalThis.__cdrChatDefaultSlug||globalThis.__cdrChatPickerModels?.[0]?.model;if(slug){let hit=(globalThis.__cdrChatPickerModels||[]).find(e=>e.model===slug);CDRApply={model:slug,reasoningEffort:hit?.supportedReasoningEfforts?.[0]?.reasoningEffort||`medium`}}}catch{}}const result = controller(CDRApply);
         if (result && typeof result.catch === "function") result.catch(() => {});
       } catch {}
     }
@@ -118,6 +119,29 @@ function installLocalModeRuntime() {
   const registerModelController = (controller) => {
     if (typeof controller !== "function") return () => {};
     modelControllers.add(controller);
+    try {
+      const current = mode();
+      let value = presetSettings[current];
+      if (current === "chat") {
+        const slug =
+          globalThis.__cdrChatSelectedModel ||
+          localStorage.getItem("cdr-chat-model-selection") ||
+          globalThis.__cdrChatDefaultSlug ||
+          globalThis.__cdrChatPickerModels?.[0]?.model;
+        if (slug) {
+          const hit = (globalThis.__cdrChatPickerModels || []).find(
+            (row) => row.model === slug,
+          );
+          value = {
+            model: slug,
+            reasoningEffort:
+              hit?.supportedReasoningEfforts?.[0]?.reasoningEffort || "medium",
+          };
+        }
+      }
+      const result = controller(value);
+      if (result && typeof result.catch === "function") result.catch(() => {});
+    } catch {}
     return () => modelControllers.delete(controller);
   };
   const backgroundModel = "gpt-5.6-luna";
@@ -492,11 +516,13 @@ function patchSelectorBundleInner(source, filePath) {
     // "chat" selection — work→chat used to snap back immediately.
     `(0,L$.useEffect)(()=>{/* codex-rebuild:mode-switch-work-v1:durable-sync */if(CDRUpstreamMode!==\`chat\`){try{if(CDRRuntime.mode(\`codex\`)===\`chat\`)return}catch{}}CDRRuntime.setMode(CDRUpstreamMode);CDRSetMode(CDRUpstreamMode)},[CDRUpstreamMode]);` +
     `/* ${SEND_MARKER} */` +
-    `(0,L$.useEffect)(()=>{try{if(typeof document===\"undefined\"||!document.querySelectorAll)return;` +
-    `document.querySelectorAll(\`button[aria-label],[role="button"][aria-label]\`)` +
-    `.forEach((el)=>{const al=String(el.getAttribute(\"aria-label\")||\"\");` +
-    `if(al===\"Send\"||al===\"Submit\"){if(!el.classList.contains(\"cdr-mode-send\"))el.classList.add(\"cdr-mode-send\");}});` +
-    `}catch{}},[CDRMode]);`;
+    `(0,L$.useEffect)(()=>{let CDRObserver=null;try{if(typeof document===\"undefined\"||!document.querySelectorAll)return;` +
+    `let CDRMarkSend=()=>document.querySelectorAll(\`button[aria-label],button[type="submit"],[role="button"][aria-label],[data-testid*="send" i]\`)` +
+    `.forEach((el)=>{const al=String(el.getAttribute(\"aria-label\")||el.getAttribute(\"title\")||el.getAttribute(\"data-testid\")||\"\");` +
+    `const form=el.closest&&el.closest(\"form\");const composerSubmit=el.getAttribute(\"type\")===\"submit\"&&form&&form.querySelector(\"textarea,[contenteditable=true]\");` +
+    `if(/send|submit/i.test(al)||composerSubmit){if(!el.classList.contains(\"cdr-mode-send\"))el.classList.add(\"cdr-mode-send\");}});` +
+    `CDRMarkSend();if(typeof MutationObserver!==\"undefined\"&&document.body){CDRObserver=new MutationObserver(CDRMarkSend);CDRObserver.observe(document.body,{childList:true,subtree:true})}` +
+    `}catch{}return()=>{try{CDRObserver&&CDRObserver.disconnect()}catch{}}},[CDRMode]);`;
   // Skip the heavy AST injection + memo-dep rewrites if a prior run
   // already wrote SEND_MARKER. Without this guard a partial-state
   // re-run would emit a duplicate `let CDRRuntime=…` (works via lexical
@@ -813,6 +839,13 @@ function patchComposerBundleInner(source, filePath) {
 }
 
 function patchContextBundle(source, filePath) {
+  if (source.includes("codex-rebuild:luna-light-context-v2")) {
+    parseBundle(source, filePath);
+    if (!source.includes("model:`gpt-5.6-luna`") || !source.includes("thinking:`low`")) {
+      throw new Error(`${relPath(filePath)} Luna Light context v2 marker is incomplete`);
+    }
+    return source;
+  }
   if (source.includes(CONTEXT_MARKER)) {
     verifyContextBundle(source, filePath);
     return source;
@@ -1082,7 +1115,7 @@ function locateTargets(platform) {
     (source) =>
       source.includes("ChatGPT conversation does not have a server id") &&
       source.includes("chatGptConversationContexts") &&
-      (source.includes("thinking:void 0") || source.includes(CONTEXT_MARKER)),
+      (source.includes("thinking:void 0") || source.includes(CONTEXT_MARKER) || source.includes("codex-rebuild:luna-light-context-v2")),
   );
   // history and threadContext bundles were used for validation in 26.715
   // but their anchor strings changed in 26.721. They are not patched, so
@@ -1476,4 +1509,3 @@ function verifyContextPatched(source) {
     source.includes(CONTEXT_MARKER) && source.includes("model:`gpt-5.6-luna`")
   );
 }
-

@@ -334,13 +334,25 @@ function testRuntime() {
     assert.strictEqual(runtime.setMode("chat"), "chat");
     assert.strictEqual(storage.get(STORE_KEY), "chat");
     assert.strictEqual(observed, "chat");
+    // The runtime is tested without a live ChatGPT /models response, so its
+    // safe pre-catalog value is Auto; once the catalog arrives setMode() must
+    // immediately push the selected ChatGPT row into the native selector.
     assert.deepStrictEqual(modelSelections, [
-      { model: "gpt-5.6-sol", reasoningEffort: "medium" },
+      { model: "gpt-5.6-sol", reasoningEffort: "high" },
+      { model: "auto", reasoningEffort: "none" },
     ]);
-    assert.strictEqual(runtime.modelForMode("chat"), "gpt-5.6-sol");
+    global.__cdrChatDefaultSlug = "chat:gpt-5.6-sol:none";
+    global.__cdrChatSelectedModel = "chat:gpt-5.6-sol:high";
+    global.__cdrChatPickerModels = [
+      { model: "chat:gpt-5.6-sol:none", supportedReasoningEfforts: [{ reasoningEffort: "medium" }] },
+      { model: "chat:gpt-5.6-sol:high", supportedReasoningEfforts: [{ reasoningEffort: "high" }] },
+    ];
+    runtime.setMode("chat");
+    assert.deepStrictEqual(modelSelections.at(-1), { model: "chat:gpt-5.6-sol:high", reasoningEffort: "high" });
+    assert.strictEqual(runtime.modelForMode("chat"), "auto");
     assert.strictEqual(runtime.modelForMode("work"), "gpt-5.6-terra");
     assert.strictEqual(runtime.modelForMode("codex"), "gpt-5.6-sol");
-    assert.strictEqual(runtime.reasoningEffortForMode("chat"), "medium");
+    assert.strictEqual(runtime.reasoningEffortForMode("chat"), "none");
     assert.strictEqual(runtime.reasoningEffortForMode("work"), "low");
     assert.strictEqual(runtime.reasoningEffortForMode("codex"), "high");
     const collaboration = {
@@ -375,8 +387,27 @@ function testRuntime() {
   }
 }
 
+function testCompiledInvariants() {
+  const assets = path.join(__dirname, "..", "src", "mac-x64", "_asar", "webview", "assets");
+  const names = fs.readdirSync(assets);
+  const main = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("app-initial-") && name.endsWith(".js"))), "utf8");
+  const home = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("home-composer-mode-toggle-") && name.endsWith(".js"))), "utf8");
+  const css = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("app-") && name.endsWith(".css"))), "utf8");
+  assert.ok(main.includes("codex-rebuild:mode-ui-invariants-v1:local-only"), "mode clicks are not local-only");
+  assert.ok(!main.includes("if(CDRM!==`chat`)p(CDRM)"), "Work/Codex still call upstream navigation");
+  assert.ok(main.includes("children:n?`ChatGPT Work`:`ChatGPT Work`"), "Work label is not ChatGPT Work");
+  assert.ok(!main.includes("children:n?(0,W8.jsx)(Z,{...G8.chatGpt})"), "Work label can still render as ChatGPT");
+  assert.ok(main.includes("let current=mode()"), "new model controllers do not synchronize immediately");
+  assert.ok(main.includes("CDRObserver=new MutationObserver(CDRMarkSend)"), "send button coloring does not survive remounts");
+  assert.ok(main.includes("CDRObserver&&CDRObserver.disconnect()"), "send button observer leaks after unmount");
+  assert.ok(main.includes("__cdrChatSelectedModel||localStorage.getItem(`cdr-chat-model-selection`)"), "Chat mode does not restore the selected Chat model");
+  assert.ok(home.includes("cdr-home-mode-toggle"), "Home Chat/Work toggle has no stable hook");
+  assert.ok(css.includes('data-codex-product-mode="chat"] .cdr-home-mode-toggle{display:none'), "Home Chat/Work toggle remains visible in Chat mode");
+}
+
 testPatches();
 testRuntime();
+testCompiledInvariants();
 console.log(
   "[ok] mode switches preserve the local task while model and send color update",
 );

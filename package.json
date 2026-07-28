@@ -32,6 +32,14 @@
     "test:resource-saver": "node scripts/test-resource-saver-patch.js",
     "test:handoff": "node scripts/test-handoff-sync.js",
     "test:turn-usage": "node scripts/test-turn-usage.js",
+    "test:chat-transport": "node scripts/test-chat-transport.js",
+    "test:reapply": "node scripts/test-reapply-manifest.js",
+    "audit:clean": "node scripts/rebase-audit.js mac-x64 --phase=clean",
+    "audit:patched": "node scripts/rebase-audit.js mac-x64 --phase=patched",
+    "audit:rebase": "node scripts/rebase-audit.js mac-x64 --phase=patched",
+    "reapply": "node scripts/reapply-customizations.js",
+    "reapply:x64": "node scripts/reapply-customizations.js --platform mac-x64",
+    "upgrade:x64": "node scripts/reapply-customizations.js --platform mac-x64 --sync-installed --build --side-by-side",
     "verify:features": "node --max-old-space-size=8192 scripts/verify-features.js mac-x64",
     "test:live-handoff": "node scripts/_live-test-handoff.js",
     "check-update": "node scripts/check-update.js",
@@ -77,4 +85,3 @@
   "codexSparkleFeedUrl": "https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml",
   "codexSparklePublicKey": "mNfr1v9t63BfgDtlw4C8lRvSY6uMggIXABDOCi3tS6k="
 }
-
