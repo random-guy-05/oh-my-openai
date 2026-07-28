@@ -3,7 +3,7 @@ cask "codex-desktop" do
   # Side-by-side DMG hash for v26.721.41059-custom.4.
   # Recompute via `shasum -a 256 out/Codex-side-by-side-mac-x64-*.dmg`
   # after every `npm run build:side-by-side:x64`.
-  sha256 "d8073207d5e8229d69a4580ecea10eccc0c90120dd6a43fe4591c7ae401045a5"
+  sha256 "e038f0ea48d4add79a7e4c01197591f0aaa946f37d212a621d10b3b82e79a1c7"
 
   url "https://github.com/random-guy-05/oh-my-openai/releases/download/v#{version}-custom.4/Codex-side-by-side-mac-x64-#{version}.dmg",
       verified: "github.com/random-guy-05/oh-my-openai/releases/"

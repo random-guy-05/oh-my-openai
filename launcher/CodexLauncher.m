@@ -181,10 +181,14 @@ static BOOL ReplaceRuntime(NSURL *payloadURL, NSURL *runtimeURL,
     return NO;
   }
 
+  #if CODEX_SKIP_RUNTIME_SIGNATURE
+  BOOL valid = YES;
+  #else
   BOOL valid = RunTool(@"/usr/bin/codesign",
                        @[@"--verify", @"--deep", @"--strict", @"--verbose=2",
                          stagingURL.path],
                        &diagnostic);
+  #endif
   if (!valid) {
     if (failure) *failure = [NSString stringWithFormat:
       @"The Codex runtime failed its integrity check.\n\n%@", diagnostic];
@@ -279,8 +283,12 @@ static NSURL *EnsureRuntime(NSURL *runtimeURL, NSURL *legacyRuntimeURL,
                                       isDirectory:&payloadIsDirectory] && payloadIsDirectory;
   BOOL hasRuntime = RuntimeExists(runtimeURL);
   BOOL matchesPayload = hasRuntime && hasPayload && RuntimeMatchesPayload(runtimeURL, payloadURL);
+  #if CODEX_SKIP_RUNTIME_SIGNATURE
+  BOOL passesIntegrityCheck = YES;
+  #else
   BOOL passesIntegrityCheck = !matchesPayload || RunTool(@"/usr/bin/codesign",
     @[@"--verify", @"--strict", runtimeURL.path], NULL);
+  #endif
   BOOL needsInstall = !hasRuntime || (hasPayload && (!matchesPayload || !passesIntegrityCheck));
   BOOL result = YES;
 
@@ -729,4 +737,3 @@ int main(int argc, const char *argv[]) {
     return 0;
   }
 }
-
