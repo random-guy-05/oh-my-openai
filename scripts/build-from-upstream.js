@@ -22,6 +22,7 @@ const PROJECT_ROOT = path.resolve(__dirname, "..");
 const SRC_DIR = path.join(PROJECT_ROOT, "src");
 const OUT_DIR = path.join(PROJECT_ROOT, "out");
 const SKIP_SIGNATURE = process.argv.includes("--skip-signature");
+const SKIP_SOURCE_SIGNATURE = process.argv.includes("--skip-source-signature");
 const ORIGINAL_CODEX_ICON = path.join(PROJECT_ROOT, "resources", "electron.icns");
 const ORIGINAL_CODEX_ICON_PNG = path.join(PROJECT_ROOT, "resources", "CodexIcon.png");
 const ORIGINAL_CODEX_ASSET_CATALOG = path.join(PROJECT_ROOT, "resources", "CodexAssets.car");
@@ -186,7 +187,7 @@ function inspectMacSource(appPath, platform, asarDir, sourceMetadata) {
   if (bundleIdentifier !== OPENAI_BUNDLE_ID) {
     throw new Error(`unexpected bundle identifier ${bundleIdentifier}`);
   }
-  if (!SKIP_SIGNATURE) verifyOfficialOpenAISignature(appPath);
+  if (!SKIP_SIGNATURE && !SKIP_SOURCE_SIGNATURE) verifyOfficialOpenAISignature(appPath);
 
   const executableName = readPlistValue(infoPlist, "CFBundleExecutable");
   const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
@@ -753,7 +754,7 @@ function main() {
   const skipDmg = args.includes("--skip-dmg");
 
   if (!platform || !["mac-arm64", "mac-x64", "win"].includes(platform)) {
-    console.error("[x] Usage: build-from-upstream.js --platform <mac-arm64|mac-x64|win> [--skip-signature]");
+    console.error("[x] Usage: build-from-upstream.js --platform <mac-arm64|mac-x64|win> [--skip-source-signature|--skip-signature]");
     process.exit(1);
   }
 
