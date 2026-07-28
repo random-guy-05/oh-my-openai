@@ -1,3 +1,38 @@
+# Codex Intel 26.721.41059-custom.5
+
+## What's new
+
+- **Restored stable same-task modes**: Chat, ChatGPT Work, and Codex remain on
+  the same native task/sidebar with full conversation history preserved.
+- **Smooth Chat sends** (`chat-stream-lifecycle-v1`): new Chat rows render in
+  the currently mounted task immediately, stale IndexedDB snapshots cannot
+  hide them, and terminal Chat events restore the Send button promptly.
+- **React startup-loop fix**: model-controller registration no longer changes
+  React state during effect mount, preventing the maximum-update-depth Oops
+  screen while mode changes still update model and effort immediately.
+- **Complete side-by-side runtime**: the launcher reads the payload's declared
+  executable, preserves the official runtime build and CLI, and verifies the
+  staged payload before an atomic, rollback-safe install.
+- **Release hardening**: 12 behavioural feature gates, transport/history/
+  handoff/usage tests, packaged-ASAR verification, and deterministic reapply
+  auditing are included in the source tree.
+
+## Install
+
+1. Prefer `Codex-side-by-side-mac-x64-26.721.41059.dmg` for the isolated,
+   rollback-safe custom profile.
+2. Or use `Codex-mac-x64-26.721.41059.dmg` for the standard install.
+3. Drag `Codex.app` into Applications. If Gatekeeper blocks it, Control-click
+   the app and choose Open.
+
+Homebrew:
+
+```sh
+brew install --cask https://raw.githubusercontent.com/random-guy-05/oh-my-openai/main/Casks/codex-desktop.rb
+```
+
+---
+
 # Codex Intel 26.721.41059-custom.4
 
 ## What's new
