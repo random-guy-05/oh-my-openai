@@ -19,9 +19,9 @@
 
 ## Install
 
-1. Download `Codex-mac-x64-26.721.41059.dmg`.
-2. Drag `Codex.app` into Applications.
-3. This build is unsigned; if Gatekeeper blocks it, Control-click → Open.
+1. Prefer `Codex-side-by-side-mac-x64-26.721.41059.dmg` for an isolated profile.
+2. Or use `Codex-mac-x64-26.721.41059.dmg` for the standard install.
+3. Drag `Codex.app` into Applications. If Gatekeeper blocks it, Control-click → Open.
 
 Homebrew:
 
@@ -300,4 +300,3 @@ To actually mount features on the live bundle, restore a clean
 Vite-dev bundle at `src/mac-x64/_asar/webview/assets/` (one of the
 external sources named above), then run
 `node scripts/patch-all.js mac-x64` and verify the markers land.
-

@@ -193,6 +193,7 @@ function parseArguments(argv) {
   let runtimeApp = path.join(OUT_DIR, "mac-x64", "Codex.app");
   let skipDmg = false;
   let skipPayload = false;
+  let skipSignature = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -206,6 +207,8 @@ function parseArguments(argv) {
       skipDmg = true;
     } else if (argument === "--skip-payload") {
       skipPayload = true;
+    } else if (argument === "--skip-signature") {
+      skipSignature = true;
     } else {
       throw new Error(`Unknown argument: ${argument}`);
     }
@@ -214,7 +217,7 @@ function parseArguments(argv) {
   if (skipPayload && !skipDmg) {
     throw new Error("--skip-payload requires --skip-dmg; a thin launcher is not a standalone installer");
   }
-  return { runtimeApp: path.resolve(runtimeApp), skipDmg, skipPayload };
+  return { runtimeApp: path.resolve(runtimeApp), skipDmg, skipPayload, skipSignature };
 }
 
 function main() {
@@ -222,7 +225,7 @@ function main() {
     throw new Error("The side-by-side macOS build must run on macOS");
   }
 
-  const { runtimeApp, skipDmg, skipPayload } = parseArguments(process.argv.slice(2));
+  const { runtimeApp, skipDmg, skipPayload, skipSignature } = parseArguments(process.argv.slice(2));
   const sourceInfo = path.join(runtimeApp, "Contents", "Info.plist");
   const sourceExecutable = path.join(runtimeApp, "Contents", "MacOS", "ChatGPT");
   const sourceIcon = path.join(runtimeApp, "Contents", "Resources", "electron.icns");
@@ -243,7 +246,8 @@ function main() {
     throw new Error(`Unexpected source runtime bundle identifier: ${sourceRuntimeId}`);
   }
   requireArchitecture(sourceExecutable, "x86_64", "Codex runtime");
-  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", runtimeApp]);
+  if (skipSignature) console.log("   [codesign] source verification skipped by explicit --skip-signature");
+  else run("/usr/bin/codesign", ["--verify", "--deep", "--strict", runtimeApp]);
   run("/usr/bin/codesign", ["--verify", "--strict", sourceCli]);
 
   const version = plistValue(sourceInfo, "CFBundleShortVersionString");
@@ -327,7 +331,9 @@ function main() {
       "--force", "--sign", "-", "--timestamp=none", "--options", "runtime",
       "--entitlements", sourceEntitlements, uniqueRuntimeApp,
     ]);
-    run("/usr/bin/codesign", ["--verify", "--deep", "--strict", uniqueRuntimeApp]);
+    if (!skipSignature) {
+      run("/usr/bin/codesign", ["--verify", "--deep", "--strict", uniqueRuntimeApp]);
+    }
     run("/usr/bin/codesign", ["--verify", "--strict", uniqueRuntimeCli]);
     extractEntitlements(uniqueRuntimeApp, signedEntitlements);
 
