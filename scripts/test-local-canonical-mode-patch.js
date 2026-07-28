@@ -328,6 +328,11 @@ function testRuntime() {
     const unregisterModelController = runtime.registerModelController(
       (settings) => modelSelections.push(settings),
     );
+    assert.deepStrictEqual(
+      modelSelections,
+      [],
+      "registering a React model controller must not synchronously set state",
+    );
     const unsubscribe = runtime.subscribe((mode) => {
       observed = mode;
     });
@@ -338,7 +343,6 @@ function testRuntime() {
     // safe pre-catalog value is Auto; once the catalog arrives setMode() must
     // immediately push the selected ChatGPT row into the native selector.
     assert.deepStrictEqual(modelSelections, [
-      { model: "gpt-5.6-sol", reasoningEffort: "high" },
       { model: "auto", reasoningEffort: "none" },
     ]);
     global.__cdrChatDefaultSlug = "chat:gpt-5.6-sol:none";
@@ -397,7 +401,12 @@ function testCompiledInvariants() {
   assert.ok(!main.includes("if(CDRM!==`chat`)p(CDRM)"), "Work/Codex still call upstream navigation");
   assert.ok(main.includes("children:n?`ChatGPT Work`:`ChatGPT Work`"), "Work label is not ChatGPT Work");
   assert.ok(!main.includes("children:n?(0,W8.jsx)(Z,{...G8.chatGpt})"), "Work label can still render as ChatGPT");
-  assert.ok(main.includes("let current=mode()"), "new model controllers do not synchronize immediately");
+  assert.ok(
+    main.includes('modelControllers.add(controller);\n    return () => modelControllers.delete(controller);'),
+    "model controllers are not registered with the render-safe implementation",
+  );
+  assert.ok(!main.includes("const current = mode();"), "controller registration still synchronously sets React state");
+  assert.ok(!main.includes("let current=mode()"), "minified recursive controller registration remains");
   assert.ok(main.includes("CDRObserver=new MutationObserver(CDRMarkSend)"), "send button coloring does not survive remounts");
   assert.ok(main.includes("CDRObserver&&CDRObserver.disconnect()"), "send button observer leaks after unmount");
   assert.ok(main.includes("__cdrChatSelectedModel||localStorage.getItem(`cdr-chat-model-selection`)"), "Chat mode does not restore the selected Chat model");

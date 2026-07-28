@@ -46,7 +46,23 @@ function functionContaining(source, marker) {
   return best;
 }
 
+function normalizeModelControllerRegistration(source) {
+  const safe = `const registerModelController = (controller) => {
+    if (typeof controller !== "function") return () => {};
+    modelControllers.add(controller);
+    return () => modelControllers.delete(controller);
+  };`;
+  const formatted = /const registerModelController = \(controller\) => \{[\s\S]*?^  \};(?=\n  const backgroundModel = )/gm;
+  const matches = source.match(formatted) || [];
+  if (matches.length > 0) source = source.replace(formatted, safe);
+  if (!source.includes(safe)) {
+    throw new Error("safe model controller registration anchor missing");
+  }
+  return source;
+}
+
 function patchMain(source) {
+  source = normalizeModelControllerRegistration(source);
   if (source.includes(`${MARKER}:applied`) && source.includes("CDRObserver=new MutationObserver(CDRMarkSend)")) return source;
 
   const navigationOld = "onModeSelect:(CDRM)=>{CDRSetMode(CDRM);CDRRuntime.setMode(CDRM);if(CDRM!==`chat`)p(CDRM)}";
@@ -59,21 +75,6 @@ function patchMain(source) {
   const selectedOld = "let slug=globalThis.__cdrChatDefaultSlug||globalThis.__cdrChatPickerModels?.[0]?.model";
   const selectedNew = "let slug=globalThis.__cdrChatSelectedModel||localStorage.getItem(`cdr-chat-model-selection`)||globalThis.__cdrChatDefaultSlug||globalThis.__cdrChatPickerModels?.[0]?.model";
   if (source.includes(selectedOld)) source = source.split(selectedOld).join(selectedNew);
-
-  const registerOld = `const registerModelController = (controller) => {
-    if (typeof controller !== "function") return () => {};
-    modelControllers.add(controller);
-    return () => modelControllers.delete(controller);
-  };`;
-  const registerNew = `const registerModelController = (controller) => {
-    if (typeof controller !== "function") return () => {};
-    modelControllers.add(controller);
-    try { let current=mode(); let value=presetSettings[current]; if(current===\`chat\`){let slug=globalThis.__cdrChatSelectedModel||localStorage.getItem(\`cdr-chat-model-selection\`)||globalThis.__cdrChatDefaultSlug||globalThis.__cdrChatPickerModels?.[0]?.model;if(slug){let hit=(globalThis.__cdrChatPickerModels||[]).find(row=>row.model===slug);value={model:slug,reasoningEffort:hit?.supportedReasoningEfforts?.[0]?.reasoningEffort||\`medium\`}}} let result=controller(value); if(result&&typeof result.catch===\`function\`)result.catch(()=>{}); } catch {}
-    return () => modelControllers.delete(controller);
-  };`;
-  const registerCount = source.split(registerOld).length - 1;
-  if (registerCount > 0) source = source.split(registerOld).join(registerNew);
-  else if (!source.includes("let current=mode()")) throw new Error("model controller registration anchor missing");
 
   const sendOld = `(0,L$.useEffect)(()=>{try{if(typeof document==="undefined"||!document.querySelectorAll)return;document.querySelectorAll(\`button[aria-label],[role="button"][aria-label]\`).forEach((el)=>{const al=String(el.getAttribute("aria-label")||"");if(al==="Send"||al==="Submit"){if(!el.classList.contains("cdr-mode-send"))el.classList.add("cdr-mode-send");}});}catch{}},[CDRMode]);`;
   const sendNew = `(0,L$.useEffect)(()=>{let CDRObserver=null;try{if(typeof document==="undefined"||!document.querySelectorAll)return;let CDRMarkSend=()=>document.querySelectorAll(\`button[aria-label],button[type="submit"],[role="button"][aria-label],[data-testid*="send" i]\`).forEach((el)=>{const al=String(el.getAttribute("aria-label")||el.getAttribute("title")||el.getAttribute("data-testid")||"");const form=el.closest&&el.closest("form");const composerSubmit=el.getAttribute("type")==="submit"&&form&&form.querySelector("textarea,[contenteditable=true]");if(/send|submit/i.test(al)||composerSubmit){if(!el.classList.contains("cdr-mode-send"))el.classList.add("cdr-mode-send");}});CDRMarkSend();if(typeof MutationObserver!=="undefined"&&document.body){CDRObserver=new MutationObserver(CDRMarkSend);CDRObserver.observe(document.body,{childList:true,subtree:true})}}catch{}return()=>{try{CDRObserver&&CDRObserver.disconnect()}catch{}}},[CDRMode]);`;

@@ -29,6 +29,7 @@ const FEATURES = Object.freeze([
   { id: "chat-real", script: "_apply-chat-real-v2.js", platforms: ["mac-x64"], dependsOn: ["chat-ux"] },
   { id: "chat-picker-style", script: "_apply-chat-picker-style-v1.js", platforms: ["mac-x64"], dependsOn: ["chat-real"] },
   { id: "chat-history-overlay", script: "_apply-chat-extras-render-v1.js", platforms: ["mac-x64"], dependsOn: ["all-features-26721"] },
+  { id: "chat-stream-lifecycle", script: "_apply-chat-stream-lifecycle-v1.js", platforms: ["mac-x64"], dependsOn: ["chat-ux", "chat-history-overlay", "handoff-sync"] },
   { id: "mode-switch-work", script: "_apply-mode-switch-work-v1.js", platforms: ["mac-x64"], dependsOn: ["local-canonical-mode"] },
   { id: "luna-context", script: "_apply-luna-context-v2.js", platforms: ["mac-x64"], dependsOn: ["handoff-sync"] },
   { id: "mode-ui-invariants", script: "_apply-mode-ui-invariants-v1.js", platforms: ["mac-x64"], dependsOn: ["mode-switch-work", "chat-real", "luna-context"] },

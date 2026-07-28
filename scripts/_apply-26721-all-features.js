@@ -171,7 +171,7 @@ const JSX = findJsxAlias(mono);
 const SEND_FN = findSendFunction(mono);
 const SEND_ANCHOR = `async function ${SEND_FN}(e,{attachments:`;
 const CHAT_UPSERT_V0 = "let upsert=turn=>{try{let rows=JSON.parse(localStorage.getItem(extrasKey)||'[]');if(!Array.isArray(rows))rows=[];let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);localStorage.setItem(extrasKey,JSON.stringify(rows));notify();return val.id}catch{return turn.id||null}};";
-const CHAT_UPSERT_V1 = "let historyStore=()=>{if(globalThis.__cdrChatHistoryStore)return globalThis.__cdrChatHistoryStore;let open=()=>new Promise((resolve,reject)=>{let req=indexedDB.open('cdr-chat-history-v1',1);req.onupgradeneeded=()=>{let db=req.result;if(!db.objectStoreNames.contains('threads'))db.createObjectStore('threads')};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)});let api={load:key=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readonly'),req=tx.objectStore('threads').get(key);req.onsuccess=()=>resolve(Array.isArray(req.result)?req.result:[]);req.onerror=()=>reject(req.error)})),save:(key,rows)=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readwrite');tx.objectStore('threads').put(rows,key);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)}))};globalThis.__cdrChatHistoryStore=api;return api};let durableRows=await historyStore().load(extrasKey).catch(()=>[]);let upsert=turn=>{let rows=Array.isArray(durableRows)?durableRows:[];if(!rows.length){try{rows=JSON.parse(localStorage.getItem(extrasKey)||'[]')}catch{}if(!Array.isArray(rows))rows=[]}let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);durableRows=rows;try{localStorage.setItem(extrasKey,JSON.stringify(rows.slice(-100)))}catch{}try{historyStore().save(extrasKey,rows).catch(()=>{})}catch{}notify();return val.id};";
+const CHAT_UPSERT_V1 = "let historyStore=()=>{if(globalThis.__cdrChatHistoryStore)return globalThis.__cdrChatHistoryStore;let open=()=>new Promise((resolve,reject)=>{let req=indexedDB.open('cdr-chat-history-v1',1);req.onupgradeneeded=()=>{let db=req.result;if(!db.objectStoreNames.contains('threads'))db.createObjectStore('threads')};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)});let api={load:key=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readonly'),req=tx.objectStore('threads').get(key);req.onsuccess=()=>resolve(Array.isArray(req.result)?req.result:[]);req.onerror=()=>reject(req.error)})),save:(key,rows)=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readwrite');tx.objectStore('threads').put(rows,key);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)}))};globalThis.__cdrChatHistoryStore=api;return api};let durableRows=await historyStore().load(extrasKey).catch(()=>[]);let upsert=turn=>{let rows=Array.isArray(durableRows)?durableRows:[];if(!rows.length){try{rows=JSON.parse(localStorage.getItem(extrasKey)||'[]')}catch{}if(!Array.isArray(rows))rows=[]}let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);durableRows=rows;try{localStorage.setItem(extrasKey,JSON.stringify(rows.slice(-100)))}catch{}try{historyStore().save(extrasKey,rows).catch(()=>{})}catch{}notify(rows);return val.id};";
 console.log(`[detect] React hooks/JSX alias: ${REACT}, JSX alias: ${JSX}`);
 console.log(`[detect] Send function: ${SEND_FN}`);
 const CHAT_UPSERT_V1_GLOBAL = CHAT_UPSERT_V1.replaceAll("indexedDB.open", "globalThis.indexedDB.open");
@@ -323,7 +323,7 @@ let text=String(textOf(n&&n.input)||'').trim();
 if(!text)return'absorbed';
 let key=String(t||'').includes(':')?String(t):'local:'+t;
 let extrasKey='cdr-thread-extras:'+key;
-let notify=()=>{try{window.dispatchEvent(new CustomEvent('cdr-thread-extras-change',{detail:{key}}))}catch{}};
+let notify=rows=>{try{window.dispatchEvent(new CustomEvent('cdr-thread-extras-change',{detail:{key,rows:Array.isArray(rows)?rows:null}}))}catch{}};
 ${CHAT_UPSERT_V1_GLOBAL}
 upsert({role:'user',text:text,source:'chat'});
 let client=null;
@@ -373,8 +373,9 @@ await new Promise((resolve,reject)=>{
 let settled=!1;
 let timer=setTimeout(()=>{if(!settled){settled=!0;reject(new Error('Chat response timed out after 120s'))}},12e4);
 let done=fn=>v=>{if(settled)return;settled=!0;clearTimeout(timer);fn(v)};
+let finish=done(()=>resolve());
 try{
-client.startCompletionStream({
+Promise.resolve(client.startCompletionStream({
 request:{
 action:'next',
 client_prepare_state:'sent',
@@ -387,10 +388,10 @@ timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
 timezone_offset_min:new Date().getTimezoneOffset()
 },
 onUpdate:u=>{try{if(!u)return;if(typeof u==='string'){assistant+=u;return}let msg=u.message||u;if(msg&&msg.content&&Array.isArray(msg.content.parts)){let snap=msg.content.parts.map(textOf).join('');if(snap){assistant=snap;scheduleFlush()}}else if(typeof u.text==='string'){assistant+=u.text;scheduleFlush()}else if(typeof u.delta==='string'){assistant+=u.delta;scheduleFlush()}}catch{}},
-onEvent:ev=>{try{let d=ev&&ev.data;if(!d)return;if(typeof d==='string'){try{d=JSON.parse(d)}catch{return}}let cid=d.conversation_id||d.conversationId;if(cid)seenConv=cid;if(d.message&&d.message.id)nextParent=d.message.id;let parts=d.message&&d.message.content&&d.message.content.parts;if(Array.isArray(parts)){let snap=parts.map(textOf).join('');if(snap){assistant=snap;scheduleFlush()}}}catch{}},
-onComplete:done(()=>resolve()),
+onEvent:ev=>{try{let d=ev&&ev.data;if(!d)return;if(typeof d==='string'){try{d=JSON.parse(d)}catch{return}}let cid=d.conversation_id||d.conversationId;if(cid)seenConv=cid;if(d.message&&d.message.id)nextParent=d.message.id;let parts=d.message&&d.message.content&&d.message.content.parts;if(Array.isArray(parts)){let snap=parts.map(textOf).join('');if(snap){assistant=snap;scheduleFlush()}}let terminal=d.type==='complete'||d.type==='done'||d.message&&d.message.end_turn===true||d.message&&(['completed','finished_successfully'].includes(d.message.status));if(terminal)queueMicrotask(()=>finish())}catch{}},
+onComplete:finish,
 onError:done(err=>reject(err&&err.error?err.error:err))
-});
+})).catch(done(reject));
 }catch(err){done(reject)(err)}
 });
 flush();

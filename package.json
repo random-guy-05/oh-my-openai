@@ -41,6 +41,7 @@
     "reapply:x64": "node scripts/reapply-customizations.js --platform mac-x64",
     "upgrade:x64": "node scripts/reapply-customizations.js --platform mac-x64 --sync-installed --build --side-by-side",
     "verify:features": "node --max-old-space-size=8192 scripts/verify-features.js mac-x64",
+    "verify:packaged-runtime": "node scripts/verify-packaged-runtime.js",
     "test:live-handoff": "node scripts/_live-test-handoff.js",
     "check-update": "node scripts/check-update.js",
     "bump-version": "node scripts/bump-version.js",

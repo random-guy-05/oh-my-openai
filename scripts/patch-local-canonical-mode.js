@@ -119,29 +119,6 @@ function installLocalModeRuntime() {
   const registerModelController = (controller) => {
     if (typeof controller !== "function") return () => {};
     modelControllers.add(controller);
-    try {
-      const current = mode();
-      let value = presetSettings[current];
-      if (current === "chat") {
-        const slug =
-          globalThis.__cdrChatSelectedModel ||
-          localStorage.getItem("cdr-chat-model-selection") ||
-          globalThis.__cdrChatDefaultSlug ||
-          globalThis.__cdrChatPickerModels?.[0]?.model;
-        if (slug) {
-          const hit = (globalThis.__cdrChatPickerModels || []).find(
-            (row) => row.model === slug,
-          );
-          value = {
-            model: slug,
-            reasoningEffort:
-              hit?.supportedReasoningEfforts?.[0]?.reasoningEffort || "medium",
-          };
-        }
-      }
-      const result = controller(value);
-      if (result && typeof result.catch === "function") result.catch(() => {});
-    } catch {}
     return () => modelControllers.delete(controller);
   };
   const backgroundModel = "gpt-5.6-luna";

@@ -67,52 +67,6 @@ function sha256(filePath) {
   return hash.digest("hex");
 }
 
-function computeAsarHeaderHash(asarPath) {
-  const buf = fs.readFileSync(asarPath);
-  const headerSize = buf.readUInt32LE(12);
-  const header = buf.slice(16, 16 + headerSize);
-  return crypto.createHash("sha256").update(header).digest("hex");
-}
-
-function updateAsarIntegrity(asarPath, infoPlistPath) {
-  const newHash = computeAsarHeaderHash(asarPath);
-  execFileSync("/usr/bin/plutil", [
-    "-replace", "ElectronAsarIntegrity.Resources/app\\.asar.hash", "-string", newHash, infoPlistPath,
-  ]);
-  execFileSync("/usr/bin/plutil", [
-    "-replace", "ElectronAsarIntegrity.Resources/app\\.asar.algorithm", "-string", "SHA256", infoPlistPath,
-  ]);
-}
-
-function patchRuntimeAsarPackageName(runtimeApp, temporaryDirectory) {
-  const resourcesDir = path.join(runtimeApp, "Contents", "Resources");
-  const asarPath = path.join(resourcesDir, "app.asar");
-  const extractDir = path.join(temporaryDirectory, "asar-extract");
-  fs.mkdirSync(extractDir, { recursive: true });
-
-  execFileSync("npx", ["asar", "extract", asarPath, extractDir], { stdio: "pipe" });
-
-  const packageJsonPath = path.join(extractDir, "package.json");
-  if (!fs.existsSync(packageJsonPath)) {
-    throw new Error("Could not find package.json inside app.asar");
-  }
-  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
-  const originalName = pkg.name;
-  pkg.name = "openai-codex-electron-sxs";
-  fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
-
-  const preCodexHash = sha256(path.join(resourcesDir, "codex"));
-  execFileSync("npx", ["asar", "pack", extractDir, asarPath], { stdio: "pipe" });
-  if (sha256(path.join(resourcesDir, "codex")) !== preCodexHash) {
-    throw new Error("ASAR repack changed the official Codex CLI bytes");
-  }
-
-  const infoPlistPath = path.join(runtimeApp, "Contents", "Info.plist");
-  updateAsarIntegrity(asarPath, infoPlistPath);
-
-  console.log(`   [runtime] patched ASAR package.json name: ${originalName} -> ${pkg.name}`);
-}
-
 function runtimeContentHash(runtimeApp, infoPath) {
   const hash = crypto.createHash("sha256");
   const excluded = new Set([
@@ -248,7 +202,10 @@ function main() {
 
   const version = plistValue(sourceInfo, "CFBundleShortVersionString");
   const build = plistValue(sourceInfo, "CFBundleVersion");
-  const customBuild = /^\d+$/.test(build) ? `${build}.13` : build;
+  // ChatGPT's web shell validates the native client build number. Keep the
+  // exact upstream value; side-by-side updates are keyed by bundle identity
+  // plus CodexRebuildContentSHA256, not by inventing a build suffix.
+  const customBuild = build;
   const sourceCliHash = sha256(sourceCli);
   const outputRoot = path.join(OUT_DIR, "side-by-side-mac-x64");
   const runtimeOutputRoot = path.join(OUT_DIR, "side-by-side-runtime-mac-x64");
@@ -279,11 +236,13 @@ function main() {
     extractEntitlements(runtimeApp, sourceEntitlements);
     run("/usr/bin/ditto", [runtimeApp, uniqueRuntimeApp]);
 
-    // Patch the ASAR package.json name so the side-by-side runtime does not
-    // share a Mach port / named socket with the official ChatGPT app. Both use
-    // "openai-codex-electron", which causes the runtime to fail with
-    // "Channel could not return listener port" when ChatGPT is running.
-    patchRuntimeAsarPackageName(uniqueRuntimeApp, temporaryDirectory);
+    // Preserve the upstream ASAR package identity. The renderer uses it to
+    // select Codex routes and changing it makes AppRoutes throw during startup.
+    // Side-by-side isolation is provided by the private bundle identifier,
+    // renamed executable, CODEX_HOME, and explicit Electron user-data path.
+
+    fs.renameSync(path.join(uniqueRuntimeApp, "Contents", "MacOS", "ChatGPT"),
+      uniqueRuntimeExecutable);
 
     fs.renameSync(path.join(uniqueRuntimeApp, "Contents", "MacOS", "ChatGPT"),
       uniqueRuntimeExecutable);

@@ -42,14 +42,17 @@ const patchedChecks = [
   [mono, "codex-rebuild:all-features-26721-v1:local-submit-hook", "local Chat submit route"],
   [mono, "CDRStickyChatSend", "Chat bridge"],
   [mono, "client.startCompletionStream({", "ChatGPT stream transport"],
+  [mono, "d.message.end_turn===true", "Chat terminal lifecycle"],
+  [mono, "detail:{key,rows:Array.isArray(rows)?rows:null}", "immediate Chat row publication"],
   [mono, "CDRMergeChatModels", "live ChatGPT catalog"],
   [mono, "/(?:^|[-_])codex(?:$|[-_])/", "explicit Codex model filter"],
   [local, "codex-rebuild:chat-extras-render-v1:overlay", "same-task history overlay"],
   [local, "CDRExtraMapped", "Chat rows mapped to native turns"],
   [local, "__cdrChatHistoryRenderCache", "history render cache"],
+  [local, "CDRDurableLast>=CDRLocalLast", "stale Chat history guard"],
   [mono, "codex-rebuild:mode-ui-invariants-v1:local-only", "local-only preset switching"],
   [mono, "children:n?`ChatGPT Work`:`ChatGPT Work`", "ChatGPT Work label"],
-  [mono, "let current=mode()", "immediate model synchronization"],
+  [mono, "modelControllers.add(controller);\n    return () => modelControllers.delete(controller);", "render-safe model controller registration"],
   [mono, "CDRObserver=new MutationObserver(CDRMarkSend)", "send-button remount coloring"],
   [home, "cdr-home-mode-toggle", "Home mode toggle hook"],
   [css, 'data-codex-product-mode="chat"] .cdr-home-mode-toggle{display:none', "Chat-only Home composer"],
@@ -78,6 +81,7 @@ if (phase === "clean") {
   }
   if (mono.includes("P_a(await this.request.getModelsResponse())")) failures.push("native catalog call was not replaced");
   if (mono.includes("if(CDRM!==`chat`)p(CDRM)")) failures.push("Work/Codex preset still calls upstream navigation");
+  if (mono.includes("const current = mode();") || mono.includes("let current=mode()")) failures.push("model controller registration can recurse during React effect mount");
   if (local.includes("if(!CDRRenderHasGap)")) failures.push("virtualized transcript gap can hide Chat history");
 }
 try {

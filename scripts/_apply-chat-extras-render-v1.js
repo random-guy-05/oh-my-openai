@@ -72,7 +72,7 @@ function findThreadComponent(source, file) {
 const OVERLAY = String.raw`/* ${MARKER}:overlay */
 let [CDRExtraTick,CDRSetExtraTick]=(0,NO.useState)(0);
 let [CDRDurableRows,CDRSetDurableRows]=(0,NO.useState)(null);
-(0,NO.useEffect)(()=>{let CDRActive=!0,CDRLoadDurable=()=>{try{let CDRRequest=globalThis.indexedDB.open('cdr-chat-history-v1',1);CDRRequest.onupgradeneeded=()=>{let CDRDb=CDRRequest.result;if(!CDRDb.objectStoreNames.contains('threads'))CDRDb.createObjectStore('threads')};CDRRequest.onsuccess=()=>{try{let CDRGet=CDRRequest.result.transaction('threads','readonly').objectStore('threads').get('cdr-thread-extras:local:'+e);CDRGet.onsuccess=()=>{if(CDRActive&&Array.isArray(CDRGet.result))CDRSetDurableRows(CDRGet.result)}}catch{}}}catch{}};let CDROnExtras=()=>{CDRSetExtraTick(CDRValue=>CDRValue+1);CDRLoadDurable()};CDRLoadDurable();try{window.addEventListener('cdr-thread-extras-change',CDROnExtras);return()=>{CDRActive=!1;window.removeEventListener('cdr-thread-extras-change',CDROnExtras)}}catch{return()=>{CDRActive=!1}}},[e]);
+(0,NO.useEffect)(()=>{let CDRActive=!0,CDRKey='local:'+e,CDRLoadDurable=()=>{try{let CDRRequest=globalThis.indexedDB.open('cdr-chat-history-v1',1);CDRRequest.onupgradeneeded=()=>{let CDRDb=CDRRequest.result;if(!CDRDb.objectStoreNames.contains('threads'))CDRDb.createObjectStore('threads')};CDRRequest.onsuccess=()=>{try{let CDRGet=CDRRequest.result.transaction('threads','readonly').objectStore('threads').get('cdr-thread-extras:'+CDRKey);CDRGet.onsuccess=()=>{if(CDRActive&&Array.isArray(CDRGet.result))CDRSetDurableRows(CDRGet.result)}}catch{}}}catch{}};let CDROnExtras=CDREvent=>{let CDRDetail=CDREvent?.detail;if(CDRDetail?.key&&CDRDetail.key!==CDRKey)return;if(Array.isArray(CDRDetail?.rows))CDRSetDurableRows(CDRDetail.rows);else CDRLoadDurable();CDRSetExtraTick(CDRValue=>CDRValue+1)};CDRLoadDurable();try{window.addEventListener('cdr-thread-extras-change',CDROnExtras);return()=>{CDRActive=!1;window.removeEventListener('cdr-thread-extras-change',CDROnExtras)}}catch{return()=>{CDRActive=!1}}},[e]);
 void CDRExtraTick;
 try{
   let CDRExtraKey='cdr-thread-extras:local:'+e,CDRExtraRaw=localStorage.getItem(CDRExtraKey)||'[]';
@@ -82,7 +82,7 @@ try{
     CDRExtraCache={key:CDRExtraKey,raw:CDRExtraRaw,rows:CDRParsed,mapped:null};
     globalThis.__cdrChatHistoryRenderCache=CDRExtraCache;
   }
-  if(Array.isArray(CDRDurableRows)&&CDRExtraCache.rows!==CDRDurableRows){CDRExtraCache={...CDRExtraCache,rows:CDRDurableRows,mapped:null};globalThis.__cdrChatHistoryRenderCache=CDRExtraCache}
+  if(Array.isArray(CDRDurableRows)&&CDRExtraCache.rows!==CDRDurableRows){let CDRLocalLast=Number(CDRExtraCache.rows.at(-1)?.ts)||0,CDRDurableLast=Number(CDRDurableRows.at(-1)?.ts)||0;if(!CDRExtraCache.rows.length||CDRDurableLast>=CDRLocalLast){CDRExtraCache={...CDRExtraCache,rows:CDRDurableRows,mapped:null};globalThis.__cdrChatHistoryRenderCache=CDRExtraCache}}
   let CDRExtraRows=CDRExtraCache.rows;
   if(Array.isArray(CDRExtraRows)&&CDRExtraRows.length){
     let CDRExtraMapped=CDRExtraCache.mapped||(CDRExtraCache.mapped=CDRExtraRows.map((CDRRow,CDRIndex)=>{
@@ -107,6 +107,8 @@ function patch(source, file) {
     if (
       source.includes("__cdrChatHistoryRenderCache") &&
       source.includes("CDRSetDurableRows") &&
+      source.includes("CDRDetail?.rows") &&
+      source.includes("CDRDurableLast>=CDRLocalLast") &&
       !source.includes("if(!CDRRenderHasGap)")
     ) {
       parse(source, file);
