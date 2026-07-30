@@ -84,14 +84,15 @@ function patchMain(source) {
   const selectorNode = functionContaining(source, "codex-rebuild:local-canonical-selector-v3");
   let selector = source.slice(selectorNode.start, selectorNode.end);
   selector = selector
-    .replaceAll("(0,W8.jsx)(Z,{...G8.chatGpt})", "`ChatGPT Work`")
-    .replaceAll("(0,W8.jsx)(Z,{...G8.work})", "`ChatGPT Work`")
-    .replaceAll("o.formatMessage(G8.chatGpt)", "`ChatGPT Work`")
-    .replaceAll("o.formatMessage(G8.work)", "`ChatGPT Work`");
+    .replaceAll("(0,W8.jsx)(Z,{...G8.chatGpt})", "`ChatGPT`")
+    .replaceAll("(0,W8.jsx)(Z,{...G8.work})", "`ChatGPT`")
+    .replaceAll("o.formatMessage(G8.chatGpt)", "`ChatGPT`")
+    .replaceAll("o.formatMessage(G8.work)", "`ChatGPT`")
+    .replaceAll("ChatGPT Work", "ChatGPT");
   source = source.slice(0, selectorNode.start) + selector + source.slice(selectorNode.end);
 
-  if (!selector.includes("ChatGPT Work") || selector.includes("G8.chatGpt")) {
-    throw new Error("ChatGPT Work label did not replace upstream ChatGPT label");
+  if (!selector.includes("ChatGPT") || selector.includes("ChatGPT Work")) {
+    throw new Error("ChatGPT label did not replace the upstream mode label");
   }
   if (!source.includes(`${MARKER}:applied`)) source += `\n/* ${MARKER}:applied */\n`;
   return source;

@@ -58,10 +58,12 @@ if (!source.includes("d.message.end_turn===true")) throw new Error("final Chat m
 if (!source.includes("Promise.resolve(client.startCompletionStream({")) throw new Error("async Chat stream-start failures are not observed");
 if (!source.includes(")).catch(done(reject));")) throw new Error("Chat stream-start rejection does not settle the submit action");
 if (!source.includes("codex-rebuild:chat-stream-clear-v1")) throw new Error("Chat send does not clear streamState after the bridge handles it (stop button stays / loading-forever bug)");
-if (!source.includes("codex-rebuild:chat-smooth-stream-v2:thinking")) throw new Error("Chat send does not publish an immediate thinking row");
-if (!source.includes("codex-rebuild:chat-smooth-stream-v2:live")) throw new Error("Chat send does not smooth live ChatGPT snapshots");
-if (!source.includes("codex-rebuild:chat-smooth-stream-v2:drain")) throw new Error("Chat send does not bound the final live-stream drain");
-if (!source.includes("flushTimer=setTimeout(flush,32)")) throw new Error("Chat send is missing the live smoothing cadence");
+if (!source.includes("codex-rebuild:chat-smooth-stream-v3:thinking")) throw new Error("Chat send does not publish an immediate thinking row");
+if (!source.includes("text:'Thinking…'")) throw new Error("Chat thinking row is invisible");
+if (!source.includes("codex-rebuild:chat-smooth-stream-v3:live")) throw new Error("Chat send does not publish live ChatGPT snapshots");
+if (!source.includes("codex-rebuild:chat-smooth-stream-v3:complete")) throw new Error("Chat send does not complete immediately");
+if (source.includes("Date.now()+650")) throw new Error("Chat send retains a post-response drain delay");
+if (!source.includes("flushTimer=setTimeout(flush,16)")) throw new Error("Chat send is missing the live update cadence");
 if (source.includes("Math.ceil(2000/")) throw new Error("Chat send still replays a completed response with a fake two-second animation");
 if (!source.includes("e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n)")) throw new Error("Chat send hook does not remove the conversation from the streaming set");
 if (!source.includes("e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(t)")) throw new Error("local Chat submit route does not remove the conversation from the streaming set");

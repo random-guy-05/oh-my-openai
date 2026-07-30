@@ -235,7 +235,7 @@ function testPatches() {
     );
   }
   assert.ok(selector.includes("Chat preset — same task and history"));
-  assert.ok(selector.includes("children:`ChatGPT Work`"));
+  assert.ok(selector.includes("children:`ChatGPT`"));
   assert.ok(selector.includes("CDRRuntime.setMode(e)"));
   assert.ok(selector.includes("nextMode:`codex`"));
   assert.ok(!selector.includes("nextMode:e"));
@@ -402,7 +402,7 @@ function testCompiledInvariants() {
   assert.ok(main.includes("if(CDRM===`work`||CDRM===`codex`)p(CDRM)"), "Work/Codex native navigation is missing");
   assert.ok(!main.includes("CDRM===`chat`){try{p(CDRM)"), "Chat mode still navigates away from the native task");
   assert.ok(!main.includes("CDRM===`chat`){try{window.location.reload()}"), "Chat mode still reloads");
-  assert.ok(main.includes("children:n?`ChatGPT Work`:`ChatGPT Work`"), "Work label is not ChatGPT Work");
+  assert.ok(main.includes("children:n?`ChatGPT`:`ChatGPT`"), "Work preset label is not ChatGPT");
   assert.ok(!main.includes("children:n?(0,W8.jsx)(Z,{...G8.chatGpt})"), "Work label can still render as upstream ChatGPT");
   assert.ok(
     main.includes('modelControllers.add(controller);\n    return () => modelControllers.delete(controller);'),

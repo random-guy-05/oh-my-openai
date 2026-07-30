@@ -4,14 +4,13 @@
 // custom-providers-settings-v1 — Add a Custom Models & Providers section to Settings.
 //
 // Patches THREE bundles:
-// 1. use-visible-settings-sections-*.js — add "custom-providers" to the Z slug array,
-//    inject CDRCustomProvidersPanel (settings panel) + CDRCustomProvidersIcon (nav icon)
-//    components, export the panel via window global for cross-bundle access.
+// 1. use-visible-settings-sections-*.js — register and expose the panel, icon,
+//    visibility case, and loading state.
 // 2. settings-page-*.js — patch the i18n label string (nn) to include "custom-providers".
 // 3. app-initial-*.js (monolith) — add custom-providers to:
 //    a) r4l nav message descriptor map (prevents formatMessage(undefined) crash)
 //    b) s4l section label switch + bump memo cache from 29→30
-//    c) L2l lazy panel load map (so the panel actually renders when clicked)
+//    c) Q3o route registry and L2l lazy panel load map
 //
 // The panel is a self-contained React component. Non-secret draft metadata is
 // cached in localStorage, while Apply writes the real provider configuration
@@ -136,10 +135,10 @@ function patchSectionsBundle(source) {
     throw new Error("Z array anchor not found");
   }
 
-  // 2. Inject the panel component code + icon component + window global export
+  // 2. Inject the panel component code + icon component.
   //    before the it={...} map. The it map maps slugs to ICON components (not panels).
   //    So "custom-providers" maps to CDRCustomProvidersIcon, not CDRCustomProvidersPanel.
-  //    The panel is exported via window.__CDRCustomProvidersPanel for the monolith's L2l map.
+  //    The bundle initializer publishes the panel after a real dynamic import.
   const ICON_CODE = "\nfunction CDRCustomProvidersIcon(e){return(0,U.jsx)('svg',{width:24,height:24,viewBox:'0 0 24 24',fill:'none',xmlns:'http://www.w3.org/2000/svg',...e,children:(0,U.jsx)('path',{d:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z',fill:'currentColor'})})}\n";
   const GLOBAL_EXPORT = "\ntry{window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel}catch{}\n";
   const itAnchor = "it={\"general-settings\":N,";
@@ -149,6 +148,19 @@ function patchSectionsBundle(source) {
   } else {
     throw new Error("it component map anchor not found");
   }
+
+  source = replaceOne(
+    source,
+    "case`data-controls`:return!0;",
+    "case`data-controls`:case`custom-providers`:return!0;",
+    "make custom-providers visible",
+  );
+  source = replaceOne(
+    source,
+    "case`git-settings`:case`data-controls`:case`code-review`:",
+    "case`git-settings`:case`data-controls`:case`custom-providers`:case`code-review`:",
+    "make custom-providers immediately renderable",
+  );
 
   // 3. Parse-check
   try {
@@ -162,11 +174,14 @@ function patchSectionsBundle(source) {
 }
 
 // ─── Patch app-initial monolith: add custom-providers to r4l nav message map + s4l switch ───
-function patchMonolith(source) {
+function patchMonolith(source, sectionsModuleName) {
   const R4L_MARKER = MARKER + ":r4l";
   if (source.includes(R4L_MARKER)) {
     if (!source.includes(MARKER + ":config-bridge")) {
       throw new Error("custom providers nav exists but config bridge is missing");
+    }
+    for (const marker of [MARKER + ":route", MARKER + ":l2l"]) {
+      if (!source.includes(marker)) throw new Error(`custom providers ${marker} is missing`);
     }
     return source;
   }
@@ -217,13 +232,23 @@ function patchMonolith(source) {
     source = replaceOne(source, cacheAnchor, cacheNew, "bump s4l memo cache 29→30");
   }
 
-  // 4. Add custom-providers to the L2l lazy panel load map so the panel renders when clicked.
+  // 4. Register the route. Labels alone do not make a settings section reachable.
+  const routeAnchor = '{slug:`data-controls`}]}))';
+  const routeNew = '{slug:`data-controls`},{slug:`custom-providers`}]}))/* ' + MARKER + ':route */';
+  if (source.includes(routeAnchor)) {
+    source = replaceOne(source, routeAnchor, routeNew, "register custom-providers route");
+  } else {
+    throw new Error("Q3o settings route registry anchor not found");
+  }
+
+  // 5. Add custom-providers to the L2l lazy panel load map so the panel renders when clicked.
   //    L2l ends with: ...SkillsSettings)}  where } closes the L2l object.
   //    We must insert the new entry BEFORE the } so it's inside the object.
   const L2L_MARKER = MARKER + ":l2l";
   if (!source.includes(L2L_MARKER)) {
     const l2lEnd = '.SkillsSettings)}';
-    const l2lNew = '.SkillsSettings),"custom-providers":JY(async()=>window.__CDRCustomProvidersPanel||function(){return null})}';
+    if (!sectionsModuleName) throw new Error("settings sections module name is required");
+    const l2lNew = '.SkillsSettings),"custom-providers":JY(async()=>{await import(`./' + sectionsModuleName + '`);let panel=window.__CDRCustomProvidersPanel;if(typeof panel!==`function`)throw new Error(`Custom Providers panel failed to initialize`);return panel})}';
     if (source.includes(l2lEnd)) {
       source = replaceOne(source, l2lEnd, l2lNew, "add custom-providers to L2l lazy panel map");
     } else {
@@ -255,6 +280,13 @@ function patchSettingsPage(source) {
     throw new Error("i18n label string anchor not found in settings-page");
   }
 
+  source = replaceOne(
+    source,
+    "`plugins-settings`,`skills-settings`,`browser-use`,`computer-use`]",
+    "`plugins-settings`,`skills-settings`,`custom-providers`,`browser-use`,`computer-use`]",
+    "add custom-providers to Integrations navigation group",
+  );
+
   try {
     acorn.parse(source, { ecmaVersion: "latest", sourceType: "module" });
   } catch (e) {
@@ -276,7 +308,7 @@ function main() {
 
   const nextSections = patchSectionsBundle(sectionsSrc);
   const nextSettings = patchSettingsPage(settingsSrc);
-  const nextMono = patchMonolith(monoSrc);
+  const nextMono = patchMonolith(monoSrc, path.basename(sectionsFile));
 
   if (!process.argv.includes("--check")) {
     if (nextSections !== sectionsSrc) fs.writeFileSync(sectionsFile, nextSections);

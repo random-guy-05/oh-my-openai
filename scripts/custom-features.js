@@ -14,17 +14,15 @@ const FEATURES = Object.freeze([
   { id: "fast-mode", script: "patch-fast-mode.js", platforms: ["mac-x64"] },
   { id: "latest-models", script: "patch-latest-models.js", platforms: ["mac-x64"] },
   { id: "local-canonical-mode", script: "patch-local-canonical-mode.js", platforms: ["mac-x64"], dependsOn: ["latest-models"] },
-  { id: "usage-controls", script: "patch-usage-controls.js", platforms: ["mac-x64"] },
   { id: "resource-saver", script: "patch-resource-saver.js", platforms: ["mac-x64"] },
   { id: "side-by-side-scheme", script: "patch-side-by-side-scheme.js", platforms: ["mac-x64"] },
   { id: "isolated-userdata", script: "patch-isolated-userdata.js", platforms: ["mac-x64"] },
   { id: "plugin-auth", script: "patch-plugin-auth.js", platforms: ["mac-x64"] },
   { id: "updater", script: "patch-updater.js", platforms: ["mac-x64"] },
   { id: "archive-delete", script: "patch-archive-delete.js", platforms: ["mac-x64"] },
-  { id: "all-features-26721", script: "_apply-26721-all-features.js", platforms: ["mac-x64"], dependsOn: ["local-canonical-mode", "usage-controls"] },
+  { id: "all-features-26721", script: "_apply-26721-all-features.js", platforms: ["mac-x64"], dependsOn: ["local-canonical-mode"] },
   { id: "transcript-publisher", script: "_apply-transcript-publisher-v1.js", platforms: ["mac-x64"], dependsOn: ["all-features-26721"] },
   { id: "handoff-sync", script: "_apply-handoff-sync-v1.js", platforms: ["mac-x64"], dependsOn: ["transcript-publisher"] },
-  { id: "turn-usage", script: "_apply-turn-usage-v2.js", platforms: ["mac-x64"], dependsOn: ["all-features-26721"] },
   { id: "chat-ux", script: "_apply-chat-ux-v1.js", platforms: ["mac-x64"], dependsOn: ["all-features-26721"] },
   { id: "chat-real", script: "_apply-chat-real-v2.js", platforms: ["mac-x64"], dependsOn: ["chat-ux"] },
   { id: "chat-picker-style", script: "_apply-chat-picker-style-v1.js", platforms: ["mac-x64"], dependsOn: ["chat-real"] },
@@ -35,15 +33,16 @@ const FEATURES = Object.freeze([
   { id: "luna-context", script: "_apply-luna-context-v2.js", platforms: ["mac-x64"], dependsOn: ["handoff-sync"] },
   { id: "mode-ui-invariants", script: "_apply-mode-ui-invariants-v1.js", platforms: ["mac-x64"], dependsOn: ["mode-switch-work", "chat-real", "luna-context"] },
   { id: "custom-providers-settings", script: "_apply-custom-providers-settings-v1.js", platforms: ["mac-x64"], dependsOn: ["mode-ui-invariants"] },
+  // Later Chat catalog patches touch the same upstream model bridge. Re-run
+  // the structural allowlist patch last so one manifest pass is canonical.
+  { id: "latest-models-finalize", script: "patch-latest-models.js", platforms: ["mac-x64"], dependsOn: ["custom-providers-settings"] },
 ].map((feature) => Object.freeze({ critical: true, dependsOn: [], ...feature })));
 
 const TEST_SCRIPTS = Object.freeze([
   "test-latest-model-patch.js",
   "test-local-canonical-mode-patch.js",
-  "test-usage-controls-patch.js",
   "test-resource-saver-patch.js",
   "test-handoff-sync.js",
-  "test-turn-usage.js",
   "test-chat-transport.js",
   "test-new-feature-integrations.js",
 ]);

@@ -49,12 +49,17 @@ assert.ok(
   ),
   "mode handler does not keep Chat local while routing Work/Codex",
 );
-assert.ok(mono.source.includes("ChatGPT Work"), "ChatGPT Work identity is missing");
+assert.ok(mono.source.includes("children:n?`ChatGPT`:`ChatGPT`"), "ChatGPT identity is missing");
 assert.ok(!mono.source.includes("CDRM===`chat`){try{p(CDRM)"), "Chat mode calls upstream navigation");
 assert.ok(!mono.source.includes("CDRM===`chat`){try{window.location.reload()"), "Chat mode reloads");
 assert.ok(mono.source.includes("function CDRNavigateLocalThread(threadId)"), "native task redirect helper is missing");
 assert.ok(mono.source.includes("CDRNavigateLocalThread(n)"), "handled Chat send does not open its native task");
 assert.ok(mono.source.includes("CDRNavigateLocalThread(t)"), "local Chat submit does not open its native task");
+for (const threadId of ["n", "t"]) {
+  const navigate = mono.source.indexOf(`CDRNavigateLocalThread(${threadId})`);
+  const send = mono.source.indexOf(`await CDRStickyChatSend(e,${threadId}`, navigate);
+  assert.ok(navigate >= 0 && send > navigate, `Chat navigation for ${threadId} does not happen before transport`);
+}
 assert.ok(!mono.source.includes("window.location.hash='/g/c/'"), "Chat send navigates into ChatGPT Web");
 assert.ok(!mono.source.includes("localStorage.setItem('cdr-thread-map'"), "ChatGPT IDs leak into Codex's thread map");
 assert.ok(css.source.includes(':root[data-codex-product-mode="chat"] .cdr-home-mode-toggle{display:none!important}'), "Chat-only UI does not hide the home Work/Chat toggle");
@@ -80,17 +85,21 @@ assert.ok(mono.source.includes("commitCodex(_cdrCodexKey,_cdrCodexPend.mark)"), 
 
 // Live stream smoothing: real snapshots remain visible while they arrive; no
 // two-second post-response replay and no forced always-Send composer state.
-assert.ok(mono.source.includes("codex-rebuild:chat-smooth-stream-v2:live"), "live Chat stream smoother is missing");
-assert.ok(mono.source.includes("codex-rebuild:chat-smooth-stream-v2:drain"), "bounded stream drain is missing");
-assert.ok(mono.source.includes("flushTimer=setTimeout(flush,32)"), "live smoothing cadence is missing");
+assert.ok(mono.source.includes("codex-rebuild:chat-smooth-stream-v3:live"), "live Chat stream updates are missing");
+assert.ok(mono.source.includes("codex-rebuild:chat-smooth-stream-v3:complete"), "immediate completion is missing");
+assert.ok(mono.source.includes("flushTimer=setTimeout(flush,16)"), "live update cadence is missing");
+assert.ok(mono.source.includes("text:'Thinking…'"), "visible Chat thinking state is missing");
 assert.ok(!mono.source.includes("Math.ceil(2000/"), "old fake post-response replay remains");
+assert.ok(!mono.source.includes("Date.now()+650"), "post-response drain delay remains");
 assert.ok(!mono.source.includes("globalThis.__cdrLocalModeV4?.mode?.()!=='chat'"), "Chat composer is forced to Send while a response is active");
 assert.ok(mono.source.includes("codex-rebuild:chat-stream-clear-v1"), "terminal Chat sends do not clear stream state");
 
 // Custom providers must be visible and must configure Codex, not merely cache
 // a pretend API key in localStorage or offer the unsupported legacy wire API.
 assert.ok(sections.source.includes('`custom-providers`'), "Custom Providers is absent from visible settings");
-assert.ok(sections.source.includes("window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel"), "Custom Providers panel is not exported");
+assert.ok(sections.source.includes("window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel"), "Custom Providers panel is not registered by its bundle initializer");
+assert.ok(sections.source.includes("case`data-controls`:case`custom-providers`:return!0"), "Custom Providers is filtered from visible settings");
+assert.ok(sections.source.includes("case`data-controls`:case`custom-providers`:case`code-review`"), "Custom Providers route remains in loading state");
 assert.ok(sections.source.includes("Save to Codex"), "Custom Providers has no apply action");
 assert.ok(sections.source.includes("globalThis.__cdrWriteConfigEdits"), "Custom Providers does not use the config bridge");
 assert.ok(sections.source.includes("experimental_bearer_token"), "direct-token configuration is not wired");
@@ -98,6 +107,10 @@ assert.ok(sections.source.includes("next.map(({api_key,...p})=>p)"), "provider s
 assert.ok(!sections.source.includes("value:'chat'"), "unsupported legacy Chat Completions wire API is offered");
 assert.ok(mono.source.includes("codex-rebuild:custom-providers-settings-v1:config-bridge"), "AppServer config bridge is missing");
 assert.ok(mono.source.includes("Rf(`batch-write-config-value`"), "provider edits do not reach config/batchWrite");
+assert.ok(mono.source.includes('{slug:`data-controls`},{slug:`custom-providers`}'), "Custom Providers route is not registered");
+assert.ok(mono.source.includes('"custom-providers":JY(async()=>{await import(`./use-visible-settings-sections-'), "Custom Providers lazy loader is not a real module import");
+assert.ok(mono.source.includes("Custom Providers panel failed to initialize"), "Custom Providers loader silently accepts a missing panel");
+assert.ok(settings.source.includes("`skills-settings`,`custom-providers`,`browser-use`"), "Custom Providers is not in the Integrations navigation group");
 assert.ok(settings.source.includes("data-controls.custom-providers"), "Custom Providers settings label is missing");
 
 console.log("new feature integrations: all compiled invariants passed");

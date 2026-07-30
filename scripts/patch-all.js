@@ -25,13 +25,9 @@ const PATCH_HISTORY = [
   // patchContextBundle / patchCss share a single Acorn parse per
   // source per file path, so the monolith is parsed at most twice
   // (original + post-verification) instead of five-plus times.
-  // These are the canonical Chat / ChatGPT Work / Codex presets that
+  // These are the canonical Chat / ChatGPT / Codex presets that
   // defined the custom set of features in oh-my-openai v26.715.72359.
   "patch-local-canonical-mode.js",
-  // Token telemetry, prompt-cache visibility, and conservative local
-  // usage caps. Also re-enabled: cached parser invoked once for the
-  // status bundle and once for the turn guard bundle.
-  "patch-usage-controls.js",
   "patch-resource-saver.js",
   "patch-side-by-side-scheme.js",
   "patch-isolated-userdata.js",
@@ -40,8 +36,7 @@ const PATCH_HISTORY = [
   "patch-archive-delete.js",
   // Unified custom-feature mount for the 26.721 base. Ports all of the
   // features lost during the 26.721 rebase: CDRStickyChatSend (chat-mode
-  // send bridge), CDRTaskUsageBadge + CDRTurnUsageBadge (usage displays),
-  // CDRMergeChatModels (live ChatGPT catalog picker), CDRInstallUsageRuntime,
+  // send bridge), CDRMergeChatModels (live ChatGPT catalog picker),
   // error-boundary instrumentation, and the transcript publisher.
   //
   // IMPORTANT HISTORY: this script was briefly removed in commit 0d19210 on
@@ -71,11 +66,6 @@ const PATCH_HISTORY = [
   // the bridge injected by _apply-26721-all-features.js and the publisher
   // injected by _apply-transcript-publisher-v1.js.
   "_apply-handoff-sync-v1.js",
-  // Replaces the fabricated per-turn badge (which rendered one thread-level
-  // counter identically on every turn) with usage bound to the turn that
-  // actually produced it, and drops the cumulative task badge that was being
-  // duplicated down the whole transcript. Must run after the badges exist.
-  "_apply-turn-usage-v2.js",
   // Chat UX: live ChatGPT model selector in Chat mode + never fall through
   // to the Codex send path (which burns Codex quota) while Chat is active.
   "_apply-chat-ux-v1.js",

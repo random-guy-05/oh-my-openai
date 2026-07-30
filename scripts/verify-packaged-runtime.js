@@ -46,11 +46,13 @@ for (const [needle, label] of [
   ["client.startCompletionStream({", "ChatGPT Web stream transport"],
   ["CDRMergeChatModels", "signed-in ChatGPT model catalog"],
   ["codex-rebuild:mode-ui-invariants-v1:mode-nav", "mode navigation handler"],
-  ["children:n?`ChatGPT Work`:`ChatGPT Work`", "ChatGPT Work label"],
+  ["children:n?`ChatGPT`:`ChatGPT`", "ChatGPT label"],
   ["CDRObserver=new MutationObserver(CDRMarkSend)", "send-button color remount support"],
   ["modelControllers.add(controller);\n    return () => modelControllers.delete(controller);", "render-safe model registration"],
   ["detail:{key,rows:Array.isArray(rows)?rows:null}", "immediate Chat row publication"],
-  ["codex-rebuild:chat-smooth-stream-v2:live", "live Chat stream smoothing"],
+  ["codex-rebuild:chat-navigate-before-send-v1", "immediate native-task navigation"],
+  ["codex-rebuild:chat-smooth-stream-v3:live", "live Chat stream updates"],
+  ["codex-rebuild:chat-smooth-stream-v3:complete", "immediate Chat completion"],
   ["codex-rebuild:custom-providers-settings-v1:config-bridge", "Custom Providers config bridge"],
   ["defaultMessage:`Custom Providers`", "Custom Providers visible label"],
   ["d.message.end_turn===true", "Chat terminal lifecycle"],
@@ -71,6 +73,8 @@ for (const [needle, label] of [
   ["wire_api:'responses'", "Responses-only provider config"],
   ["next.map(({api_key,...p})=>p)", "secret-free provider local storage"],
   ["globalThis.__cdrWriteConfigEdits", "native provider config writer"],
+  ["window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel", "Custom Providers initialized panel registry"],
+  ["case`data-controls`:case`custom-providers`:return!0", "Custom Providers visibility filter"],
 ]) {
   assert.ok(visibleSettings.includes(needle), `packaged runtime missing ${label}`);
 }
@@ -79,6 +83,14 @@ assert.ok(
   settingsPage.includes("data-controls.custom-providers"),
   "packaged runtime missing Custom Providers settings slug",
 );
+assert.ok(settingsPage.includes("`skills-settings`,`custom-providers`,`browser-use`"), "Custom Providers is not in a visible navigation group");
+assert.ok(main.includes('{slug:`data-controls`},{slug:`custom-providers`}'), "Custom Providers route is not registered");
+assert.ok(main.includes('"custom-providers":JY(async()=>{await import(`./use-visible-settings-sections-'), "Custom Providers panel does not use a real module import");
+assert.ok(main.includes("Custom Providers panel failed to initialize"), "Custom Providers loader silently accepts a missing panel");
+
+for (const removed of ["codex-rebuild:usage-controls-v1", "CDRTaskUsageBadge", "CDRTurnUsageBadge", "cdr-turn-usage-v1"]) {
+  assert.ok(!main.includes(removed) && !thread.includes(removed), `packaged runtime still contains removed usage control: ${removed}`);
+}
 
 assert.ok(!main.includes("const current = mode();"), "packaged runtime contains recursive formatted model registration");
 assert.ok(!main.includes("let current=mode()"), "packaged runtime contains recursive minified model registration");

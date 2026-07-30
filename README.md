@@ -63,14 +63,14 @@ brew uninstall --zap --cask codex-desktop
 These are the actual features implemented in the repository (look in `scripts/` and `src/mac-x64/_asar/` for the code):
 
 1) Chat first, same-task behavior
-- Chat mode stays on the current native Codex task, route, and sidebar. ChatGPT Work and Codex activate their corresponding native surfaces without repurposing ChatGPT conversation IDs as Codex task IDs.
+- Chat mode stays on the current native Codex task, route, and sidebar. ChatGPT and Codex activate their corresponding native surfaces without repurposing ChatGPT conversation IDs as Codex task IDs.
 - The local Codex submitter routes Chat turns through ChatGPT Web's `startCompletionStream`; `CDRStickyChatSend` persists every Chat row and the transcript overlay renders it in the same task.
 - Background resume & handoffs are routed to a lightweight GPT-5.6 flavor (Luna Light) to resume state or fetch context without consuming the heavier model budget.
 
 2) Live ChatGPT model picker
 - Chat mode reads the signed-in ChatGPT Web `models()` response as its source of truth, shows the current selectable models, and filters only explicit Codex namespaces. It does not use obsolete hard-coded fallback families.
 
-3) UI‑visible presets (Chat, ChatGPT Work, Codex) with safe semantics
+3) UI‑visible presets (Chat, ChatGPT, Codex) with safe semantics
 - Three presets are exposed in the selector. Chat keeps the native task/sidebar in place; mode changes immediately update the model selector, effort, and preset-colored Send button.
 - The selector colorization and model/effort mapping are local UI conveniences; authoritative history remains on AppServer and all thread reads/hydration use upstream `thread/read` with `includeTurns: true` (see `CUSTOM_BUILD.md` and `scripts/patch-local-canonical-mode.js`).
 
@@ -79,7 +79,6 @@ These are the actual features implemented in the repository (look in `scripts/` 
 - The test harness `scripts/test-local-canonical-mode-patch.js` validates that patched bundles preserve required call sites and parse cleanly with Acorn.
 
 5) Usage controls and telemetry for local inspection
-- `patch-usage-controls.js` adds exact AppServer token and prompt-cache counters, observed account quota deltas, and optional per-task caps accessible via a local `/limits` endpoint.
 - Telemetry and prompt-cache counters are exposed under `/status` for local inspection; tests assert expected deltas.
 
 6) Resource saver / lifecycle tuning
@@ -106,7 +105,6 @@ In short: the repo makes Codex behave like ChatGPT's chat app while keeping data
 - scripts/_apply-26721-all-features.js — ChatGPT stream bridge, local submit route, live catalog, usage runtime
 - scripts/_apply-chat-real-v2.js — catalog-backed Chat picker behavior
 - scripts/_apply-chat-extras-render-v1.js — same-task Chat transcript overlay
-- scripts/patch-usage-controls.js — token counters, `/limits` logic
 - scripts/patch-resource-saver.js — lifecycle and detached tab defaults
 - scripts/patch-latest-models.js — keeps Sol/Terra/Luna variants surfaced
 - scripts/patch-all.js — runs all patches in a deterministic sequence

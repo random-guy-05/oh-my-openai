@@ -47,9 +47,8 @@ data operations and consume no model tokens.
 
 ## Usage and resource controls
 
-`patch-usage-controls.js` adds exact AppServer token/cache counters, observed
-account-quota deltas, and optional per-task caps without resetting baselines
-when limits change.
+Custom usage controls and transcript token badges are intentionally excluded;
+the app leaves upstream account and usage surfaces unchanged.
 
 `patch-resource-saver.js` preserves upstream lifecycle protections while
 reducing detached inactive-browser defaults from 32 pages / 30 minutes to

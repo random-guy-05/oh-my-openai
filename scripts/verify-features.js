@@ -14,9 +14,8 @@
  * A marker proves only that the patcher emitted text. It cannot detect a
  * feature that failed to install, and it cannot detect a feature that
  * installed but references identifiers that no longer exist in the rebased
- * bundle. Both happened during the 26.721 rebase: patch-usage-controls.js
- * soft-failed and shipped nothing, while a replacement script shipped
- * badges that passed every marker check.
+ * bundle. This prevents a patcher from passing on marker strings while its
+ * component or route is still unreachable in the actual application.
  *
  * This verifier asserts observable properties of the patched bundle:
  *
@@ -65,26 +64,11 @@ const KNOWN_GLOBALS = new Set([
 
 const FEATURES = [
   {
-    id: "usage-panel",
-    owner: "patch-usage-controls.js",
-    bundle: "usage-status",
-    critical: true,
-    description: "Honest thread-level usage panel (exact AppServer counters)",
-    present: [
-      ["CDRUsageDetails", "usage details component"],
-      ["Last turn:", "per-thread last-turn row"],
-      ["Cache hit:", "prompt-cache row"],
-      ["Observed quota:", "quota-delta row"],
-    ],
-    resolves: [],
-    mounted: [],
-  },
-  {
     id: "local-canonical-mode",
     owner: "patch-local-canonical-mode.js",
     bundle: "app-initial",
     critical: true,
-    description: "Chat / Work / Codex presets on the same native task",
+    description: "Chat / ChatGPT / Codex presets on the same native task",
     present: [
       ["let CDRRuntime=", "mode runtime binding"],
       [["CDRSetMode(`chat`)", "CDRSetMode(CDRM)"], "chat preset selection"],
@@ -102,7 +86,7 @@ const FEATURES = [
     description: "Chat stays local while model state and send color update immediately",
     present: [
       ["if(CDRM===`work`||CDRM===`codex`)p(CDRM)", "native Work/Codex navigation only"],
-      ["ChatGPT Work", "restored Work identity"],
+      ["ChatGPT", "restored ChatGPT identity"],
       ["CDRObserver=new MutationObserver(CDRMarkSend)", "send-button remount coloring"],
       ["__cdrChatSelectedModel||localStorage.getItem(`cdr-chat-model-selection`)", "immediate Chat model selection"],
     ],
@@ -187,11 +171,15 @@ const FEATURES = [
     critical: true,
     description: "Real ChatGPT snapshots render smoothly without a fake post-response replay",
     present: [
-      ["codex-rebuild:chat-smooth-stream-v2:live", "live smoothing loop"],
-      ["flushTimer=setTimeout(flush,32)", "bounded render cadence"],
-      ["codex-rebuild:chat-smooth-stream-v2:drain", "bounded terminal drain"],
+      ["codex-rebuild:chat-smooth-stream-v3:live", "live snapshot coalescing"],
+      ["flushTimer=setTimeout(flush,16)", "paint-sized render cadence"],
+      ["codex-rebuild:chat-smooth-stream-v3:complete", "immediate terminal commit"],
+      ["text:'Thinking…'", "visible optimistic assistant state"],
     ],
-    absent: [["Math.ceil(2000/", "old two-second fake replay"]],
+    absent: [
+      ["Math.ceil(2000/", "old two-second fake replay"],
+      ["Date.now()+650", "post-response drain delay"],
+    ],
     resolves: [],
     mounted: [],
   },
@@ -258,47 +246,15 @@ const FEATURES = [
     mounted: [],
   },
   {
-    id: "turn-usage",
-    owner: "_apply-turn-usage-v2.js",
-    bundle: "app-initial",
-    critical: true,
-    description: "Per-turn usage bound to the turn that actually produced it",
-    present: [
-      ["__cdrTurnUsageV1", "turn-usage reconciler"],
-      ["__cdrTurnUsageV1.get(turnId)", "badge reads its own turn's record"],
-    ],
-    // The fabricated implementation read a thread-level counter on a timer and
-    // stamped it onto whichever turn mounted first. Both traces must be gone.
-    absent: [
-      ["CDRTaskUsageBadge", "cumulative task badge duplicated on every turn"],
-      ["setTimeout(capture,300)", "timer-based fake per-turn capture"],
-      ["Tokens for this turn only — not affected by parallel tasks", "false tooltip"],
-    ],
-    resolves: ["CDRInstallTurnUsageV1"],
-    mounted: ["CDRTurnUsageBadge"],
-  },
-  {
-    id: "task-limits",
-    owner: "patch-usage-controls.js",
-    bundle: "usage-status",
-    critical: true,
-    description: "Configurable task caps surfaced in the status panel",
-    present: [
-      ["Task limits:", "task limits row"],
-      ["id:`limits`", "limits configuration entry"],
-      ["Task tokens:", "cumulative token row"],
-    ],
-    resolves: [],
-    mounted: [],
-  },
-  {
     id: "custom-providers-visible",
     owner: "_apply-custom-providers-settings-v1.js",
     bundle: "use-visible-settings-sections",
     critical: true,
     description: "Custom Providers is visible and applies real Codex configuration",
     present: [
-      ["window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel", "panel export"],
+      ["window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel", "initialized panel registry"],
+      ["case`data-controls`:case`custom-providers`:return!0", "visible settings filter"],
+      ["case`data-controls`:case`custom-providers`:case`code-review`", "non-loading route state"],
       ["Save to Codex", "apply action"],
       ["globalThis.__cdrWriteConfigEdits", "native config bridge call"],
       ["next.map(({api_key,...p})=>p)", "secret-free local draft persistence"],
@@ -316,7 +272,9 @@ const FEATURES = [
     present: [
       ["codex-rebuild:custom-providers-settings-v1:config-bridge", "config bridge"],
       ["Rf(`batch-write-config-value`", "AppServer batchWrite dispatcher"],
-      ["\"custom-providers\":JY(async()=>window.__CDRCustomProvidersPanel", "lazy panel mount"],
+      ["{slug:`data-controls`},{slug:`custom-providers`}", "settings route registry"],
+      ["\"custom-providers\":JY(async()=>{await import(`./use-visible-settings-sections-", "real lazy panel import"],
+      ["Custom Providers panel failed to initialize", "loader rejects missing panel"],
     ],
     resolves: [],
     mounted: [],
@@ -333,19 +291,7 @@ function findBundle(platform, prefix) {
   const dir = assetsDir(platform);
   if (!fs.existsSync(dir)) throw new Error(`missing assets dir: ${dir}`);
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
-  const name = prefix === "usage-status"
-    ? files.find((f) => {
-        const source = fs.readFileSync(path.join(dir, f), "utf8");
-        // Keep this selector in lockstep with patch-usage-controls.js. The
-        // status panel is a separate bundle on 26.721; looking for a custom
-        // marker or a particular rendered label is not a reliable locator.
-        return source.includes("composer.statusPlain.contextValueMetadata") &&
-          source.includes("composer.statusSlashCommand.description") &&
-          source.includes("modelContextWindow") &&
-          source.includes("rateLimitRows") &&
-          source.includes("contextUsage");
-      })
-    : files.find((f) => f.startsWith(prefix + "-") && f.endsWith(".js"));
+  const name = files.find((f) => f.startsWith(prefix + "-") && f.endsWith(".js"));
   if (!name) throw new Error(`no bundle matching "${prefix}-*.js" in ${dir}`);
   return path.join(dir, name);
 }

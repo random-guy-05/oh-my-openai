@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 /**
- * mode-switch-work-v1 — Fix ChatGPT Work → Chat snap-back.
+ * mode-switch-work-v1 — Fix ChatGPT → Chat snap-back.
  * Durable sync only guarded against upstream "codex"; upstream "work"
  * was overwriting local chat immediately after onModeSelect.
  */

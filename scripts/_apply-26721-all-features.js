@@ -4,13 +4,10 @@
 /**
  * Unified feature patch for ChatGPT 26.721 base.
  *
- * Ports ALL custom features that were lost during the 26.721 rebase:
+ * Ports the custom transport and reliability features lost during the 26.721 rebase:
  * 1. CDRStickyChatSend — Chat mode send bridge (routes through ChatGPT API)
- * 2. CDRTaskUsageBadge — Cumulative task-level usage display (5h/7d + tokens)
- * 3. CDRTurnUsageBadge — Per-turn token usage display beside copy/fork
- * 4. Error boundary instrumentation — Stash errors to localStorage
- * 5. CDRMergeChatModels — Expose live ChatGPT catalog as picker entries
- * 6. Usage runtime — Install __cdrUsageV1.summary() for badge data
+ * 2. Error boundary instrumentation — Stash errors to localStorage
+ * 3. CDRMergeChatModels — Expose live ChatGPT catalog as picker entries
  *
  * 26.721 key variable mappings (from 26.715):
  *   Monolith file: app-initial-BTphDPeq.js (was: many separate files)
@@ -204,46 +201,7 @@ if (mono.includes(MARKER + ":applied")) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 1. USAGE RUNTIME — Install __cdrUsageV1.summary() if missing
-// ═══════════════════════════════════════════════════════════════
-
-const USAGE_RUNTIME = `
-function CDRInstallUsageRuntime(){/* ${MARKER}:usage-runtime */
-if(globalThis.__cdrUsageV1&&typeof globalThis.__cdrUsageV1.summary==='function')return;
-globalThis.__cdrUsageV1=globalThis.__cdrUsageV1||{};
-globalThis.__cdrUsageV1.summary=function(threadKey){
-try{
-let data=JSON.parse(localStorage.getItem('cdr-usage-v1')||'null');
-if(!data)return null;
-let threads=data.threads||{};
-let thread=threads[String(threadKey||'')];
-if(!thread)return null;
-let fiveHourDelta=null,weeklyDelta=null;
-if(thread.windows&&thread.windows.fiveHour&&thread.baseline&&thread.baseline.fiveHour){
-fiveHourDelta=Math.max(0,Number(thread.windows.fiveHour.usedPercent||0)-Number(thread.baseline.fiveHour.usedPercent||0))}
-if(thread.windows&&thread.windows.weekly&&thread.baseline&&thread.baseline.weekly){
-weeklyDelta=Math.max(0,Number(thread.windows.weekly.usedPercent||0)-Number(thread.baseline.weekly.usedPercent||0))}
-return{fiveHourDelta,weeklyDelta,hasExactUsage:!(!thread.usage||!thread.usage.total),
-usage:thread.usage||{total:{totalTokens:0},last:{totalTokens:0}},config:thread.config||{}}
-}catch{return null}};
-globalThis.__cdrUsageV1.assertCanStart=globalThis.__cdrUsageV1.assertCanStart||function(){return!0};
-}CDRInstallUsageRuntime();
-`;
-
-// Inject usage runtime before the existing usage guard
-const usageGuardAnchor = "/* codex-rebuild:usage-guard-v1 */";
-if (mono.includes(usageGuardAnchor) && !mono.includes(MARKER + ":usage-runtime")) {
-  mono = replaceOnce(mono, usageGuardAnchor, USAGE_RUNTIME + usageGuardAnchor, "install usage runtime");
-  console.log("[ok] usage runtime installed");
-} else if (!mono.includes(usageGuardAnchor) && !mono.includes(MARKER + ":usage-runtime")) {
-  // Inject before P_a as fallback (guard against double-injection on partial-state re-runs)
-  mono = tryReplace(mono, "function P_a(e){", USAGE_RUNTIME + "function P_a(e){", "install usage runtime (fallback)");
-} else {
-  console.log("[skip] usage runtime already present or guard not found");
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 2. CHAT MODEL CATALOG — CDRMergeChatModels
+// 1. CHAT MODEL CATALOG — CDRMergeChatModels
 // ═══════════════════════════════════════════════════════════════
 
 const MERGE_HELPER = `
@@ -428,7 +386,7 @@ if (!mono.includes(MARKER + ":bridge")) {
 // ═══════════════════════════════════════════════════════════════
 
 const sendHookAnchor = "let v=CH(),y=l.trim();";
-const sendHookReplacement = "let v=CH(),y=l.trim();{/* " + MARKER + ":send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:f,attachments:t});if(_cdrRes){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(n),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(n),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(n,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(n),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(n))}catch{}try{CDRNavigateLocalThread(n)}catch{}/* codex-rebuild:chat-stream-clear-v1 */return{conversationId:n,serverConversationId:null,streamRequestId:null};}}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
+const sendHookReplacement = "let v=CH(),y=l.trim();{/* " + MARKER + ":send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){try{CDRNavigateLocalThread(n)}catch{}/* codex-rebuild:chat-navigate-before-send-v1 */let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:f,attachments:t});if(_cdrRes){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(n),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(n),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(n,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(n),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(n))}catch{}/* codex-rebuild:chat-stream-clear-v1 */return{conversationId:n,serverConversationId:null,streamRequestId:null};}}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
 
 if (!mono.includes(MARKER + ":send-hook")) {
   mono = tryReplace(mono, sendHookAnchor, sendHookReplacement, `inject send hook into ${SEND_FN}`);
@@ -447,7 +405,7 @@ if (!mono.includes(LOCAL_SUBMIT_MARKER)) {
   if (!localOptions) {
     throw new Error("Local turn/start submit function options destructure drifted");
   }
-  const localRoute = `/* ${LOCAL_SUBMIT_MARKER} */try{let _cdrChatMode=!1;try{_cdrChatMode=!!(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat')}catch{}try{_cdrChatMode=_cdrChatMode||(typeof document!=='undefined'&&document.documentElement&&document.documentElement.getAttribute('data-codex-product-mode')==='chat')}catch{}if(_cdrChatMode){globalThis.__cdrChatTransportAudit={route:'chat',threadId:t,at:Date.now(),model:s?.model??null};let _cdrHandled=await CDRStickyChatSend(e,t,{input:s?.input,model:s?.model,thinkingEffort:s?.effort,attachments:s?.attachments});if(_cdrHandled){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(t),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(t),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(t),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(t,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(t),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(t))}catch{}try{CDRNavigateLocalThread(t)}catch{}/* codex-rebuild:chat-stream-clear-v1 */let _cdrSyntheticTurnId='cdr-chat-turn-'+String(c);return{turn:{id:_cdrSyntheticTurnId,status:'completed'}}}}}catch(_cdrChatError){try{console.error('[cdr] local Chat route error',_cdrChatError)}catch{}}`;
+  const localRoute = `/* ${LOCAL_SUBMIT_MARKER} */try{let _cdrChatMode=!1;try{_cdrChatMode=!!(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat')}catch{}try{_cdrChatMode=_cdrChatMode||(typeof document!=='undefined'&&document.documentElement&&document.documentElement.getAttribute('data-codex-product-mode')==='chat')}catch{}if(_cdrChatMode){globalThis.__cdrChatTransportAudit={route:'chat',threadId:t,at:Date.now(),model:s?.model??null};try{CDRNavigateLocalThread(t)}catch{}/* codex-rebuild:chat-navigate-before-send-v1 */let _cdrHandled=await CDRStickyChatSend(e,t,{input:s?.input,model:s?.model,thinkingEffort:s?.effort,attachments:s?.attachments});if(_cdrHandled){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(t),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(t),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(t),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(t,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(t),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(t))}catch{}/* codex-rebuild:chat-stream-clear-v1 */let _cdrSyntheticTurnId='cdr-chat-turn-'+String(c);return{turn:{id:_cdrSyntheticTurnId,status:'completed'}}}}}catch(_cdrChatError){try{console.error('[cdr] local Chat route error',_cdrChatError)}catch{}}`;
   localSubmit = localSubmit.replace(localOptions, localOptions + localRoute);
   mono = mono.slice(0, localNode.start) + localSubmit + mono.slice(localNode.end);
   parseOk("local Chat submit route", mono);
@@ -522,6 +480,10 @@ globalThis.__cdrCodexContextByThread[key]={text:text,turnCount:lines.length,upda
 // ═══════════════════════════════════════════════════════════════
 // 6. USAGE BADGES — CDRTaskUsageBadge + CDRTurnUsageBadge
 // ═══════════════════════════════════════════════════════════════
+
+// Retained temporarily as migration-only source, but deliberately disabled.
+// Usage controls and custom transcript badges are no longer part of this app.
+if (false) {
 
 // The React hooks/JSX aliases differ between modules in the monolith.
 // e.g. in the old u6c scope the parameter `e` shadowed the React alias.
@@ -705,6 +667,7 @@ if (actionRow && !mono.includes(MARKER + ":task-usage-badge")) {
     }
   }
 }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 6. ERROR BOUNDARY — Stash errors to localStorage
@@ -766,10 +729,6 @@ if (!appMain.includes(MARKER + ":app-main-fb")) {
 const checks = [
   [MARKER + ":bridge", "CDRStickyChatSend bridge"],
   [MARKER + ":send-hook", `Send hook in ${SEND_FN}`],
-  [MARKER + ":task-usage-badge", "Task usage badge"],
-  [MARKER + ":turn-usage-badge", "Turn usage badge"],
-  ["CDRTaskUsageBadge,{threadId:i}", "Task badge placement"],
-  ["CDRTurnUsageBadge,{threadId:i,turnId:a}", "Turn badge placement"],
 ];
 
 let allOk = true;
@@ -803,13 +762,6 @@ if (mono.includes(MARKER + ":catalog-merge")) {
   console.log("[verify] ✗ Chat model catalog merge — MISSING (non-fatal)");
 }
 
-// Check usage runtime
-if (mono.includes(MARKER + ":usage-runtime")) {
-  console.log("[verify] ✓ Usage runtime");
-} else {
-  console.log("[verify] ✗ Usage runtime — MISSING (non-fatal)");
-}
-
 // Check transcript publisher (in thread file)
 if (threadFile && fs.readFileSync(threadFile, "utf8").includes(MARKER + ":transcript")) {
   console.log("[verify] ✓ Transcript publisher");
@@ -836,7 +788,7 @@ if (allOk) {
 if (!allOk) {
   console.error("\n[x] Critical features failed to apply; see the warnings above.");
   console.error("[x] Refusing to continue: a silent partial apply is how the 26.721");
-  console.error("[x] rebase shipped a DMG with fake usage badges and no usage panel.");
+  console.error("[x] rebase shipped a DMG with an incomplete custom feature set.");
   process.exit(1);
 }
 

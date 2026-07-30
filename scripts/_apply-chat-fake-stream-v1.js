@@ -1,26 +1,21 @@
 #!/usr/bin/env node
 "use strict";
 
-// chat-smooth-stream-v2 — Smooth real Chat-mode streaming without fake delay.
+// chat-smooth-stream-v3 — Responsive real Chat-mode streaming.
 //
-// Problem: ChatGPT stream snapshots can arrive in irregular bursts. Rendering
-// every burst causes visual jumps, while waiting for the entire response and
-// replaying it afterward adds fake latency and keeps the Stop state around.
+// ChatGPT stream snapshots can arrive in irregular bursts. Publish an
+// immediate visible state, coalesce real snapshots to one paint-sized cadence,
+// and commit the terminal response immediately so Stop returns to Send.
 //
 // Solution:
-// 1. Publish an empty streaming row immediately so the current task responds.
-// 2. Keep the real stream as the source of truth and reveal toward its latest
-//    snapshot on a short 32ms cadence.
-// 3. Drain any small remainder for at most 650ms, then publish completed text.
-//
-// The send hook clears stream state when this returns, so Stop becomes Send.
+// There is deliberately no post-response typewriter replay or drain delay.
 const fs = require("fs");
 const path = require("path");
 const acorn = require("acorn");
 
 const ROOT = path.join(__dirname, "..");
 const ASSETS = path.join(ROOT, "src/mac-x64/_asar/webview/assets");
-const MARKER = "codex-rebuild:chat-smooth-stream-v2";
+const MARKER = "codex-rebuild:chat-smooth-stream-v3";
 
 function asset(prefix) {
   const name = fs.readdirSync(ASSETS).find((f) => f.startsWith(prefix) && f.endsWith(".js"));
@@ -37,8 +32,8 @@ function replaceOne(source, oldValue, newValue, label) {
 // Patch the CDRStickyChatSend bridge in the monolith.
 // Two surgical replacements inside CDRStickyChatSend:
 //
-// A) Replace burst rendering with a bounded live smoother + thinking row
-// B) Drain the live smoother briefly and publish the final completed row
+// A) Coalesce burst rendering and publish a visible thinking row.
+// B) Cancel any pending paint and publish the final row immediately.
 function patchMain(source) {
   if (source.includes(MARKER + ":applied")) {
     // Idempotency: verify markers are present
@@ -60,11 +55,11 @@ function patchMain(source) {
     "await new Promise((resolve,reject)=>{";
 
   const flushNew =
-    "let flushTimer=null,displayed='';\n" +
-    "let scheduleFlush=()=>{if(flushTimer==null)flushTimer=setTimeout(flush,32)};\n" +
-    "let flush=()=>{/* " + MARKER + ":live */flushTimer=null;if(!assistant)return;if(!assistant.startsWith(displayed))displayed='';let remaining=assistant.length-displayed.length;if(remaining<=0)return;let step=Math.max(1,Math.min(remaining,Math.ceil(remaining*.35)));displayed=assistant.slice(0,displayed.length+step);upsert({id:assistantId,role:'assistant',text:displayed,source:'chat',status:'streaming'});if(displayed.length<assistant.length)scheduleFlush()};\n" +
+    "let flushTimer=null;\n" +
+    "let flush=()=>{/* " + MARKER + ":live */flushTimer=null;if(assistant)upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'streaming'})};\n" +
+    "let scheduleFlush=()=>{if(flushTimer==null)flushTimer=setTimeout(flush,16)};\n" +
     "/* " + MARKER + ":thinking */\n" +
-    "upsert({id:assistantId,role:'assistant',text:'',source:'chat',status:'streaming'});\n" +
+    "upsert({id:assistantId,role:'assistant',text:'Thinking…',source:'chat',status:'streaming'});\n" +
     "try{\n" +
     "await new Promise((resolve,reject)=>{";
 
@@ -74,7 +69,7 @@ function patchMain(source) {
     throw new Error("stream flush anchor not found — bridge may have drifted");
   }
 
-  // ─── B) Drain the live smoother, then complete ───
+  // ─── B) Complete immediately ───
   const postStreamOld =
     "flush();\n" +
     "if(!assistant)assistant='Chat returned no displayable text.';\n" +
@@ -82,13 +77,11 @@ function patchMain(source) {
 
   const postStreamNew =
     "if(!assistant)assistant='Chat returned no displayable text.';\n" +
-    "/* " + MARKER + ":drain */scheduleFlush();\n" +
-    "{let _deadline=Date.now()+650;while(displayed.length<assistant.length&&Date.now()<_deadline)await new Promise(r=>setTimeout(r,16))}\n" +
-    "if(flushTimer!=null){clearTimeout(flushTimer);flushTimer=null}displayed=assistant;\n" +
+    "/* " + MARKER + ":complete */if(flushTimer!=null){clearTimeout(flushTimer);flushTimer=null}\n" +
     "upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'completed'});";
 
   if (source.includes(postStreamOld)) {
-    source = replaceOne(source, postStreamOld, postStreamNew, "bounded live-stream drain");
+    source = replaceOne(source, postStreamOld, postStreamNew, "immediate stream completion");
   } else {
     throw new Error("post-stream flush anchor not found — bridge may have drifted");
   }

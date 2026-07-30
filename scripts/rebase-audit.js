@@ -51,7 +51,9 @@ const patchedChecks = [
   [local, "__cdrChatHistoryRenderCache", "history render cache"],
   [local, "CDRDurableLast>=CDRLocalLast", "stale Chat history guard"],
   [mono, "codex-rebuild:mode-ui-invariants-v1:mode-nav", "mode navigation handler"],
-  [mono, "children:n?`ChatGPT Work`:`ChatGPT Work`", "ChatGPT Work label"],
+  [mono, "children:n?`ChatGPT`:`ChatGPT`", "ChatGPT label"],
+  [mono, "codex-rebuild:chat-navigate-before-send-v1", "immediate native-task navigation"],
+  [mono, "codex-rebuild:chat-smooth-stream-v3:complete", "immediate Chat completion"],
   [mono, "modelControllers.add(controller);\n    return () => modelControllers.delete(controller);", "render-safe model controller registration"],
   [mono, "CDRObserver=new MutationObserver(CDRMarkSend)", "send-button remount coloring"],
   [home, "cdr-home-mode-toggle", "Home mode toggle hook"],
@@ -85,6 +87,9 @@ if (phase === "clean") {
   if (mono.includes("CDRM===`chat`){try{p(CDRM)") || mono.includes("CDRM===`chat`){try{window.location.reload()")) failures.push("Chat mode navigates or reloads instead of staying in the native task");
   if (mono.includes("const current = mode();") || mono.includes("let current=mode()")) failures.push("model controller registration can recurse during React effect mount");
   if (local.includes("if(!CDRRenderHasGap)")) failures.push("virtualized transcript gap can hide Chat history");
+  for (const removed of ["codex-rebuild:usage-controls-v1", "CDRTaskUsageBadge", "CDRTurnUsageBadge", "cdr-turn-usage-v1"]) {
+    if (mono.includes(removed) || local.includes(removed)) failures.push(`removed usage control remains: ${removed}`);
+  }
 }
 try {
   acorn.parse(mono, { ecmaVersion: "latest", sourceType: "module" });
