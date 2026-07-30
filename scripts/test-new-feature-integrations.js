@@ -97,7 +97,9 @@ assert.ok(mono.source.includes("codex-rebuild:chat-stream-clear-v1"), "terminal 
 // Custom providers must be visible and must configure Codex, not merely cache
 // a pretend API key in localStorage or offer the unsupported legacy wire API.
 assert.ok(sections.source.includes('`custom-providers`'), "Custom Providers is absent from visible settings");
-assert.ok(sections.source.includes("window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel"), "Custom Providers panel is not registered by its bundle initializer");
+assert.ok(sections.source.includes("CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2"), "Custom Providers module-scoped panel is not exported");
+assert.ok(!sections.source.includes("window.__CDRCustomProvidersPanel"), "obsolete Custom Providers window registry remains");
+assert.ok(!sections.source.includes("function CDRCustomProvidersPanel(){"), "duplicate legacy Custom Providers panel remains");
 assert.ok(sections.source.includes("case`data-controls`:case`custom-providers`:return!0"), "Custom Providers is filtered from visible settings");
 assert.ok(sections.source.includes("case`data-controls`:case`custom-providers`:case`code-review`"), "Custom Providers route remains in loading state");
 assert.ok(sections.source.includes("Save to Codex"), "Custom Providers has no apply action");
@@ -108,8 +110,8 @@ assert.ok(!sections.source.includes("value:'chat'"), "unsupported legacy Chat Co
 assert.ok(mono.source.includes("codex-rebuild:custom-providers-settings-v1:config-bridge"), "AppServer config bridge is missing");
 assert.ok(mono.source.includes("Rf(`batch-write-config-value`"), "provider edits do not reach config/batchWrite");
 assert.ok(mono.source.includes('{slug:`data-controls`},{slug:`custom-providers`}'), "Custom Providers route is not registered");
-assert.ok(mono.source.includes('"custom-providers":JY(async()=>{await import(`./use-visible-settings-sections-'), "Custom Providers lazy loader is not a real module import");
-assert.ok(mono.source.includes("Custom Providers panel failed to initialize"), "Custom Providers loader silently accepts a missing panel");
+assert.ok(mono.source.includes('"custom-providers":JY(async()=>{let module=await import(`./use-visible-settings-sections-'), "Custom Providers lazy loader is not a real module import");
+assert.ok(mono.source.includes("module.CDRCustomProvidersPanelV2"), "Custom Providers lazy loader does not read the direct module export");
 assert.ok(settings.source.includes("`skills-settings`,`custom-providers`,`browser-use`"), "Custom Providers is not in the Integrations navigation group");
 assert.ok(settings.source.includes("data-controls.custom-providers"), "Custom Providers settings label is missing");
 

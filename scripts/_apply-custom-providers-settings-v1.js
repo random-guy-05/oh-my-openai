@@ -23,6 +23,8 @@ const acorn = require("acorn");
 const ROOT = path.join(__dirname, "..");
 const ASSETS = path.join(ROOT, "src/mac-x64/_asar/webview/assets");
 const MARKER = "codex-rebuild:custom-providers-settings-v1";
+const LOADER_MARKER = MARKER + ":loader-export";
+const PANEL_EXPORT_MARKER = MARKER + ":panel-v2-export";
 const SLUG = "custom-providers";
 const LS_KEY = "cdr-custom-providers-v1";
 
@@ -36,6 +38,25 @@ function replaceOne(source, oldValue, newValue, label) {
   const count = source.split(oldValue).length - 1;
   if (count !== 1) throw new Error(`${label}: expected 1 target, found ${count}`);
   return source.replace(oldValue, newValue);
+}
+
+function ensurePanelLoaderExport(source) {
+  // Older patch revisions installed a second copy inside the bundle initializer
+  // and published it through window. The lazy route now consumes a real ESM
+  // export, so keeping that registry only adds an initialization-order hazard.
+  source = source.replace(PANEL_CODE, "");
+  source = source.replace("\ntry{window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel}catch{}\n", "");
+  if (source.includes(PANEL_EXPORT_MARKER)) return source;
+  const panel = PANEL_CODE.replace(
+    `function CDRCustomProvidersPanel(){/* ${MARKER}:panel */`,
+    `function CDRCustomProvidersPanelV2(){/* ${PANEL_EXPORT_MARKER} */`,
+  );
+  return replaceOne(
+    source,
+    "export{",
+    panel + "\nexport{CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2,",
+    "export module-scoped custom providers panel",
+  );
 }
 
 // ─── The React component injected into the settings page ───
@@ -124,7 +145,7 @@ return el('div',{style:{padding:'24px',maxWidth:'680px'},['data-cdr-custom-provi
 
 // ─── Patch use-visible-settings-sections ───
 function patchSectionsBundle(source) {
-  if (source.includes(MARKER + ":applied")) return source;
+  if (source.includes(MARKER + ":applied")) return ensurePanelLoaderExport(source);
 
   // 1. Add slug to the Z array
   const zOld = "Z=[`profile`,`agent`,`personalization`,`mcp-settings`,`plugins-settings`,`hooks-settings`,`local-environments`,`worktrees`,`data-controls`]";
@@ -135,16 +156,16 @@ function patchSectionsBundle(source) {
     throw new Error("Z array anchor not found");
   }
 
-  // 2. Inject the panel component code + icon component.
+  // 2. Inject the icon component. The panel itself is appended at module scope
+  //    by ensurePanelLoaderExport so the route can import it directly.
   //    before the it={...} map. The it map maps slugs to ICON components (not panels).
   //    So "custom-providers" maps to CDRCustomProvidersIcon, not CDRCustomProvidersPanel.
   //    The bundle initializer publishes the panel after a real dynamic import.
   const ICON_CODE = "\nfunction CDRCustomProvidersIcon(e){return(0,U.jsx)('svg',{width:24,height:24,viewBox:'0 0 24 24',fill:'none',xmlns:'http://www.w3.org/2000/svg',...e,children:(0,U.jsx)('path',{d:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z',fill:'currentColor'})})}\n";
-  const GLOBAL_EXPORT = "\ntry{window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel}catch{}\n";
   const itAnchor = "it={\"general-settings\":N,";
   const itNew = "it={\"custom-providers\":CDRCustomProvidersIcon,\"general-settings\":N,";
   if (source.includes(itAnchor)) {
-    source = source.replace(itAnchor, PANEL_CODE + GLOBAL_EXPORT + ICON_CODE + "\n" + itNew);
+    source = source.replace(itAnchor, ICON_CODE + "\n" + itNew);
   } else {
     throw new Error("it component map anchor not found");
   }
@@ -169,6 +190,7 @@ function patchSectionsBundle(source) {
     throw new Error("parse failed after sections patch: " + e.message);
   }
 
+  source = ensurePanelLoaderExport(source);
   source += "\n/* " + MARKER + ":applied */\n";
   return source;
 }
@@ -180,9 +202,16 @@ function patchMonolith(source, sectionsModuleName) {
     if (!source.includes(MARKER + ":config-bridge")) {
       throw new Error("custom providers nav exists but config bridge is missing");
     }
+    if (!sectionsModuleName) throw new Error("settings sections module name is required");
+    const oldLoader = '"custom-providers":JY(async()=>{await import(`./' + sectionsModuleName + '`);let panel=window.__CDRCustomProvidersPanel;if(typeof panel!==`function`)throw new Error(`Custom Providers panel failed to initialize`);return panel})';
+    const intermediateLoader = '"custom-providers":JY(async()=>{let module=await import(`./' + sectionsModuleName + '`);return module.CDRLoadCustomProvidersPanel()})';
+    const newLoader = '"custom-providers":JY(async()=>{let module=await import(`./' + sectionsModuleName + '`);let panel=module.CDRCustomProvidersPanelV2;if(typeof panel!==`function`)throw new Error(`Custom Providers module export is unavailable`);return panel})';
+    if (source.includes(oldLoader)) source = replaceOne(source, oldLoader, newLoader, "upgrade custom providers initialized loader");
+    if (source.includes(intermediateLoader)) source = replaceOne(source, intermediateLoader, newLoader, "upgrade custom providers module loader");
     for (const marker of [MARKER + ":route", MARKER + ":l2l"]) {
       if (!source.includes(marker)) throw new Error(`custom providers ${marker} is missing`);
     }
+    if (!source.includes("module.CDRCustomProvidersPanelV2")) throw new Error("module-scoped custom providers lazy loader is missing");
     return source;
   }
 
@@ -248,7 +277,7 @@ function patchMonolith(source, sectionsModuleName) {
   if (!source.includes(L2L_MARKER)) {
     const l2lEnd = '.SkillsSettings)}';
     if (!sectionsModuleName) throw new Error("settings sections module name is required");
-    const l2lNew = '.SkillsSettings),"custom-providers":JY(async()=>{await import(`./' + sectionsModuleName + '`);let panel=window.__CDRCustomProvidersPanel;if(typeof panel!==`function`)throw new Error(`Custom Providers panel failed to initialize`);return panel})}';
+    const l2lNew = '.SkillsSettings),"custom-providers":JY(async()=>{let module=await import(`./' + sectionsModuleName + '`);let panel=module.CDRCustomProvidersPanelV2;if(typeof panel!==`function`)throw new Error(`Custom Providers module export is unavailable`);return panel})}';
     if (source.includes(l2lEnd)) {
       source = replaceOne(source, l2lEnd, l2lNew, "add custom-providers to L2l lazy panel map");
     } else {
@@ -322,4 +351,4 @@ if (require.main === module) {
   try { main(); } catch (error) { console.error(error.stack || error); process.exitCode = 1; }
 }
 
-module.exports = { MARKER, SLUG, LS_KEY, patchSectionsBundle, patchSettingsPage, patchMonolith };
+module.exports = { MARKER, LOADER_MARKER, PANEL_EXPORT_MARKER, SLUG, LS_KEY, ensurePanelLoaderExport, patchSectionsBundle, patchSettingsPage, patchMonolith };

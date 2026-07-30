@@ -73,11 +73,13 @@ for (const [needle, label] of [
   ["wire_api:'responses'", "Responses-only provider config"],
   ["next.map(({api_key,...p})=>p)", "secret-free provider local storage"],
   ["globalThis.__cdrWriteConfigEdits", "native provider config writer"],
-  ["window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel", "Custom Providers initialized panel registry"],
+  ["CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2", "Custom Providers module-scoped export"],
   ["case`data-controls`:case`custom-providers`:return!0", "Custom Providers visibility filter"],
 ]) {
   assert.ok(visibleSettings.includes(needle), `packaged runtime missing ${label}`);
 }
+assert.ok(!visibleSettings.includes("window.__CDRCustomProvidersPanel"), "packaged runtime retains the obsolete Custom Providers window registry");
+assert.ok(!visibleSettings.includes("function CDRCustomProvidersPanel(){"), "packaged runtime retains the duplicate legacy Custom Providers panel");
 
 assert.ok(
   settingsPage.includes("data-controls.custom-providers"),
@@ -85,8 +87,8 @@ assert.ok(
 );
 assert.ok(settingsPage.includes("`skills-settings`,`custom-providers`,`browser-use`"), "Custom Providers is not in a visible navigation group");
 assert.ok(main.includes('{slug:`data-controls`},{slug:`custom-providers`}'), "Custom Providers route is not registered");
-assert.ok(main.includes('"custom-providers":JY(async()=>{await import(`./use-visible-settings-sections-'), "Custom Providers panel does not use a real module import");
-assert.ok(main.includes("Custom Providers panel failed to initialize"), "Custom Providers loader silently accepts a missing panel");
+assert.ok(main.includes('"custom-providers":JY(async()=>{let module=await import(`./use-visible-settings-sections-'), "Custom Providers panel does not use a real module import");
+assert.ok(main.includes("module.CDRCustomProvidersPanelV2"), "Custom Providers loader does not read the direct module export");
 
 for (const removed of ["codex-rebuild:usage-controls-v1", "CDRTaskUsageBadge", "CDRTurnUsageBadge", "cdr-turn-usage-v1"]) {
   assert.ok(!main.includes(removed) && !thread.includes(removed), `packaged runtime still contains removed usage control: ${removed}`);
