@@ -74,12 +74,22 @@ for (const [needle, label] of [
   ["next.map(({api_key,...p})=>p)", "secret-free provider local storage"],
   ["globalThis.__cdrWriteConfigEdits", "native provider config writer"],
   ["CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2", "Custom Providers module-scoped export"],
+  ["codex-rebuild:custom-providers-settings-v1:icon-v2-export", "Custom Providers module-scoped icon"],
+  ['"custom-providers":CDRCustomProvidersIconV2', "Custom Providers module-scoped icon map"],
+  ["s as CDRInterop", "Custom Providers React runtime interop"],
+  ["const CDRReact=CDRInterop(y(),1)", "Custom Providers React hooks namespace"],
+  ["const CDRJsx=a()", "Custom Providers JSX runtime namespace"],
+  ["return(0,CDRJsx.jsx)(tag,p)", "Custom Providers stable JSX render path"],
   ["case`data-controls`:case`custom-providers`:return!0", "Custom Providers visibility filter"],
 ]) {
   assert.ok(visibleSettings.includes(needle), `packaged runtime missing ${label}`);
 }
+assert.ok(!visibleSettings.includes("s.useState"), "packaged runtime uses a non-React initializer for Custom Providers hooks");
+assert.ok(!visibleSettings.includes("s.useEffect"), "packaged runtime uses a non-React initializer for Custom Providers effects");
+assert.ok(!visibleSettings.includes("return(0,U.jsx)(tag,p)"), "packaged runtime uses an initializer-owned JSX binding for Custom Providers");
 assert.ok(!visibleSettings.includes("window.__CDRCustomProvidersPanel"), "packaged runtime retains the obsolete Custom Providers window registry");
 assert.ok(!visibleSettings.includes("function CDRCustomProvidersPanel(){"), "packaged runtime retains the duplicate legacy Custom Providers panel");
+assert.ok(!visibleSettings.includes("function CDRCustomProvidersIcon(e){"), "packaged runtime retains the unbound legacy Custom Providers icon");
 
 assert.ok(
   settingsPage.includes("data-controls.custom-providers"),

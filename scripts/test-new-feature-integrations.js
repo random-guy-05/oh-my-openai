@@ -98,8 +98,18 @@ assert.ok(mono.source.includes("codex-rebuild:chat-stream-clear-v1"), "terminal 
 // a pretend API key in localStorage or offer the unsupported legacy wire API.
 assert.ok(sections.source.includes('`custom-providers`'), "Custom Providers is absent from visible settings");
 assert.ok(sections.source.includes("CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2"), "Custom Providers module-scoped panel is not exported");
+assert.ok(sections.source.includes("codex-rebuild:custom-providers-settings-v1:icon-v2-export"), "Custom Providers icon is not module-scoped");
+assert.ok(sections.source.includes('"custom-providers":CDRCustomProvidersIconV2'), "Custom Providers icon map does not use the module-scoped binding");
+assert.ok(sections.source.includes("s as CDRInterop"), "Custom Providers does not import the runtime interop helper");
+assert.ok(sections.source.includes("const CDRReact=CDRInterop(y(),1)"), "Custom Providers is not bound to the real React namespace");
+assert.ok(sections.source.includes("const CDRJsx=a()"), "Custom Providers is not bound to the real JSX runtime");
+assert.ok(sections.source.includes("return(0,CDRJsx.jsx)(tag,p)"), "Custom Providers panel does not use its stable JSX runtime");
+assert.ok(!sections.source.includes("s.useState"), "Custom Providers still treats a minified initializer as React");
+assert.ok(!sections.source.includes("s.useEffect"), "Custom Providers still treats a minified initializer as React");
+assert.ok(!sections.source.includes("return(0,U.jsx)(tag,p)"), "Custom Providers still relies on initializer-owned JSX state");
 assert.ok(!sections.source.includes("window.__CDRCustomProvidersPanel"), "obsolete Custom Providers window registry remains");
 assert.ok(!sections.source.includes("function CDRCustomProvidersPanel(){"), "duplicate legacy Custom Providers panel remains");
+assert.ok(!sections.source.includes("function CDRCustomProvidersIcon(e){"), "unbound legacy Custom Providers icon remains");
 assert.ok(sections.source.includes("case`data-controls`:case`custom-providers`:return!0"), "Custom Providers is filtered from visible settings");
 assert.ok(sections.source.includes("case`data-controls`:case`custom-providers`:case`code-review`"), "Custom Providers route remains in loading state");
 assert.ok(sections.source.includes("Save to Codex"), "Custom Providers has no apply action");

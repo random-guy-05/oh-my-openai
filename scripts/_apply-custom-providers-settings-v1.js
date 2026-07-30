@@ -25,8 +25,10 @@ const ASSETS = path.join(ROOT, "src/mac-x64/_asar/webview/assets");
 const MARKER = "codex-rebuild:custom-providers-settings-v1";
 const LOADER_MARKER = MARKER + ":loader-export";
 const PANEL_EXPORT_MARKER = MARKER + ":panel-v2-export";
+const ICON_EXPORT_MARKER = MARKER + ":icon-v2-export";
 const SLUG = "custom-providers";
 const LS_KEY = "cdr-custom-providers-v1";
+const ICON_CODE = "\nfunction CDRCustomProvidersIcon(e){return(0,CDRJsx.jsx)('svg',{width:24,height:24,viewBox:'0 0 24 24',fill:'none',xmlns:'http://www.w3.org/2000/svg',...e,children:(0,CDRJsx.jsx)('path',{d:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z',fill:'currentColor'})})}\n";
 
 function asset(prefix) {
   const name = fs.readdirSync(ASSETS).find((f) => f.startsWith(prefix) && f.endsWith(".js"));
@@ -45,17 +47,62 @@ function ensurePanelLoaderExport(source) {
   // and published it through window. The lazy route now consumes a real ESM
   // export, so keeping that registry only adds an initialization-order hazard.
   source = source.replace(PANEL_CODE, "");
+  source = source.replace(ICON_CODE, "");
   source = source.replace("\ntry{window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel}catch{}\n", "");
-  if (source.includes(PANEL_EXPORT_MARKER)) return source;
-  const panel = PANEL_CODE.replace(
-    `function CDRCustomProvidersPanel(){/* ${MARKER}:panel */`,
-    `function CDRCustomProvidersPanelV2(){/* ${PANEL_EXPORT_MARKER} */`,
+  source = source.replace(
+    '"custom-providers":CDRCustomProvidersIcon,',
+    '"custom-providers":CDRCustomProvidersIconV2,',
   );
+  // Nvt is the app's React module initializer. The minified `s` binding is a
+  // different initializer entirely; treating it as React only fails once the
+  // settings panel actually renders. Import the runtime interop helper and
+  // materialize a stable React namespace at module scope.
+  if (!source.includes("s as CDRInterop")) {
+    source = replaceOne(
+      source,
+      'import{n as e}from"./rolldown-runtime-',
+      'import{n as e,s as CDRInterop}from"./rolldown-runtime-',
+      "custom providers React interop import",
+    );
+  }
+  if (source.includes(PANEL_EXPORT_MARKER)) {
+    source = source.replace(/\bs\.use(State|Effect)\b/g, "CDRReact.use$1");
+    source = source.replace("return(0,U.jsx)(tag,p)", "return(0,CDRJsx.jsx)(tag,p)");
+    source = source.replace(
+      "function CDRCustomProvidersIconV2(e){/* " + ICON_EXPORT_MARKER + " */return(0,U.jsx)",
+      "function CDRCustomProvidersIconV2(e){/* " + ICON_EXPORT_MARKER + " */return(0,CDRJsx.jsx)",
+    );
+    if (!source.includes("const CDRReact=CDRInterop(y(),1);")) {
+      source = source.replace(
+        "function CDRCustomProvidersPanelV2(){",
+        "const CDRReact=CDRInterop(y(),1);\nfunction CDRCustomProvidersPanelV2(){",
+      );
+    }
+    if (!source.includes("const CDRJsx=a();")) {
+      source = source.replace("const CDRReact=", "const CDRJsx=a();\nconst CDRReact=");
+    }
+  }
+  const hasPanel = source.includes(PANEL_EXPORT_MARKER);
+  const hasIcon = source.includes(ICON_EXPORT_MARKER);
+  if (hasPanel && hasIcon) return source;
+  const definitions = [];
+  if (!hasPanel) {
+    definitions.push(PANEL_CODE.replace(
+      `function CDRCustomProvidersPanel(){/* ${MARKER}:panel */`,
+      `function CDRCustomProvidersPanelV2(){/* ${PANEL_EXPORT_MARKER} */`,
+    ));
+  }
+  if (!hasIcon) {
+    definitions.push(ICON_CODE.replace(
+      "function CDRCustomProvidersIcon(e){",
+      `function CDRCustomProvidersIconV2(e){/* ${ICON_EXPORT_MARKER} */`,
+    ));
+  }
   return replaceOne(
     source,
     "export{",
-    panel + "\nexport{CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2,",
-    "export module-scoped custom providers panel",
+    definitions.join("\n") + "\nexport{" + (hasPanel ? "" : "CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2,"),
+    "export module-scoped custom providers panel and icon",
   );
 }
 
@@ -64,15 +111,17 @@ function ensurePanelLoaderExport(source) {
 // Provider data is stored in localStorage as JSON. TOML is generated
 // client-side and shown in a textarea for the user to copy.
 const PANEL_CODE = `
+const CDRJsx=a();
+const CDRReact=CDRInterop(y(),1);
 function CDRCustomProvidersPanel(){/* ${MARKER}:panel */
-let [providers,setProviders]=s.useState([]);
-let [editing,setEditing]=s.useState(null);
-let [showToml,setShowToml]=s.useState(!1);
-let [copied,setCopied]=s.useState(!1);
-let [removed,setRemoved]=s.useState([]);
-let [status,setStatus]=s.useState('');
-let [saving,setSaving]=s.useState(!1);
-s.useEffect(()=>{try{let d=JSON.parse(localStorage.getItem('${LS_KEY}')||'[]');if(Array.isArray(d))setProviders(d)}catch{}},[]);
+let [providers,setProviders]=CDRReact.useState([]);
+let [editing,setEditing]=CDRReact.useState(null);
+let [showToml,setShowToml]=CDRReact.useState(!1);
+let [copied,setCopied]=CDRReact.useState(!1);
+let [removed,setRemoved]=CDRReact.useState([]);
+let [status,setStatus]=CDRReact.useState('');
+let [saving,setSaving]=CDRReact.useState(!1);
+CDRReact.useEffect(()=>{try{let d=JSON.parse(localStorage.getItem('${LS_KEY}')||'[]');if(Array.isArray(d))setProviders(d)}catch{}},[]);
 let save=(next)=>{setProviders(next);try{localStorage.setItem('${LS_KEY}',JSON.stringify(next.map(({api_key,...p})=>p)))}catch{}};
 let addProvider=()=>{let id='prov-'+Date.now();let p={id,name:'',display_name:'',base_url:'',api_key:'',model:'',env_key:'',active:providers.length===0};let next=[...providers,p];save(next);setEditing(id)};
 let updateProvider=(id,field,val)=>{let next=providers.map(p=>p.id===id?{...p,[field]:val}:p);save(next)};
@@ -88,7 +137,7 @@ let labelStyle={display:'block',fontSize:'12px',color:'var(--token-text-tertiary
 let btnStyle={padding:'8px 16px',borderRadius:'8px',border:'1px solid var(--token-border,rgba(255,255,255,.15))',background:'transparent',color:'inherit',fontSize:'14px',cursor:'pointer'};
 let primaryBtn={...btnStyle,background:'var(--token-main,#2563eb)',borderColor:'transparent',color:'#fff',fontWeight:600};
 let cardStyle={border:'1px solid var(--token-border,rgba(255,255,255,.1))',borderRadius:'12px',padding:'16px',marginBottom:'12px'};
-let el=(tag,props,...kids)=>{let p={...props};if(kids.length===1)p.children=kids[0];else if(kids.length>1)p.children=kids;return(0,U.jsx)(tag,p)};
+let el=(tag,props,...kids)=>{let p={...props};if(kids.length===1)p.children=kids[0];else if(kids.length>1)p.children=kids;return(0,CDRJsx.jsx)(tag,p)};
 return el('div',{style:{padding:'24px',maxWidth:'680px'},['data-cdr-custom-providers']:!0},
   el('h2',{style:{fontSize:'20px',fontWeight:700,marginBottom:'4px'}},'Custom Models & Providers'),
   el('p',{style:{fontSize:'14px',color:'var(--token-text-tertiary,#888)',marginBottom:'20px'}},'Add Responses API-compatible providers and save them directly to Codex config.'),
@@ -161,11 +210,10 @@ function patchSectionsBundle(source) {
   //    before the it={...} map. The it map maps slugs to ICON components (not panels).
   //    So "custom-providers" maps to CDRCustomProvidersIcon, not CDRCustomProvidersPanel.
   //    The bundle initializer publishes the panel after a real dynamic import.
-  const ICON_CODE = "\nfunction CDRCustomProvidersIcon(e){return(0,U.jsx)('svg',{width:24,height:24,viewBox:'0 0 24 24',fill:'none',xmlns:'http://www.w3.org/2000/svg',...e,children:(0,U.jsx)('path',{d:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z',fill:'currentColor'})})}\n";
   const itAnchor = "it={\"general-settings\":N,";
-  const itNew = "it={\"custom-providers\":CDRCustomProvidersIcon,\"general-settings\":N,";
+  const itNew = "it={\"custom-providers\":CDRCustomProvidersIconV2,\"general-settings\":N,";
   if (source.includes(itAnchor)) {
-    source = source.replace(itAnchor, ICON_CODE + "\n" + itNew);
+    source = source.replace(itAnchor, itNew);
   } else {
     throw new Error("it component map anchor not found");
   }
@@ -351,4 +399,4 @@ if (require.main === module) {
   try { main(); } catch (error) { console.error(error.stack || error); process.exitCode = 1; }
 }
 
-module.exports = { MARKER, LOADER_MARKER, PANEL_EXPORT_MARKER, SLUG, LS_KEY, ensurePanelLoaderExport, patchSectionsBundle, patchSettingsPage, patchMonolith };
+module.exports = { MARKER, LOADER_MARKER, PANEL_EXPORT_MARKER, ICON_EXPORT_MARKER, SLUG, LS_KEY, ensurePanelLoaderExport, patchSectionsBundle, patchSettingsPage, patchMonolith };
