@@ -13,9 +13,9 @@
 //    b) s4l section label switch + bump memo cache from 29→30
 //    c) L2l lazy panel load map (so the panel actually renders when clicked)
 //
-// The panel is a self-contained vanilla-JS React component (uses the JSX factory
-// already imported by the bundle). It manages provider configs in localStorage
-// and generates TOML snippets that the user can copy into ~/.codex/config.toml.
+// The panel is a self-contained React component. Non-secret draft metadata is
+// cached in localStorage, while Apply writes the real provider configuration
+// through Codex's existing config/batchWrite AppServer bridge.
 
 const fs = require("fs");
 const path = require("path");
@@ -49,15 +49,20 @@ let [providers,setProviders]=s.useState([]);
 let [editing,setEditing]=s.useState(null);
 let [showToml,setShowToml]=s.useState(!1);
 let [copied,setCopied]=s.useState(!1);
+let [removed,setRemoved]=s.useState([]);
+let [status,setStatus]=s.useState('');
+let [saving,setSaving]=s.useState(!1);
 s.useEffect(()=>{try{let d=JSON.parse(localStorage.getItem('${LS_KEY}')||'[]');if(Array.isArray(d))setProviders(d)}catch{}},[]);
-let save=(next)=>{setProviders(next);try{localStorage.setItem('${LS_KEY}',JSON.stringify(next))}catch{}};
-let addProvider=()=>{let id='prov-'+Date.now();let p={id,name:'',base_url:'',api_key:'',wire_api:'responses',model:'',env_key:''};let next=[...providers,p];save(next);setEditing(id)};
+let save=(next)=>{setProviders(next);try{localStorage.setItem('${LS_KEY}',JSON.stringify(next.map(({api_key,...p})=>p)))}catch{}};
+let addProvider=()=>{let id='prov-'+Date.now();let p={id,name:'',display_name:'',base_url:'',api_key:'',model:'',env_key:'',active:providers.length===0};let next=[...providers,p];save(next);setEditing(id)};
 let updateProvider=(id,field,val)=>{let next=providers.map(p=>p.id===id?{...p,[field]:val}:p);save(next)};
-let deleteProvider=(id)=>{let next=providers.filter(p=>p.id!==id);save(next);if(editing===id)setEditing(null)};
-let applyPreset=(preset)=>{let id='prov-'+Date.now();let p={id,...preset,api_key:'',model:''};let next=[...providers,p];save(next);setEditing(id)};
-let genToml=()=>{let lines=[];for(let p of providers){if(!p.name)continue;lines.push('[model_providers.'+p.name+']');lines.push('name = "'+(p.name.charAt(0).toUpperCase()+p.name.slice(1))+'"');if(p.base_url)lines.push('base_url = "'+p.base_url+'"');if(p.env_key)lines.push('env_key = "'+p.env_key.toUpperCase()+'"');else if(p.api_key)lines.push('env_key = "'+p.name.toUpperCase().replace(/[^A-Z0-9]/g,'')+'_API_KEY"');lines.push('wire_api = "'+(p.wire_api||'responses')+'"');lines.push('')}if(providers.some(p=>p.model&&p.name)){let m=providers.find(p=>p.model&&p.name);lines.push('model = "'+m.model+'"');lines.push('model_provider = "'+m.name+'"');lines.push('')}return lines.join('\\n')};
+let deleteProvider=(id)=>{let old=providers.find(p=>p.id===id);if(old?.name)setRemoved(v=>[...new Set([...v,old.name])]);let next=providers.filter(p=>p.id!==id);save(next);if(editing===id)setEditing(null)};
+let applyPreset=(preset)=>{let id='prov-'+Date.now();let p={id,...preset,api_key:'',model:'',active:providers.length===0};let next=[...providers,p];save(next);setEditing(id)};
+let validName=p=>/^[A-Za-z0-9_-]+$/.test(String(p.name||''))&&!['openai','ollama','lmstudio'].includes(String(p.name||'').toLowerCase());
+let genToml=()=>{let lines=[];for(let p of providers){if(!validName(p))continue;lines.push('[model_providers.'+p.name+']');lines.push('name = "'+(p.display_name||p.name)+'"');if(p.base_url)lines.push('base_url = "'+p.base_url+'"');if(p.env_key)lines.push('env_key = "'+p.env_key.toUpperCase()+'"');else if(p.api_key)lines.push('experimental_bearer_token = "<redacted>"');lines.push('wire_api = "responses"');lines.push('')}let m=providers.find(p=>p.active&&p.model&&validName(p));if(m){lines.push('model = "'+m.model+'"');lines.push('model_provider = "'+m.name+'"');lines.push('')}return lines.join('\\n')};
+let applyConfig=async()=>{if(saving)return;let clean=providers.filter(validName);if(clean.length!==providers.length){setStatus('Provider IDs may use letters, numbers, _ or - and cannot be openai, ollama, or lmstudio.');return}if(!clean.length&&removed.length===0){setStatus('Add a provider first.');return}let edits=[];for(let name of removed)edits.push({keyPath:'model_providers.'+name,value:null,mergeStrategy:'replace'});for(let p of clean){let value={name:p.display_name||p.name,wire_api:'responses'};if(p.base_url)value.base_url=p.base_url;if(p.env_key)value.env_key=p.env_key.toUpperCase();else if(p.api_key)value.experimental_bearer_token=p.api_key;edits.push({keyPath:'model_providers.'+p.name,value,mergeStrategy:'replace'})}let active=clean.find(p=>p.active&&p.model);if(active){edits.push({keyPath:'model_provider',value:active.name,mergeStrategy:'upsert'},{keyPath:'model',value:active.model,mergeStrategy:'upsert'})}setSaving(!0);setStatus('Saving to Codex config…');try{let write=globalThis.__cdrWriteConfigEdits;if(typeof write!=='function')throw Error('Codex config bridge is unavailable');await write(edits);setRemoved([]);save(clean.map(p=>({...p,api_key:''})));setStatus('Saved. New turns will use the updated config.')}catch(err){setStatus('Save failed: '+String(err&&err.message||err))}finally{setSaving(!1)}};
 let copyToml=()=>{try{navigator.clipboard.writeText(genToml());setCopied(!0);setTimeout(()=>setCopied(!1),2e3)}catch{}};
-let presets=[{name:'openrouter',base_url:'https://openrouter.ai/api/v1',wire_api:'responses',env_key:'OPENROUTER_API_KEY',label:'OpenRouter (300+ models)'}];
+let presets=[{name:'openrouter',display_name:'OpenRouter',base_url:'https://openrouter.ai/api/v1',env_key:'OPENROUTER_API_KEY',label:'OpenRouter'}];
 let inputStyle={width:'100%',padding:'8px 12px',borderRadius:'8px',border:'1px solid var(--token-border,rgba(255,255,255,.15))',background:'var(--token-main-surface,transparent)',color:'inherit',fontSize:'14px',outline:'none'};
 let labelStyle={display:'block',fontSize:'12px',color:'var(--token-text-tertiary,#888)',marginBottom:'4px',marginTop:'12px'};
 let btnStyle={padding:'8px 16px',borderRadius:'8px',border:'1px solid var(--token-border,rgba(255,255,255,.15))',background:'transparent',color:'inherit',fontSize:'14px',cursor:'pointer'};
@@ -66,7 +71,7 @@ let cardStyle={border:'1px solid var(--token-border,rgba(255,255,255,.1))',borde
 let el=(tag,props,...kids)=>{let p={...props};if(kids.length===1)p.children=kids[0];else if(kids.length>1)p.children=kids;return(0,U.jsx)(tag,p)};
 return el('div',{style:{padding:'24px',maxWidth:'680px'},['data-cdr-custom-providers']:!0},
   el('h2',{style:{fontSize:'20px',fontWeight:700,marginBottom:'4px'}},'Custom Models & Providers'),
-  el('p',{style:{fontSize:'14px',color:'var(--token-text-tertiary,#888)',marginBottom:'20px'}},'Add custom OpenAI-compatible model providers. Generate a TOML snippet to paste into ~/.codex/config.toml.'),
+  el('p',{style:{fontSize:'14px',color:'var(--token-text-tertiary,#888)',marginBottom:'20px'}},'Add Responses API-compatible providers and save them directly to Codex config.'),
   // Preset buttons
   el('div',{style:{marginBottom:'20px'}},
     el('p',{style:{...labelStyle,marginTop:'0'}},'Quick presets:'),
@@ -82,30 +87,30 @@ return el('div',{style:{padding:'24px',maxWidth:'680px'},['data-cdr-custom-provi
       )
     ),
     editing===p.id?el('div',{},
-      el('label',{style:labelStyle},'Provider name (used in TOML)'),
+      el('label',{style:labelStyle},'Provider ID'),
       el('input',{style:inputStyle,value:p.name,onChange:e=>updateProvider(p.id,'name',e.target.value),placeholder:'openrouter'}),
+      el('label',{style:labelStyle},'Display name'),
+      el('input',{style:inputStyle,value:p.display_name||'',onChange:e=>updateProvider(p.id,'display_name',e.target.value),placeholder:'OpenRouter'}),
       el('label',{style:labelStyle},'Base URL'),
       el('input',{style:inputStyle,value:p.base_url,onChange:e=>updateProvider(p.id,'base_url',e.target.value),placeholder:'https://openrouter.ai/api/v1'}),
-      el('label',{style:labelStyle},'API Key (stored locally, referenced as env var in TOML)'),
+      el('label',{style:labelStyle},'Direct bearer token (optional; env var is recommended)'),
       el('input',{type:'password',style:inputStyle,value:p.api_key,onChange:e=>updateProvider(p.id,'api_key',e.target.value),placeholder:'sk-...'}),
       el('label',{style:labelStyle},'Env var name (for config.toml env_key)'),
       el('input',{style:inputStyle,value:p.env_key,onChange:e=>updateProvider(p.id,'env_key',e.target.value),placeholder:'OPENROUTER_API_KEY'}),
-      el('label',{style:labelStyle},'Wire API'),
-      el('select',{style:inputStyle,value:p.wire_api,onChange:e=>updateProvider(p.id,'wire_api',e.target.value)},
-        el('option',{value:'responses'},'responses (recommended for Codex)'),
-        el('option',{value:'chat'},'chat (legacy)')
-      ),
-      el('label',{style:labelStyle},'Default model (optional, e.g. openai/gpt-5.3-codex)'),
-      el('input',{style:inputStyle,value:p.model,onChange:e=>updateProvider(p.id,'model',e.target.value),placeholder:'openai/gpt-5.3-codex'})
+      el('label',{style:labelStyle},'Default model (optional)'),
+      el('input',{style:inputStyle,value:p.model,onChange:e=>updateProvider(p.id,'model',e.target.value),placeholder:'provider/model-name'}),
+      el('label',{style:{...labelStyle,display:'flex',gap:'8px',alignItems:'center'}},el('input',{type:'checkbox',checked:!!p.active,onChange:e=>{let next=providers.map(x=>({...x,active:x.id===p.id?e.target.checked:!1}));save(next)}}),'Make this the active Codex provider/model')
     ):el('div',{style:{fontSize:'13px',color:'var(--token-text-tertiary,#aaa)'}},
-      el('div',{},'URL: '+(p.base_url||'—')+'  |  wire_api: '+(p.wire_api||'responses')+(p.model?'  |  model: '+p.model:''))
+      el('div',{},'URL: '+(p.base_url||'—')+'  |  Responses API'+(p.model?'  |  model: '+p.model:'')+(p.active?'  |  active':''))
     )
   )),
   // Add + TOML buttons
   el('div',{style:{display:'flex',gap:'8px',marginBottom:'20px'}},
     el('button',{onClick:addProvider,style:primaryBtn},'+ Add Provider'),
+    el('button',{onClick:applyConfig,style:primaryBtn,disabled:saving},saving?'Saving…':'Save to Codex'),
     el('button',{onClick:()=>setShowToml(!showToml),style:btnStyle,disabled:providers.length===0},showToml?'Hide TOML':'Generate TOML')
   ),
+  status?el('p',{role:'status',style:{fontSize:'13px',marginBottom:'16px',color:status.startsWith('Save failed')||status.startsWith('Provider IDs')?'#dc2626':'var(--token-text-secondary,#aaa)'}},status):null,
   // TOML output
   showToml&&providers.length>0?el('div',{style:{...cardStyle,background:'var(--token-code-surface,rgba(0,0,0,.3))'}},
     el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}},
@@ -114,7 +119,7 @@ return el('div',{style:{padding:'24px',maxWidth:'680px'},['data-cdr-custom-provi
     ),
     el('pre',{style:{whiteSpace:'pre-wrap',wordBreak:'break-all',fontSize:'13px',fontFamily:'monospace',margin:0,padding:'12px',background:'rgba(0,0,0,.2)',borderRadius:'8px',color:'var(--token-text-secondary,#ccc)'}},genToml())
   ):null,
-  el('p',{style:{fontSize:'12px',color:'var(--token-text-tertiary,#666)',marginTop:'16px'}},'Note: Set the env_key value in your shell environment (e.g. export OPENROUTER_API_KEY=sk-...). The API key you enter here is stored in localStorage only — it is NOT written to config.toml.')
+  el('p',{style:{fontSize:'12px',color:'var(--token-text-tertiary,#666)',marginTop:'16px'}},'Environment variables are recommended. A direct bearer token is written to config.toml only when supplied and is never cached in localStorage. Codex supports the Responses wire API for custom providers.')
 )}
 `;
 
@@ -159,13 +164,30 @@ function patchSectionsBundle(source) {
 // ─── Patch app-initial monolith: add custom-providers to r4l nav message map + s4l switch ───
 function patchMonolith(source) {
   const R4L_MARKER = MARKER + ":r4l";
-  if (source.includes(R4L_MARKER)) return source;
+  if (source.includes(R4L_MARKER)) {
+    if (!source.includes(MARKER + ":config-bridge")) {
+      throw new Error("custom providers nav exists but config bridge is missing");
+    }
+    return source;
+  }
+
+  // Expose the existing, host-aware config dispatcher to the settings panel.
+  // The panel sends the same batchWrite shape used by native settings.
+  const bridgeAnchor = 'r4l=nd({';
+  const bridgeCode = "globalThis.__cdrWriteConfigEdits=edits=>Rf(`batch-write-config-value`,{hostId:`local`,edits,filePath:null,expectedVersion:null,reloadUserConfig:!0});/* " + MARKER + ":config-bridge */";
+  if (source.includes(bridgeAnchor)) {
+    source = replaceOne(source, bridgeAnchor, bridgeCode + bridgeAnchor, "install custom-provider config bridge");
+  } else {
+    throw new Error("settings nav map initializer not found for config bridge");
+  }
 
   // 1. Add custom-providers entry to the r4l nav message descriptor map.
   //    r4l=nd({..."skills-settings":{...}})
   //    We insert before the closing }} of the skills-settings entry.
   const r4lAnchor = '"skills-settings":{id:`settings.nav.skills-settings`,defaultMessage:`Skills`,description:`Title for skills settings section`}}';
-  const r4lNew = r4lAnchor.slice(0, -2) + ',"custom-providers":{id:`settings.nav.custom-providers`,defaultMessage:`Custom Providers`,description:`Title for custom models and providers settings section`}}';
+  // Keep the first trailing brace (it closes skills-settings), insert the new
+  // sibling, then reuse the final brace as the nav-map close.
+  const r4lNew = r4lAnchor.slice(0, -1) + ',"custom-providers":{id:`settings.nav.custom-providers`,defaultMessage:`Custom Providers`,description:`Title for custom models and providers settings section`}}';
   if (source.includes(r4lAnchor)) {
     source = replaceOne(source, r4lAnchor, r4lNew, "add custom-providers to r4l nav message map");
   } else {

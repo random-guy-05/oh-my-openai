@@ -305,14 +305,9 @@ const OLD_CHAT_CTX =
   "let prompt=text;\n" +
   "if(!continuing&&priorContext)prompt=priorContext+'\\n\\n<current_user_message>\\n'+text+'\\n</current_user_message>';";
 
-// bugfix-v1: gate on !continuing so the codex transcript is only injected on
-// the first chat message of a conversation, not on every subsequent send.
-// Without this, watermark resets (e.g. after a mode-switch reload) cause the
-// entire codex transcript to be re-injected into every message prompt, which
-// the user sees as "prompting the transcript."
 const NEW_CHAT_CTX =
   "let _cdrPend=null;/* " + MARKER + ":chat-delta */\n" +
-  "try{if(!continuing&&globalThis.__cdrHandoffV1)_cdrPend=globalThis.__cdrHandoffV1.pendingForChat(key)}catch{}\n" +
+  "try{_cdrPend=globalThis.__cdrHandoffV1?globalThis.__cdrHandoffV1.pendingForChat(key):null}catch{}\n" +
   "let prompt=text;\n" +
   "if(_cdrPend&&_cdrPend.text)prompt=_cdrPend.text+'\\n\\n<current_user_message>\\n'+text+'\\n</current_user_message>';";
 
@@ -329,22 +324,34 @@ mono = replaceOne(
 );
 console.log("[ok] codex->chat watermark commits after a successful send");
 
-// 4. chat -> codex: prepend pending chat turns on the interactive send path.
-//    `l` is the destructured `prompt` parameter of the send function, so it
-//    is reassignable, and injecting ahead of `let v=CH(),y=l.trim();` means
-//    both `v` and `y` observe the augmented prompt.
+// 4. chat -> codex: add pending Chat turns only to the transport prompt.
+//    `y` captures the exact user-visible text first. We then augment `l`, and
+//    point Mka's outbound prompt at l.trim(). This prevents internal handoff
+//    XML from appearing in the rendered user message.
 const SEND_ANCHOR = "let v=CH(),y=l.trim();";
 const SEND_INJECT =
-  "try{/* " + MARKER + ":codex-delta */" +
+  "let _cdrCodexPend=null,_cdrCodexKey=null;try{/* " + MARKER + ":codex-delta-hidden */" +
   "let _h=globalThis.__cdrHandoffV1;" +
   "if(_h&&!_h.isChatMode()){" +
-  "let _k=String(n||'').includes(':')?String(n):'local:'+n," +
-  "_p=_h.pendingForCodex(_k);" +
-  "if(_p&&_p.text){l=_p.text+'\\n\\n'+String(l||'');_h.commitCodex(_k,_p.mark)}" +
+  "_cdrCodexKey=String(n||'').includes(':')?String(n):'local:'+n;" +
+  "_cdrCodexPend=_h.pendingForCodex(_cdrCodexKey);" +
+  "if(_cdrCodexPend&&_cdrCodexPend.text)l=_cdrCodexPend.text+'\\n\\n<current_user_message>\\n'+String(l||'')+'\\n</current_user_message>'" +
   "}}catch(_e){try{console.error('[cdr] codex handoff',_e)}catch{}}\n";
 
-mono = replaceOne(mono, SEND_ANCHOR, SEND_INJECT + SEND_ANCHOR, "chat->codex delta injection");
-console.log("[ok] chat->codex injected on the interactive send path");
+mono = replaceOne(mono, SEND_ANCHOR, SEND_ANCHOR + SEND_INJECT, "hidden chat->codex delta injection");
+mono = replaceOne(
+  mono,
+  "messageMetadata:u,prompt:y,systemHints:d",
+  "messageMetadata:u,prompt:l.trim(),systemHints:d",
+  "use augmented prompt only for the outbound message",
+);
+mono = replaceOne(
+  mono,
+  "submittedAtMs:v,tppExecutionTarget:p})}",
+  "submittedAtMs:v,tppExecutionTarget:p}).then(_cdrResult=>{try{if(_cdrCodexPend&&globalThis.__cdrHandoffV1)globalThis.__cdrHandoffV1.commitCodex(_cdrCodexKey,_cdrCodexPend.mark)}catch{}return _cdrResult})}",
+  "commit chat->codex watermark after successful transport",
+);
+console.log("[ok] chat->codex context is transport-only and commits after success");
 
 // ─── Thread-bundle edit ─────────────────────────────────────────────
 // 5. Feed the publisher's transcript lines into the handoff store.

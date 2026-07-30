@@ -235,7 +235,7 @@ function testPatches() {
     );
   }
   assert.ok(selector.includes("Chat preset — same task and history"));
-  assert.ok(selector.includes("children:`ChatGPT`"));
+  assert.ok(selector.includes("children:`ChatGPT Work`"));
   assert.ok(selector.includes("CDRRuntime.setMode(e)"));
   assert.ok(selector.includes("nextMode:`codex`"));
   assert.ok(!selector.includes("nextMode:e"));
@@ -399,9 +399,10 @@ function testCompiledInvariants() {
   const css = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("app-") && name.endsWith(".css"))), "utf8");
   assert.ok(main.includes("codex-rebuild:mode-ui-invariants-v1:mode-nav"), "mode navigation handler is missing");
   assert.ok(!main.includes("if(CDRM!==`chat`)p(CDRM)"), "old local-only handler still present");
-  assert.ok(main.includes("CDRM===`work`){try{p(CDRM);window.location.reload()}"), "work mode does not reload into ChatGPT UI");
-  assert.ok(main.includes("CDRM===`chat`){try{window.location.reload()}"), "chat mode does not reload into local Chat UI");
-  assert.ok(main.includes("children:n?`ChatGPT`:`ChatGPT`"), "Work label is not ChatGPT");
+  assert.ok(main.includes("if(CDRM===`work`||CDRM===`codex`)p(CDRM)"), "Work/Codex native navigation is missing");
+  assert.ok(!main.includes("CDRM===`chat`){try{p(CDRM)"), "Chat mode still navigates away from the native task");
+  assert.ok(!main.includes("CDRM===`chat`){try{window.location.reload()}"), "Chat mode still reloads");
+  assert.ok(main.includes("children:n?`ChatGPT Work`:`ChatGPT Work`"), "Work label is not ChatGPT Work");
   assert.ok(!main.includes("children:n?(0,W8.jsx)(Z,{...G8.chatGpt})"), "Work label can still render as upstream ChatGPT");
   assert.ok(
     main.includes('modelControllers.add(controller);\n    return () => modelControllers.delete(controller);'),

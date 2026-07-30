@@ -24,6 +24,10 @@ const CODEX_DOCK_ICON_RESOURCE_NAMES = [
 ];
 const WRAPPER_ID = "io.haleclipse.codexdesktop.launcher";
 const RUNTIME_ID = "io.haleclipse.codexdesktop.runtime";
+// Ad-hoc signatures otherwise default their designated requirement to a CDHash,
+// which changes whenever the ASAR changes and makes macOS ask for Keychain
+// permission again after every rebuild. Keep the private runtime identity stable.
+const RUNTIME_DESIGNATED_REQUIREMENT = `=designated => identifier "${RUNTIME_ID}"`;
 const SOURCE_RUNTIME_IDS = new Set(["com.openai.codex", RUNTIME_ID]);
 
 function run(executable, args, options = {}) {
@@ -244,9 +248,6 @@ function main() {
     fs.renameSync(path.join(uniqueRuntimeApp, "Contents", "MacOS", "ChatGPT"),
       uniqueRuntimeExecutable);
 
-    fs.renameSync(path.join(uniqueRuntimeApp, "Contents", "MacOS", "ChatGPT"),
-      uniqueRuntimeExecutable);
-
     replacePlistString(uniqueRuntimeInfo, "CFBundleIdentifier", RUNTIME_ID);
     replacePlistString(uniqueRuntimeInfo, "CFBundleExecutable", "Codex");
     replacePlistString(uniqueRuntimeInfo, "CFBundleVersion", customBuild);
@@ -289,7 +290,9 @@ function main() {
     // official Codex CLI, stays byte-for-byte identical to the source runtime.
     run("/usr/bin/codesign", [
       "--force", "--sign", "-", "--timestamp=none", "--options", "runtime",
-      "--entitlements", sourceEntitlements, uniqueRuntimeApp,
+      "--entitlements", sourceEntitlements,
+      "--requirements", RUNTIME_DESIGNATED_REQUIREMENT,
+      uniqueRuntimeApp,
     ]);
     run("/usr/bin/codesign", ["--verify", "--deep", "--strict", uniqueRuntimeApp]);
     run("/usr/bin/codesign", ["--verify", "--strict", uniqueRuntimeCli]);

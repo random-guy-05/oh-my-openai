@@ -4,16 +4,18 @@ Supported upstream: official Intel macOS app `26.721.41059` (`5848`).
 
 ## Conversation architecture
 
-Chat, ChatGPT Work, and Codex are local presets on the same native Codex task.
-Preset selection never changes the route, task ID, sidebar data, or native
-history owner. Work/Codex use AppServer; Chat is intercepted in the local
-submitter and uses the signed-in ChatGPT Web `startCompletionStream` client,
-while keeping the local task identity and transcript.
+Chat mode remains on the current native Codex task and never swaps the route,
+task ID, sidebar data, or native history owner for a ChatGPT conversation.
+ChatGPT Work and Codex select their corresponding native product surfaces.
+Chat is intercepted in the local submitter and uses the signed-in ChatGPT Web
+`startCompletionStream` client while keeping the local task identity and
+mixed transcript.
 
 `scripts/patch-local-canonical-mode.js`:
 
 - stores only the selected preset in `cdr-product-mode`;
-- keeps the native product surface normalized to Codex;
+- keeps Chat on the native local-task surface and uses native Work/Codex
+  navigation for the other presets;
 - updates the native model-and-effort setting only on an explicit preset click;
 - overrides the next local collaboration mode with the same model and effort;
 - colors the native send control by preset;
@@ -28,6 +30,16 @@ namespaces. `CDRStickyChatSend` persists every Chat user/assistant row under
 `cdr-thread-extras:local:<task-id>`. `_apply-chat-extras-render-v1.js` overlays
 those rows into the native task transcript, so switching tasks and modes does
 not hide or replace prior history.
+
+`_apply-handoff-sync-v1.js` attaches only the missing cross-mode transcript
+delta as hidden transport context and advances its watermark only after a
+successful send. `_apply-chat-fake-stream-v1.js` retains its legacy filename
+but now smooths live snapshots; it does not replay a completed response.
+
+The visible Custom Providers settings panel writes `model_providers.<id>`
+through the native config bridge. It supports Codex's Responses wire API,
+rejects reserved built-in provider IDs, prefers `env_key`, and never persists
+direct bearer-token values in local storage.
 
 Referenced-thread context uses upstream `thread/read` with `includeTurns: true`.
 Background transcript hydration also retains full turns. These reads are local

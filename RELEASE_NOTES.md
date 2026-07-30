@@ -1,3 +1,46 @@
+# Codex Intel 26.721.41059-custom.6
+
+## What's new
+
+- **Smooth, correctly routed Chat sends**: Chat remains in the current native
+  Codex task and navigates only to `/local/<task-id>`. It never injects a
+  ChatGPT conversation ID into Codex sidebar or routing state.
+- **Correct stream lifecycle**: live ChatGPT snapshots render at a steady
+  cadence, the final drain is bounded, and Stop reliably returns to the
+  preset-colored Send button when the stream finishes.
+- **Full mixed conversation history**: Chat and Codex rows remain visible after
+  mode and task switches without overwriting native turn bookkeeping.
+- **Cleaner Chat ↔ Codex handoffs**: only the missing transcript delta is sent
+  as hidden context, successful sends advance the watermark, and the visible
+  user message is not rewritten.
+- **Restored ChatGPT Work and immediate mode UI**: the Work surface is distinct,
+  while every mode click updates the model, effort, and Send color immediately.
+- **Usable Custom Providers settings**: the visible panel writes actual Codex
+  `model_providers` configuration for the Responses API, recommends env-var
+  credentials, rejects reserved IDs, and never caches bearer tokens locally.
+- **Release hardening**: 17 behavioral feature gates, focused integration and
+  transport tests, 27-feature transactional replay, second-pass byte
+  idempotency, and expanded packaged-ASAR verification.
+- **Stable private-runtime identity**: side-by-side builds use a stable
+  designated requirement, so an approved Keychain ACL no longer changes merely
+  because a later custom release has different app contents.
+
+## Install
+
+1. Prefer `Codex-side-by-side-mac-x64-26.721.41059.dmg` for the isolated,
+   rollback-safe custom profile.
+2. Or use `Codex-mac-x64-26.721.41059.dmg` for the standard install.
+3. Drag `Codex.app` into Applications. If Gatekeeper blocks it, Control-click
+   the app and choose Open.
+
+Homebrew:
+
+```sh
+brew install --cask https://raw.githubusercontent.com/random-guy-05/oh-my-openai/main/Casks/codex-desktop.rb
+```
+
+---
+
 # Codex Intel 26.721.41059-custom.5
 
 ## What's new

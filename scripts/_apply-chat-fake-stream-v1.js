@@ -1,30 +1,26 @@
 #!/usr/bin/env node
 "use strict";
 
-// chat-fake-stream-v1 — Smooth Chat-mode streaming animation.
+// chat-smooth-stream-v2 — Smooth real Chat-mode streaming without fake delay.
 //
-// Problem: During a Chat-mode send, the real ChatGPT API delivers text in
-// irregular bursts (via scheduleFlush at 45ms). This looks "not smooth".
+// Problem: ChatGPT stream snapshots can arrive in irregular bursts. Rendering
+// every burst causes visual jumps, while waiting for the entire response and
+// replaying it afterward adds fake latency and keeps the Stop state around.
 //
 // Solution:
-// 1. Suppress all intermediate flushes during the real API call (no-op
-//    scheduleFlush). Instead, immediately upsert an empty status:'streaming'
-//    entry so the UI shows a "thinking" indicator.
-// 2. After the full response arrives (the await Promise resolves), animate the
-//    text word-by-word with timed delays, upserting progressively longer text
-//    with status:'streaming'.
-// 3. When the animation completes, upsert the full text with status:'completed'.
+// 1. Publish an empty streaming row immediately so the current task responds.
+// 2. Keep the real stream as the source of truth and reveal toward its latest
+//    snapshot on a short 32ms cadence.
+// 3. Drain any small remainder for at most 650ms, then publish completed text.
 //
-// Because CDRStickyChatSend is async and the send hook awaits it, the stop
-// button stays visible throughout (thinking + animation). When the bridge
-// returns, the send hook clears streamState, so stop button reverts to send.
+// The send hook clears stream state when this returns, so Stop becomes Send.
 const fs = require("fs");
 const path = require("path");
 const acorn = require("acorn");
 
 const ROOT = path.join(__dirname, "..");
 const ASSETS = path.join(ROOT, "src/mac-x64/_asar/webview/assets");
-const MARKER = "codex-rebuild:chat-fake-stream-v1";
+const MARKER = "codex-rebuild:chat-smooth-stream-v2";
 
 function asset(prefix) {
   const name = fs.readdirSync(ASSETS).find((f) => f.startsWith(prefix) && f.endsWith(".js"));
@@ -41,13 +37,13 @@ function replaceOne(source, oldValue, newValue, label) {
 // Patch the CDRStickyChatSend bridge in the monolith.
 // Two surgical replacements inside CDRStickyChatSend:
 //
-// A) Suppress intermediate flushes + add thinking upsert
-// B) Replace post-stream flush with word-by-word animation
+// A) Replace burst rendering with a bounded live smoother + thinking row
+// B) Drain the live smoother briefly and publish the final completed row
 function patchMain(source) {
   if (source.includes(MARKER + ":applied")) {
     // Idempotency: verify markers are present
-    if (!source.includes(MARKER + ":thinking")) throw new Error("fake-stream thinking marker missing on re-run");
-    if (!source.includes(MARKER + ":animate")) throw new Error("fake-stream animate marker missing on re-run");
+    if (!source.includes(MARKER + ":thinking")) throw new Error("smooth-stream thinking marker missing on re-run");
+    if (!source.includes(MARKER + ":live")) throw new Error("smooth-stream live marker missing on re-run");
     return source;
   }
 
@@ -55,56 +51,51 @@ function patchMain(source) {
     throw new Error("CDRStickyChatSend bridge is missing — run _apply-26721-all-features.js first");
   }
 
-  // ─── A) Suppress intermediate flushes + add thinking upsert ───
+  // ─── A) Smooth the live snapshots + add thinking upsert ───
   const flushOld =
+    "let flushTimer=null;\n" +
+    "let flush=()=>{if(flushTimer!=null){clearTimeout(flushTimer);flushTimer=null}if(assistant)upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'streaming'})};\n" +
     "let scheduleFlush=()=>{if(flushTimer==null)flushTimer=setTimeout(flush,45)};\n" +
     "try{\n" +
     "await new Promise((resolve,reject)=>{";
 
   const flushNew =
-    "let scheduleFlush=()=>{};\n" +
+    "let flushTimer=null,displayed='';\n" +
+    "let scheduleFlush=()=>{if(flushTimer==null)flushTimer=setTimeout(flush,32)};\n" +
+    "let flush=()=>{/* " + MARKER + ":live */flushTimer=null;if(!assistant)return;if(!assistant.startsWith(displayed))displayed='';let remaining=assistant.length-displayed.length;if(remaining<=0)return;let step=Math.max(1,Math.min(remaining,Math.ceil(remaining*.35)));displayed=assistant.slice(0,displayed.length+step);upsert({id:assistantId,role:'assistant',text:displayed,source:'chat',status:'streaming'});if(displayed.length<assistant.length)scheduleFlush()};\n" +
     "/* " + MARKER + ":thinking */\n" +
     "upsert({id:assistantId,role:'assistant',text:'',source:'chat',status:'streaming'});\n" +
     "try{\n" +
     "await new Promise((resolve,reject)=>{";
 
   if (source.includes(flushOld)) {
-    source = replaceOne(source, flushOld, flushNew, "suppress intermediate flushes + thinking upsert");
+    source = replaceOne(source, flushOld, flushNew, "install live stream smoother + thinking upsert");
   } else {
-    throw new Error("scheduleFlush anchor not found — bridge may have drifted");
+    throw new Error("stream flush anchor not found — bridge may have drifted");
   }
 
-  // ─── B) Replace post-stream flush with word-by-word animation ───
+  // ─── B) Drain the live smoother, then complete ───
   const postStreamOld =
     "flush();\n" +
     "if(!assistant)assistant='Chat returned no displayable text.';\n" +
     "upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'completed'});";
 
-  // Animation: split into words, reveal progressively, ~2s total, max 60 steps.
-  // Each step upserts with status:'streaming' so the UI shows incremental text.
-  // Final upsert with status:'completed' signals the UI to stop the spinner.
   const postStreamNew =
-    "if(flushTimer!=null){clearTimeout(flushTimer);flushTimer=null}\n" +
     "if(!assistant)assistant='Chat returned no displayable text.';\n" +
-    "/* " + MARKER + ":animate */\n" +
-    "{let _w=assistant.split(/(\\s+)/),_total=_w.length,_step=Math.max(1,Math.ceil(_total/60)),_s=0,_ms=Math.min(50,Math.max(12,Math.ceil(2000/Math.ceil(_total/_step))));" +
-    "while(_s<_total){_s=Math.min(_total,_s+_step);" +
-    "upsert({id:assistantId,role:'assistant',text:_w.slice(0,_s).join(''),source:'chat',status:'streaming'});" +
-    "await new Promise(r=>setTimeout(r,_ms))}}\n" +
-    "upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'completed'});\n" +
-    "/* codex-rebuild:bugfix-v1:stop */\n" +
-    "try{if(e&&e.streamState){if(e.streamState.streamingConversations)e.streamState.streamingConversations.delete(t);if(typeof e.streamState.deleteConversationStreamRole==='function')e.streamState.deleteConversationStreamRole(t);else if(typeof e.streamState.setConversationStreamRole==='function')e.streamState.setConversationStreamRole(t,null);if(typeof e.streamState.clearConversationStreaming==='function')e.streamState.clearConversationStreaming(t)}if(e&&typeof e.setConversationStreamRole==='function')e.setConversationStreamRole(t,null);if(e&&typeof e.notifyConversationUpdated==='function')e.notifyConversationUpdated(t);if(e&&typeof e.broadcastConversationSnapshot==='function')e.broadcastConversationSnapshot(t)}catch{}\n" +
-    "try{window.dispatchEvent(new CustomEvent('cdr-thread-extras-change',{detail:{key:(String(t||'').includes(':')?t:'local:'+t),rows:null}}))}catch{}";
+    "/* " + MARKER + ":drain */scheduleFlush();\n" +
+    "{let _deadline=Date.now()+650;while(displayed.length<assistant.length&&Date.now()<_deadline)await new Promise(r=>setTimeout(r,16))}\n" +
+    "if(flushTimer!=null){clearTimeout(flushTimer);flushTimer=null}displayed=assistant;\n" +
+    "upsert({id:assistantId,role:'assistant',text:assistant,source:'chat',status:'completed'});";
 
   if (source.includes(postStreamOld)) {
-    source = replaceOne(source, postStreamOld, postStreamNew, "word-by-word animation");
+    source = replaceOne(source, postStreamOld, postStreamNew, "bounded live-stream drain");
   } else {
     throw new Error("post-stream flush anchor not found — bridge may have drifted");
   }
 
   // ─── Verify + mark applied ───
   if (!source.includes(MARKER + ":thinking")) throw new Error("thinking marker did not land");
-  if (!source.includes(MARKER + ":animate")) throw new Error("animate marker did not land");
+  if (!source.includes(MARKER + ":live")) throw new Error("live smoother marker did not land");
 
   // Parse-check the modified monolith
   try {
@@ -124,7 +115,7 @@ function main() {
   if (!process.argv.includes("--check") && next !== source) {
     fs.writeFileSync(mainFile, next);
   }
-  console.log(process.argv.includes("--check") ? "chat fake-stream check ok" : "chat fake-stream patched");
+  console.log(process.argv.includes("--check") ? "chat smooth-stream check ok" : "chat smooth-stream patched");
 }
 
 if (require.main === module) {

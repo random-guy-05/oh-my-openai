@@ -81,6 +81,21 @@ function main() {
 
   if (mono.includes(MARKER + ":send-hook")) {
     console.log("[skip] send hook already hardened");
+  } else if (
+    mono.includes("codex-rebuild:all-features-26721-v1:send-hook") &&
+    mono.includes("codex-rebuild:chat-stream-clear-v1") &&
+    mono.includes("typeof e.streamState.deleteConversationStreamRole==='function'")
+  ) {
+    // The owning all-features patch now emits the fully hardened hook. Do not
+    // stack a second near-duplicate replacement on it; tag the validated hook
+    // so later idempotency checks still prove this stage ran.
+    mono = replaceOne(
+      mono,
+      "/* codex-rebuild:all-features-26721-v1:send-hook */",
+      `/* codex-rebuild:all-features-26721-v1:send-hook *//* ${MARKER}:send-hook */`,
+      "tag already-hardened chat send hook",
+    );
+    console.log("[ok] existing Chat send hook already has complete stream cleanup");
   } else if (mono.includes(OLD_HOOK_WITH_CLEAR)) {
     mono = replaceOne(mono, OLD_HOOK_WITH_CLEAR, NEW_HOOK, "harden chat send hook (stream-clear variant)");
     console.log("[ok] chat send no longer falls through to Codex (stream-clear variant)");
@@ -123,18 +138,6 @@ function main() {
 
     mono = mono.slice(0, qmsStart) + SELECTOR + mono.slice(qmsStart);
     console.log("[ok] CDRChatFlatSelector declared");
-  }
-
-  // 2b) Patch composer stop button for chat mode
-  {
-    const zaOld = 'Za=!Xa&&Ie&&!ya?`stop`:`submit`';
-    const zaNew = "Za=!Xa&&Ie&&!ya&&(globalThis.__cdrLocalModeV4?.mode?.()!=='chat')?`stop`:`submit`";
-    if (mono.includes(zaOld) && !mono.includes('globalThis.__cdrLocalModeV4?.mode')) {
-      mono = mono.split(zaOld).join(zaNew);
-      console.log('[ok] Composer stop button patched for chat mode');
-    } else {
-      console.log('[skip] Za stop button patch already applied');
-    }
   }
 
   // 3) Patch QMs body: mode state, catalog load, flat render

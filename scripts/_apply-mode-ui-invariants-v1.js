@@ -67,7 +67,7 @@ function patchMain(source) {
 
   const navigationOld = "onModeSelect:(CDRM)=>{CDRSetMode(CDRM);CDRRuntime.setMode(CDRM);if(CDRM!==`chat`)p(CDRM)}";
   if (source.includes(navigationOld)) {
-    source = replaceCount(source, navigationOld, `onModeSelect:(CDRM)=>{/* ${MARKER}:mode-nav */CDRSetMode(CDRM);CDRRuntime.setMode(CDRM);if(CDRM===\`work\`){try{p(CDRM);window.location.reload()}catch{}}else if(CDRM===\`chat\`){try{window.location.reload()}catch{}}else p(CDRM)}`, 1, "mode navigation (work+chat reload, codex navigates)");
+    source = replaceCount(source, navigationOld, `onModeSelect:(CDRM)=>{/* ${MARKER}:mode-nav */CDRSetMode(CDRM);CDRRuntime.setMode(CDRM);if(CDRM===\`work\`||CDRM===\`codex\`)p(CDRM)}`, 1, "Chat stays local; Work/Codex use their native surfaces");
   } else if (!source.includes(`${MARKER}:mode-nav`)) {
     throw new Error("mode navigation handler is missing");
   }
@@ -84,14 +84,14 @@ function patchMain(source) {
   const selectorNode = functionContaining(source, "codex-rebuild:local-canonical-selector-v3");
   let selector = source.slice(selectorNode.start, selectorNode.end);
   selector = selector
-    .replaceAll("(0,W8.jsx)(Z,{...G8.chatGpt})", "`ChatGPT`")
-    .replaceAll("(0,W8.jsx)(Z,{...G8.work})", "`ChatGPT`")
-    .replaceAll("o.formatMessage(G8.chatGpt)", "`ChatGPT`")
-    .replaceAll("o.formatMessage(G8.work)", "`ChatGPT`");
+    .replaceAll("(0,W8.jsx)(Z,{...G8.chatGpt})", "`ChatGPT Work`")
+    .replaceAll("(0,W8.jsx)(Z,{...G8.work})", "`ChatGPT Work`")
+    .replaceAll("o.formatMessage(G8.chatGpt)", "`ChatGPT Work`")
+    .replaceAll("o.formatMessage(G8.work)", "`ChatGPT Work`");
   source = source.slice(0, selectorNode.start) + selector + source.slice(selectorNode.end);
 
-  if (!selector.includes("ChatGPT") || selector.includes("G8.chatGpt")) {
-    throw new Error("ChatGPT label did not replace upstream ChatGPT label");
+  if (!selector.includes("ChatGPT Work") || selector.includes("G8.chatGpt")) {
+    throw new Error("ChatGPT Work label did not replace upstream ChatGPT label");
   }
   if (!source.includes(`${MARKER}:applied`)) source += `\n/* ${MARKER}:applied */\n`;
   return source;

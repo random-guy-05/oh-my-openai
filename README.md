@@ -40,14 +40,15 @@ brew uninstall --zap --cask codex-desktop
 > with `homebrew-`. This is intentional — the cask lives alongside the build
 > scripts in the same repo.
 
-## Current build (26.721.41059) — July 29, 2026
+## Current build (26.721.41059-custom.6) — July 29, 2026
 
 ### Recent fixes
-- **Stop button fix**: Composer's stop button no longer gets stuck in chat mode. The `submitButtonMode` computation excludes chat mode so the send icon appears immediately after responses.
-- **"No rollout found" fix**: Removed `cdr-thread-map` localStorage writes that were mapping ChatGPT conversation IDs into the Codex thread store, causing thread corruption.
-- **New chat navigation**: Chat mode now auto-navigates to newly created chats via `window.location.hash`.
-- **Fake-stream animation**: Chat responses are animated word-by-word for a smooth streaming feel, rather than appearing in irregular bursts.
-- **Custom Providers settings**: A new "Custom Providers" section in Settings allows adding custom model providers by base URL and API key.
+- **Correct Chat lifecycle**: The composer shows Stop only while the real ChatGPT stream is active and returns to the preset-colored Send button when the terminal event arrives.
+- **Native task navigation**: A Chat send navigates to `/local/<task-id>` when needed. ChatGPT conversation IDs are never written into Codex routing or sidebar state.
+- **Live stream smoothing**: Real stream snapshots are rendered at a short, even cadence, with a bounded final drain instead of an artificial post-response word replay.
+- **Complete mixed history**: Persisted Chat rows remain visible beside native Codex rows after changing modes or tasks, without replacing native turn IDs.
+- **Clean handoffs**: Chat and Codex exchange only the missing transcript delta as hidden context; the message the user sees remains exactly what they typed.
+- **Visible Custom Providers settings**: Settings can write Responses-compatible providers to Codex config. Environment-variable credentials are recommended, direct bearer tokens use Codex's supported config field, and secrets are never cached in local storage.
 
 ---
 
@@ -62,7 +63,7 @@ brew uninstall --zap --cask codex-desktop
 These are the actual features implemented in the repository (look in `scripts/` and `src/mac-x64/_asar/` for the code):
 
 1) Chat first, same-task behavior
-- Chat, ChatGPT Work, and Codex are local presets; switching them never swaps the sidebar, route, task ID, or native history.
+- Chat mode stays on the current native Codex task, route, and sidebar. ChatGPT Work and Codex activate their corresponding native surfaces without repurposing ChatGPT conversation IDs as Codex task IDs.
 - The local Codex submitter routes Chat turns through ChatGPT Web's `startCompletionStream`; `CDRStickyChatSend` persists every Chat row and the transcript overlay renders it in the same task.
 - Background resume & handoffs are routed to a lightweight GPT-5.6 flavor (Luna Light) to resume state or fetch context without consuming the heavier model budget.
 
@@ -70,7 +71,7 @@ These are the actual features implemented in the repository (look in `scripts/` 
 - Chat mode reads the signed-in ChatGPT Web `models()` response as its source of truth, shows the current selectable models, and filters only explicit Codex namespaces. It does not use obsolete hard-coded fallback families.
 
 3) UI‑visible presets (Chat, ChatGPT Work, Codex) with safe semantics
-- Three presets are exposed in the selector without changing route, task id, transcript ownership, or history hydration. The model selector updates immediately on every mode click.
+- Three presets are exposed in the selector. Chat keeps the native task/sidebar in place; mode changes immediately update the model selector, effort, and preset-colored Send button.
 - The selector colorization and model/effort mapping are local UI conveniences; authoritative history remains on AppServer and all thread reads/hydration use upstream `thread/read` with `includeTurns: true` (see `CUSTOM_BUILD.md` and `scripts/patch-local-canonical-mode.js`).
 
 4) Seamless chat + minimal server-side mutation

@@ -94,11 +94,12 @@ try{
     }).filter(Boolean));
     if(CDRExtraMapped.length){
       let CDRMerge=(CDRNative,CDRChat)=>[...CDRNative.map((entry,index)=>({entry,index,ts:Number(entry?.turn?.turnStartedAtMs)||Number.MAX_SAFE_INTEGER-1,kind:0})),...CDRChat.map((entry,index)=>({entry,index,ts:Number(entry?.turn?.turnStartedAtMs)||Number.MAX_SAFE_INTEGER,kind:1}))].sort((a,b)=>a.ts-b.ts||a.kind-b.kind||a.index-b.index).map(value=>value.entry);
-      /* codex-rebuild:bugfix-v1:overlay-gate — only merge chat rows in chat mode.
-         In codex mode, keep native turns only (no synthetic chat entries) so
-         the thread state stays clean for resume. */
-      let _cdrInChat=false;try{_cdrInChat=document.documentElement.getAttribute('data-codex-product-mode')==='chat'}catch{}
-      if(_cdrInChat){ae=CDRExtraMapped;ie=CDRExtraMapped;te=!0;B=B||CDRExtraRows.some(CDRRow=>CDRRow&&CDRRow.role==='user');ne=CDRExtraMapped.at(-1)?.turnId??ne}
+      ae=CDRMerge(ae.filter(CDREntry=>!CDREntry?.cdrSource),CDRExtraMapped);
+      ie=CDRMerge(ie.filter(CDREntry=>!CDREntry?.cdrSource),CDRExtraMapped);
+      /* Keep latestVisibleTurnId native. Synthetic Chat IDs are render-only;
+         assigning one to ne makes native resume/visibility bookkeeping treat
+         a local overlay row as an AppServer turn. */
+      te=!0;B=B||CDRExtraRows.some(CDRRow=>CDRRow&&CDRRow.role==='user');
     }
   }
 }catch{}
