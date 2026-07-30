@@ -45,11 +45,11 @@ function replaceOne(source, oldValue, newValue, label) {
 // client-side and shown in a textarea for the user to copy.
 const PANEL_CODE = `
 function CDRCustomProvidersPanel(){/* ${MARKER}:panel */
-let [providers,setProviders]=a.useState([]);
-let [editing,setEditing]=a.useState(null);
-let [showToml,setShowToml]=a.useState(!1);
-let [copied,setCopied]=a.useState(!1);
-a.useEffect(()=>{try{let d=JSON.parse(localStorage.getItem('${LS_KEY}')||'[]');if(Array.isArray(d))setProviders(d)}catch{}},[]);
+let [providers,setProviders]=s.useState([]);
+let [editing,setEditing]=s.useState(null);
+let [showToml,setShowToml]=s.useState(!1);
+let [copied,setCopied]=s.useState(!1);
+s.useEffect(()=>{try{let d=JSON.parse(localStorage.getItem('${LS_KEY}')||'[]');if(Array.isArray(d))setProviders(d)}catch{}},[]);
 let save=(next)=>{setProviders(next);try{localStorage.setItem('${LS_KEY}',JSON.stringify(next))}catch{}};
 let addProvider=()=>{let id='prov-'+Date.now();let p={id,name:'',base_url:'',api_key:'',wire_api:'responses',model:'',env_key:''};let next=[...providers,p];save(next);setEditing(id)};
 let updateProvider=(id,field,val)=>{let next=providers.map(p=>p.id===id?{...p,[field]:val}:p);save(next)};
