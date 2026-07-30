@@ -1,3 +1,34 @@
+# Codex Intel 26.721.41059 — July 30, 2026
+
+## What's new
+
+- **Custom Providers settings — fully functional**: the panel now correctly
+  renders in Settings (fixed React hooks alias from `a` to `s`, fixed lazy
+  module export, fixed runtime bindings). Works end-to-end with Codex config.
+- **Chat UX polish**: stop button correctly returns to send icon after stream
+  completes. Mode switching (ChatGPT ↔ Chat ↔ Codex) navigates properly
+  before reloading, so no more stuck loading screens.
+- **Chat → Codex thread preservation**: chat thread ID is saved on mode
+  switch so the conversation can be resumed when switching back.
+- **Release hardening**: 19 feature gates, expanded verification coverage,
+  and patched-bundle verification across 4 scripts.
+
+## Install
+
+1. Prefer `Codex-side-by-side-mac-x64-26.721.41059.dmg` for the isolated,
+   rollback-safe custom profile.
+2. Or use `Codex-mac-x64-26.721.41059.dmg` for the standard install.
+3. Drag `Codex.app` into Applications. If Gatekeeper blocks it, Control-click
+   the app and choose Open.
+
+Homebrew:
+
+```sh
+brew install --cask https://raw.githubusercontent.com/random-guy-05/oh-my-openai/main/Casks/codex-desktop.rb
+```
+
+---
+
 # Codex Intel 26.721.41059-custom.6
 
 ## What's new
@@ -359,7 +390,7 @@ partial-state re-run cases:
   `if (!selectorAlreadyPatched) { … }` and the controller injection +
   memo-deps in `if (!controllerAlreadyInjected) { … }`.
 - `patchComposerBundleInner` and `modelPicker` inner wraps mirror the
-  controller's dual-signal guard (`MARKER || \`let CDRRuntime=${RUNTIME_SOURCE}\``).
+  controller's dual-signal guard (`MARKER || `let CDRRuntime=${RUNTIME_SOURCE}``).
 - AST insert guards the controller body type is `BlockStatement`
   (catches upstream drift to arrow-expression bodies).
 - `verifySelectorBundle` throws an actionable recovery command when the
