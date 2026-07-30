@@ -57,6 +57,13 @@ if (!source.includes("let finish=done(()=>resolve());")) throw new Error("Chat s
 if (!source.includes("d.message.end_turn===true")) throw new Error("final Chat messages do not reset the submit lifecycle");
 if (!source.includes("Promise.resolve(client.startCompletionStream({")) throw new Error("async Chat stream-start failures are not observed");
 if (!source.includes(")).catch(done(reject));")) throw new Error("Chat stream-start rejection does not settle the submit action");
+if (!source.includes("codex-rebuild:chat-stream-clear-v1")) throw new Error("Chat send does not clear streamState after the bridge handles it (stop button stays / loading-forever bug)");
+if (!source.includes("codex-rebuild:chat-fake-stream-v1:thinking")) throw new Error("Chat send does not suppress intermediate flushes for the thinking state");
+if (!source.includes("codex-rebuild:chat-fake-stream-v1:animate")) throw new Error("Chat send does not animate the full response word-by-word");
+if (source.includes("flushTimer=setTimeout(flush,45)")) throw new Error("Chat send still has the old 45ms intermediate flush timer");
+if (!source.includes("e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n)")) throw new Error("Chat send hook does not remove the conversation from the streaming set");
+if (!source.includes("e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(t)")) throw new Error("local Chat submit route does not remove the conversation from the streaming set");
+if (!source.includes("typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot")) throw new Error("Chat send does not broadcast a conversation snapshot to refresh the UI");
 if (!localSource.includes("codex-rebuild:chat-extras-render-v1:overlay")) throw new Error("same-task Chat history overlay is missing");
 if (!localSource.includes("CDRExtraMapped")) throw new Error("Chat history rows are not mapped into native turn shape");
 if (!localSource.includes("__cdrChatHistoryRenderCache")) throw new Error("Chat history rows are reparsed and remapped on every render");

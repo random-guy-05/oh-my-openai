@@ -30,9 +30,12 @@ const FEATURES = Object.freeze([
   { id: "chat-picker-style", script: "_apply-chat-picker-style-v1.js", platforms: ["mac-x64"], dependsOn: ["chat-real"] },
   { id: "chat-history-overlay", script: "_apply-chat-extras-render-v1.js", platforms: ["mac-x64"], dependsOn: ["all-features-26721"] },
   { id: "chat-stream-lifecycle", script: "_apply-chat-stream-lifecycle-v1.js", platforms: ["mac-x64"], dependsOn: ["chat-ux", "chat-history-overlay", "handoff-sync"] },
+  { id: "chat-fake-stream", script: "_apply-chat-fake-stream-v1.js", platforms: ["mac-x64"], dependsOn: ["chat-stream-lifecycle"] },
   { id: "mode-switch-work", script: "_apply-mode-switch-work-v1.js", platforms: ["mac-x64"], dependsOn: ["local-canonical-mode"] },
   { id: "luna-context", script: "_apply-luna-context-v2.js", platforms: ["mac-x64"], dependsOn: ["handoff-sync"] },
   { id: "mode-ui-invariants", script: "_apply-mode-ui-invariants-v1.js", platforms: ["mac-x64"], dependsOn: ["mode-switch-work", "chat-real", "luna-context"] },
+  { id: "custom-providers-settings", script: "_apply-custom-providers-settings-v1.js", platforms: ["mac-x64"], dependsOn: ["mode-ui-invariants"] },
+  { id: "bugfix-v1", script: "_apply-bugfix-v1.js", platforms: ["mac-x64"], dependsOn: ["custom-providers-settings", "chat-fake-stream", "handoff-sync", "chat-history-overlay"] },
 ].map((feature) => Object.freeze({ critical: true, dependsOn: [], ...feature })));
 
 const TEST_SCRIPTS = Object.freeze([

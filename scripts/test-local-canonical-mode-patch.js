@@ -235,7 +235,7 @@ function testPatches() {
     );
   }
   assert.ok(selector.includes("Chat preset — same task and history"));
-  assert.ok(selector.includes("children:`ChatGPT Work`"));
+  assert.ok(selector.includes("children:`ChatGPT`"));
   assert.ok(selector.includes("CDRRuntime.setMode(e)"));
   assert.ok(selector.includes("nextMode:`codex`"));
   assert.ok(!selector.includes("nextMode:e"));
@@ -397,10 +397,12 @@ function testCompiledInvariants() {
   const main = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("app-initial-") && name.endsWith(".js"))), "utf8");
   const home = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("home-composer-mode-toggle-") && name.endsWith(".js"))), "utf8");
   const css = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("app-") && name.endsWith(".css"))), "utf8");
-  assert.ok(main.includes("codex-rebuild:mode-ui-invariants-v1:local-only"), "mode clicks are not local-only");
-  assert.ok(!main.includes("if(CDRM!==`chat`)p(CDRM)"), "Work/Codex still call upstream navigation");
-  assert.ok(main.includes("children:n?`ChatGPT Work`:`ChatGPT Work`"), "Work label is not ChatGPT Work");
-  assert.ok(!main.includes("children:n?(0,W8.jsx)(Z,{...G8.chatGpt})"), "Work label can still render as ChatGPT");
+  assert.ok(main.includes("codex-rebuild:mode-ui-invariants-v1:mode-nav"), "mode navigation handler is missing");
+  assert.ok(!main.includes("if(CDRM!==`chat`)p(CDRM)"), "old local-only handler still present");
+  assert.ok(main.includes("CDRM===`work`){try{p(CDRM);window.location.reload()}"), "work mode does not reload into ChatGPT UI");
+  assert.ok(main.includes("CDRM===`chat`){try{window.location.reload()}"), "chat mode does not reload into local Chat UI");
+  assert.ok(main.includes("children:n?`ChatGPT`:`ChatGPT`"), "Work label is not ChatGPT");
+  assert.ok(!main.includes("children:n?(0,W8.jsx)(Z,{...G8.chatGpt})"), "Work label can still render as upstream ChatGPT");
   assert.ok(
     main.includes('modelControllers.add(controller);\n    return () => modelControllers.delete(controller);'),
     "model controllers are not registered with the render-safe implementation",

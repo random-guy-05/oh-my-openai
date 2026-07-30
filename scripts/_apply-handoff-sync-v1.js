@@ -305,9 +305,14 @@ const OLD_CHAT_CTX =
   "let prompt=text;\n" +
   "if(!continuing&&priorContext)prompt=priorContext+'\\n\\n<current_user_message>\\n'+text+'\\n</current_user_message>';";
 
+// bugfix-v1: gate on !continuing so the codex transcript is only injected on
+// the first chat message of a conversation, not on every subsequent send.
+// Without this, watermark resets (e.g. after a mode-switch reload) cause the
+// entire codex transcript to be re-injected into every message prompt, which
+// the user sees as "prompting the transcript."
 const NEW_CHAT_CTX =
   "let _cdrPend=null;/* " + MARKER + ":chat-delta */\n" +
-  "try{_cdrPend=globalThis.__cdrHandoffV1?globalThis.__cdrHandoffV1.pendingForChat(key):null}catch{}\n" +
+  "try{if(!continuing&&globalThis.__cdrHandoffV1)_cdrPend=globalThis.__cdrHandoffV1.pendingForChat(key)}catch{}\n" +
   "let prompt=text;\n" +
   "if(_cdrPend&&_cdrPend.text)prompt=_cdrPend.text+'\\n\\n<current_user_message>\\n'+text+'\\n</current_user_message>';";
 

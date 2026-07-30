@@ -1,0 +1,262 @@
+{
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-26721-all-features.js": {
+    "mtime": 1785194250.0042777,
+    "ast_hash": "d5e45a68dab7713e28562a4535e34f20",
+    "semantic_hash": "d5e45a68dab7713e28562a4535e34f20"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-catalog-v3.js": {
+    "mtime": 1785174926.664339,
+    "ast_hash": "647dc52e3722d9a170546f6215c94370",
+    "semantic_hash": "647dc52e3722d9a170546f6215c94370"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-catalog-v3b.js": {
+    "mtime": 1785175328.5740287,
+    "ast_hash": "d5ac3548908c846bfc3ca0af378b0a15",
+    "semantic_hash": "d5ac3548908c846bfc3ca0af378b0a15"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-catalog-v3c.js": {
+    "mtime": 1785175694.9394515,
+    "ast_hash": "408a46554541647fc7fe7db46dfa58ac",
+    "semantic_hash": "408a46554541647fc7fe7db46dfa58ac"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-catalog-v4.js": {
+    "mtime": 1785176029.473039,
+    "ast_hash": "cd47b1c5d1bab1e466496d3e6512a649",
+    "semantic_hash": "cd47b1c5d1bab1e466496d3e6512a649"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-catalog-v5.js": {
+    "mtime": 1785176744.0281358,
+    "ast_hash": "47c700bd457c2fdcc1e34620e563c99d",
+    "semantic_hash": "47c700bd457c2fdcc1e34620e563c99d"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-extras-render-v1.js": {
+    "mtime": 1785194866.137768,
+    "ast_hash": "b93cdbc2310414799671ec25240817a6",
+    "semantic_hash": "b93cdbc2310414799671ec25240817a6"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-picker-style-v1.js": {
+    "mtime": 1785177309.8610587,
+    "ast_hash": "a7089dd6acd12a976077cbd5c1c40ae2",
+    "semantic_hash": "a7089dd6acd12a976077cbd5c1c40ae2"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-real-v2.js": {
+    "mtime": 1785193099.5147076,
+    "ast_hash": "9e807b6166713c2cedfa0ef682307676",
+    "semantic_hash": "9e807b6166713c2cedfa0ef682307676"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-chat-ux-v1.js": {
+    "mtime": 1785169566.2670689,
+    "ast_hash": "0ec9cadd7069ea80f21f5922b2e0910a",
+    "semantic_hash": "0ec9cadd7069ea80f21f5922b2e0910a"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-handoff-sync-v1.js": {
+    "mtime": 1785185237.5008767,
+    "ast_hash": "8720dd3ae63eb4c539f6b75280e849ab",
+    "semantic_hash": "8720dd3ae63eb4c539f6b75280e849ab"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-mode-switch-work-v1.js": {
+    "mtime": 1785178082.635234,
+    "ast_hash": "317de0ddabaf50be4dabf1f48927f256",
+    "semantic_hash": "317de0ddabaf50be4dabf1f48927f256"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-transcript-publisher-v1.js": {
+    "mtime": 1785099018.6672726,
+    "ast_hash": "57e3892f0650158bec1b5706e19a50d1",
+    "semantic_hash": "57e3892f0650158bec1b5706e19a50d1"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_apply-turn-usage-v2.js": {
+    "mtime": 1785161584.1978662,
+    "ast_hash": "e2f79b932b8ab2752a61336f06099e0a",
+    "semantic_hash": "e2f79b932b8ab2752a61336f06099e0a"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_hotswap-catalog-v3.js": {
+    "mtime": 1785187614.643981,
+    "ast_hash": "eca5aa1f956cf575dabb75a257b1c870",
+    "semantic_hash": "eca5aa1f956cf575dabb75a257b1c870"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_live-test-handoff.js": {
+    "mtime": 1785185237.6238587,
+    "ast_hash": "d92be061707d1a846856bc65516c4fa0",
+    "semantic_hash": "d92be061707d1a846856bc65516c4fa0"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_reinstall-handoff-runtime.js": {
+    "mtime": 1785185237.5837975,
+    "ast_hash": "f0832eb7a69e27e76a84c770447b6cd3",
+    "semantic_hash": "f0832eb7a69e27e76a84c770447b6cd3"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/_sync-cli-projects.js": {
+    "mtime": 1785167873.7091599,
+    "ast_hash": "e3fed6baab021c87856c613b98750a81",
+    "semantic_hash": "e3fed6baab021c87856c613b98750a81"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/build-from-upstream.js": {
+    "mtime": 1785027586.9902968,
+    "ast_hash": "5474624fb8c82114ad0c426cf7a2726d",
+    "semantic_hash": "5474624fb8c82114ad0c426cf7a2726d"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/build-side-by-side-mac.js": {
+    "mtime": 1785027586.9912694,
+    "ast_hash": "7ea73959675e0e38f66d1a0f1cb75f41",
+    "semantic_hash": "7ea73959675e0e38f66d1a0f1cb75f41"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/bump-version.js": {
+    "mtime": 1784247072.741139,
+    "ast_hash": "02f8d11a7fda96edd59814f8d24a9961",
+    "semantic_hash": "02f8d11a7fda96edd59814f8d24a9961"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/check-update.js": {
+    "mtime": 1784172367.7879837,
+    "ast_hash": "a9acace58926bb841f148e40d70ac614",
+    "semantic_hash": "a9acace58926bb841f148e40d70ac614"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/fetch-msstore.js": {
+    "mtime": 1784172367.7892566,
+    "ast_hash": "616e63faca20893229a37d5e4c953ba8",
+    "semantic_hash": "616e63faca20893229a37d5e4c953ba8"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-all.js": {
+    "mtime": 1785193722.6261537,
+    "ast_hash": "b317a94f2462e063d7da64fcf0b3d5a8",
+    "semantic_hash": "b317a94f2462e063d7da64fcf0b3d5a8"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-archive-delete.js": {
+    "mtime": 1784246957.5116923,
+    "ast_hash": "174cf5e2df0125513efce1ec15fc885c",
+    "semantic_hash": "174cf5e2df0125513efce1ec15fc885c"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-copyright.js": {
+    "mtime": 1784245650.985507,
+    "ast_hash": "edac750f8538d5ac913da8dca35c7228",
+    "semantic_hash": "edac750f8538d5ac913da8dca35c7228"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-devtools.js": {
+    "mtime": 1784172367.793822,
+    "ast_hash": "7dd2d37d3fb95043436a2c6ef42494c9",
+    "semantic_hash": "7dd2d37d3fb95043436a2c6ef42494c9"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-fast-mode.js": {
+    "mtime": 1784172367.7949657,
+    "ast_hash": "ccc96e2fa05ca993373cfe33334d9b9b",
+    "semantic_hash": "ccc96e2fa05ca993373cfe33334d9b9b"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-i18n.js": {
+    "mtime": 1784172367.7977557,
+    "ast_hash": "63aa8f7e4fe2e47f3cb2101fa491f380",
+    "semantic_hash": "63aa8f7e4fe2e47f3cb2101fa491f380"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-isolated-userdata.js": {
+    "mtime": 1784858138.4326632,
+    "ast_hash": "0d66933be02ebcac5e4d85c7837b5213",
+    "semantic_hash": "0d66933be02ebcac5e4d85c7837b5213"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-latest-models.js": {
+    "mtime": 1784245650.9912777,
+    "ast_hash": "4e60d37eddfe96508533c10235cf8d43",
+    "semantic_hash": "4e60d37eddfe96508533c10235cf8d43"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-local-canonical-mode.js": {
+    "mtime": 1785193835.6494026,
+    "ast_hash": "ec7d557959cb80762c1cca7ca8fb7efb",
+    "semantic_hash": "ec7d557959cb80762c1cca7ca8fb7efb"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-plugin-auth.js": {
+    "mtime": 1784172367.7989507,
+    "ast_hash": "c0e87b722c113b23261f0ea5e0fcbf18",
+    "semantic_hash": "c0e87b722c113b23261f0ea5e0fcbf18"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-resource-saver.js": {
+    "mtime": 1784591600.9944713,
+    "ast_hash": "ad11d1d184a8a47303c1b36c56e35862",
+    "semantic_hash": "ad11d1d184a8a47303c1b36c56e35862"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-side-by-side-scheme.js": {
+    "mtime": 1784591600.9972792,
+    "ast_hash": "4db6db84c3a3b420aca11021c1cdf095",
+    "semantic_hash": "4db6db84c3a3b420aca11021c1cdf095"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-updater.js": {
+    "mtime": 1784247072.7440372,
+    "ast_hash": "ff2c83c0fde186a98c372f4e4cfb06a8",
+    "semantic_hash": "ff2c83c0fde186a98c372f4e4cfb06a8"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-usage-controls.js": {
+    "mtime": 1785196377.9821117,
+    "ast_hash": "480f0bdbebd107e3e62a8b883530d050",
+    "semantic_hash": "480f0bdbebd107e3e62a8b883530d050"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/patch-util.js": {
+    "mtime": 1785027586.9936335,
+    "ast_hash": "b70ec831ac66558573be2e66a03b4c6a",
+    "semantic_hash": "b70ec831ac66558573be2e66a03b4c6a"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/prepare-src.js": {
+    "mtime": 1784172367.8049273,
+    "ast_hash": "1f9e5ff077bce8e3caf7847b8ac093ba",
+    "semantic_hash": "1f9e5ff077bce8e3caf7847b8ac093ba"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/rebase-audit.js": {
+    "mtime": 1785195181.7707474,
+    "ast_hash": "4028f92a332f07a4aaa637086a00f8a6",
+    "semantic_hash": "4028f92a332f07a4aaa637086a00f8a6"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/start-dev.js": {
+    "mtime": 1784172367.8060143,
+    "ast_hash": "92d28f16cf587ef7e142c25f4fce5850",
+    "semantic_hash": "92d28f16cf587ef7e142c25f4fce5850"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/sync-native-modules.js": {
+    "mtime": 1784172367.8069198,
+    "ast_hash": "382e150047ef6e8b0f05cdac048eb353",
+    "semantic_hash": "382e150047ef6e8b0f05cdac048eb353"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/sync-upstream.js": {
+    "mtime": 1785027586.9943902,
+    "ast_hash": "fb82e1b805073d3930119be2372b6d9f",
+    "semantic_hash": "fb82e1b805073d3930119be2372b6d9f"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/test-chat-transport.js": {
+    "mtime": 1785195006.6830852,
+    "ast_hash": "e57da163ddd6bb15c4ab8a488d6bd3cb",
+    "semantic_hash": "e57da163ddd6bb15c4ab8a488d6bd3cb"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/test-handoff-sync.js": {
+    "mtime": 1785185237.540837,
+    "ast_hash": "9c2b31b1231ef69e7f2ac280230fc65b",
+    "semantic_hash": "9c2b31b1231ef69e7f2ac280230fc65b"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/test-latest-model-patch.js": {
+    "mtime": 1784245650.9972236,
+    "ast_hash": "4ff24d548d5760e0cf0e3f2decd2bf83",
+    "semantic_hash": "4ff24d548d5760e0cf0e3f2decd2bf83"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/test-local-canonical-mode-patch.js": {
+    "mtime": 1785195082.1059227,
+    "ast_hash": "714dff3a28a83fd7d46241fdc55be418",
+    "semantic_hash": "714dff3a28a83fd7d46241fdc55be418"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/test-resource-saver-patch.js": {
+    "mtime": 1784591601.008808,
+    "ast_hash": "d9253b8cfab6a0cdafb395082f74b80b",
+    "semantic_hash": "d9253b8cfab6a0cdafb395082f74b80b"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/test-turn-usage.js": {
+    "mtime": 1785185237.6911533,
+    "ast_hash": "f48845b0d87cc3eec10f238edc2b545c",
+    "semantic_hash": "f48845b0d87cc3eec10f238edc2b545c"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/test-usage-controls-patch.js": {
+    "mtime": 1784845867.2930841,
+    "ast_hash": "77a03ce518a806699377eece9dde9e75",
+    "semantic_hash": "77a03ce518a806699377eece9dde9e75"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/verify-features.js": {
+    "mtime": 1785195831.3603845,
+    "ast_hash": "99a2a1b32435e241122c0c7bea566308",
+    "semantic_hash": "99a2a1b32435e241122c0c7bea566308"
+  },
+  "/Users/admin/Documents/Codex/2026-07-15/re/work/CodexDesktop-Rebuild-Current/scripts/STATSIG_GATES.md": {
+    "mtime": 1784172367.7825892,
+    "ast_hash": "86bd2a93e94440420e9209fd5b927d84",
+    "semantic_hash": "86bd2a93e94440420e9209fd5b927d84"
+  }
+}

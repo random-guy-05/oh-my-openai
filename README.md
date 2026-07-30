@@ -40,7 +40,14 @@ brew uninstall --zap --cask codex-desktop
 > with `homebrew-`. This is intentional — the cask lives alongside the build
 > scripts in the same repo.
 
-## Current build
+## Current build (26.721.41059) — July 29, 2026
+
+### Recent fixes
+- **Stop button fix**: Composer's stop button no longer gets stuck in chat mode. The `submitButtonMode` computation excludes chat mode so the send icon appears immediately after responses.
+- **"No rollout found" fix**: Removed `cdr-thread-map` localStorage writes that were mapping ChatGPT conversation IDs into the Codex thread store, causing thread corruption.
+- **New chat navigation**: Chat mode now auto-navigates to newly created chats via `window.location.hash`.
+- **Fake-stream animation**: Chat responses are animated word-by-word for a smooth streaming feel, rather than appearing in irregular bursts.
+- **Custom Providers settings**: A new "Custom Providers" section in Settings allows adding custom model providers by base URL and API key.
 
 ---
 

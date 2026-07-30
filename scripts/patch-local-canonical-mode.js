@@ -47,7 +47,7 @@ function installLocalModeRuntime() {
   // patches, but on a freshly-installed runtime (or pure JS tests) the
   // chat preset must resolve to a concrete model — "auto" would fall
   // through to the model picker unchanged. Aligned with the
-  // Chat / ChatGPT Work / Codex spec in CUSTOM_BUILD.md (Sol Medium for
+  // Chat / ChatGPT / Codex spec in CUSTOM_BUILD.md (Sol Medium for
   // chat, Terra Light for work, Sol High for codex).
   const presetSettings = Object.freeze({
     chat: Object.freeze({
@@ -381,20 +381,20 @@ function patchSelectorBundleInner(source, filePath) {
   selector = tryReplace(
     selector,
     "children:n?(0,W8.jsx)(Z,{...W8.chatGpt}):(0,W8.jsx)(Z,{...W8.work})",
-    "children:`ChatGPT Work`",
-    "ChatGPT Work trigger label",
+    "children:`ChatGPT`",
+    "ChatGPT trigger label",
   );
   selector = tryReplace(
     selector,
     "e=i===`codex`?o.formatMessage(W8.codex):n?o.formatMessage(W8.chatGpt):o.formatMessage(W8.work)",
-    "e=i===`chat`?`Chat`:i===`work`?`ChatGPT Work`:o.formatMessage(W8.codex)",
+    "e=i===`chat`?`Chat`:i===`work`?`ChatGPT`:o.formatMessage(W8.codex)",
     "Chat selector accessible label",
   );
   selector = tryReplace(
     selector,
-    "children:n?(0,W8.jsx)(Z,{...W8.chatGpt}):(0,W8.jsx)(Z,{id:`sidebarElectron.productMode.chatGptWork.unavailable`,defaultMessage:`ChatGPT Work`,description:`ChatGPT Work option in the sidebar mode selector when ChatGPT features are unavailable`})",
-    "children:`ChatGPT Work`",
-    "ChatGPT Work menu label",
+    "children:n?(0,W8.jsx)(Z,{...W8.chatGpt}):(0,W8.jsx)(Z,{id:`sidebarElectron.productMode.chatGptWork.unavailable`,defaultMessage:`ChatGPT`,description:`ChatGPT option in the sidebar mode selector when ChatGPT features are unavailable`})",
+    "children:`ChatGPT`",
+    "ChatGPT menu label",
   );
   // 26.721.31836: the Codex RightIcon variable name can differ between
   // minifications (was Ym, now Bm). Capture it dynamically so the patch
@@ -489,7 +489,7 @@ function patchSelectorBundleInner(source, filePath) {
     `/* codex-rebuild:sticky-chat-v43:durable-mode */` +
     `/* codex-rebuild:sticky-chat-v43:durable-sync */` +
     // Chat is local-only (upstream never adopts it). Never let an upstream
-    // "codex" OR "work" (ChatGPT Work) reading clobber an intentional local
+    // "codex" OR "work" (ChatGPT) reading clobber an intentional local
     // "chat" selection — work→chat used to snap back immediately.
     `(0,L$.useEffect)(()=>{/* codex-rebuild:mode-switch-work-v1:durable-sync */if(CDRUpstreamMode!==\`chat\`){try{if(CDRRuntime.mode(\`codex\`)===\`chat\`)return}catch{}}CDRRuntime.setMode(CDRUpstreamMode);CDRSetMode(CDRUpstreamMode)},[CDRUpstreamMode]);` +
     `/* ${SEND_MARKER} */` +

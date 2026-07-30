@@ -61,8 +61,14 @@ function main() {
   }
 
   // 1) Harden send hook
-  const OLD_HOOK =
-    "let v=CH(),y=l.trim();{/* codex-rebuild:all-features-26721-v1:send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:f,attachments:t});if(_cdrRes)return{conversationId:n,serverConversationId:null,streamRequestId:null};}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
+  // OLD_HOOK accepts both the original and the chat-stream-clear-v1 variant
+  // (the send hook may or may not already include streamState clearing).
+  const OLD_HOOK_BASE =
+    "let v=CH(),y=l.trim();{/* codex-rebuild:all-features-26721-v1:send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:f,attachments:t});";
+  const OLD_HOOK_ORIG_RETURN = "if(_cdrRes)return{conversationId:n,serverConversationId:null,streamRequestId:null};}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
+  const OLD_HOOK_CLEAR_RETURN = "if(_cdrRes){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(n),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(n),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(n))}catch{}/* codex-rebuild:chat-stream-clear-v1 */return{conversationId:n,serverConversationId:null,streamRequestId:null};}}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
+  const OLD_HOOK = OLD_HOOK_BASE + OLD_HOOK_ORIG_RETURN;
+  const OLD_HOOK_WITH_CLEAR = OLD_HOOK_BASE + OLD_HOOK_CLEAR_RETURN;
 
   const NEW_HOOK =
     "let v=CH(),y=l.trim();{/* " +
@@ -70,10 +76,14 @@ function main() {
     ":send-hook */try{let _cdrChat=false;try{_cdrChat=!!(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat')}catch{}" +
     "try{_cdrChat=_cdrChat||(typeof document!=='undefined'&&document.documentElement&&document.documentElement.getAttribute('data-codex-product-mode')==='chat')}catch{}" +
     "if(_cdrChat){try{await CDRStickyChatSend(e,n,{input:l,model:(globalThis.__cdrChatDefaultApiSlug||globalThis.__cdrChatSelectedModel||'auto'),thinkingEffort:void 0,attachments:t})}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}" +
-    "return{conversationId:n,serverConversationId:null,streamRequestId:null}}}catch(_cdrOuter){try{console.error('[cdr] send hook outer',_cdrOuter)}catch{}}}";
+    "try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(n),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(n),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(n,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(n),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(n))}catch{}" +
+    "/* codex-rebuild:chat-stream-clear-v1 */return{conversationId:n,serverConversationId:null,streamRequestId:null}}}catch(_cdrOuter){try{console.error('[cdr] send hook outer',_cdrOuter)}catch{}}}";
 
   if (mono.includes(MARKER + ":send-hook")) {
     console.log("[skip] send hook already hardened");
+  } else if (mono.includes(OLD_HOOK_WITH_CLEAR)) {
+    mono = replaceOne(mono, OLD_HOOK_WITH_CLEAR, NEW_HOOK, "harden chat send hook (stream-clear variant)");
+    console.log("[ok] chat send no longer falls through to Codex (stream-clear variant)");
   } else {
     mono = replaceOne(mono, OLD_HOOK, NEW_HOOK, "harden chat send hook");
     console.log("[ok] chat send no longer falls through to Codex");
@@ -113,6 +123,18 @@ function main() {
 
     mono = mono.slice(0, qmsStart) + SELECTOR + mono.slice(qmsStart);
     console.log("[ok] CDRChatFlatSelector declared");
+  }
+
+  // 2b) Patch composer stop button for chat mode
+  {
+    const zaOld = 'Za=!Xa&&Ie&&!ya?`stop`:`submit`';
+    const zaNew = "Za=!Xa&&Ie&&!ya&&(globalThis.__cdrLocalModeV4?.mode?.()!=='chat')?`stop`:`submit`";
+    if (mono.includes(zaOld) && !mono.includes('globalThis.__cdrLocalModeV4?.mode')) {
+      mono = mono.split(zaOld).join(zaNew);
+      console.log('[ok] Composer stop button patched for chat mode');
+    } else {
+      console.log('[skip] Za stop button patch already applied');
+    }
   }
 
   // 3) Patch QMs body: mode state, catalog load, flat render
