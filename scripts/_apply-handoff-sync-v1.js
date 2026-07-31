@@ -338,19 +338,46 @@ const SEND_INJECT =
   "if(_cdrCodexPend&&_cdrCodexPend.text)l=_cdrCodexPend.text+'\\n\\n<current_user_message>\\n'+String(l||'')+'\\n</current_user_message>'" +
   "}}catch(_e){try{console.error('[cdr] codex handoff',_e)}catch{}}\n";
 
-mono = replaceOne(mono, SEND_ANCHOR, SEND_ANCHOR + SEND_INJECT, "hidden chat->codex delta injection");
-mono = replaceOne(
-  mono,
-  "messageMetadata:u,prompt:y,systemHints:d",
-  "messageMetadata:u,prompt:l.trim(),systemHints:d",
-  "use augmented prompt only for the outbound message",
-);
-mono = replaceOne(
-  mono,
-  "submittedAtMs:v,tppExecutionTarget:p})}",
-  "submittedAtMs:v,tppExecutionTarget:p}).then(_cdrResult=>{try{if(_cdrCodexPend&&globalThis.__cdrHandoffV1)globalThis.__cdrHandoffV1.commitCodex(_cdrCodexKey,_cdrCodexPend.mark)}catch{}return _cdrResult})}",
-  "commit chat->codex watermark after successful transport",
-);
+if (mono.includes("let y=_I(),b=l.trim();")) {
+  // 26.727 moved Codex sends into BC() and the ChatGPT send helper now uses
+  // the modern local transport. Keep the handoff text out of the visible
+  // message by replacing only the two turn/start input fields.
+  const BC_HEAD =
+    "let{beforeSendRequest:r,inheritThreadSettings:i=!0,threadStartKind:a,useAppServerPermissionDefault:o,...s}=n,c=s.clientUserMessageId??ib(),";
+  const BC_INJECT =
+    "try{/* " + MARKER + ":codex-delta-hidden */" +
+    "let _h=globalThis.__cdrHandoffV1;if(_h&&!_h.isChatMode()){_cdrCodexKey=String(t||'').includes(':')?String(t):'local:'+t;" +
+    "_cdrCodexPend=_h.pendingForCodex(_cdrCodexKey);if(_cdrCodexPend&&_cdrCodexPend.text)_cdrCodexInput=_cdrCodexPend.text+'\\n\\n<current_user_message>\\n'+String(s.input||'')+'\\n</current_user_message>'" +
+    "}}catch(_e){try{console.error('[cdr] codex handoff',_e)}catch{}};";
+  const BC_VARS =
+    "let{beforeSendRequest:r,inheritThreadSettings:i=!0,threadStartKind:a,useAppServerPermissionDefault:o,...s}=n,c=s.clientUserMessageId??ib(),_cdrCodexPend=null,_cdrCodexKey=null,_cdrCodexInput=s.input,";
+  mono = replaceOne(mono, BC_HEAD, BC_VARS, "modern handoff variables");
+  mono = replaceOne(
+    mono,
+    "/* codex-rebuild:all-features-26721-v1:local-submit-hook */",
+    BC_INJECT + "/* codex-rebuild:all-features-26721-v1:local-submit-hook */",
+    "modern hidden chat->codex delta injection",
+  );
+  mono = replaceOne(mono, "input:s.input,environments:", "input:_cdrCodexInput,environments:", "modern turn/start input");
+  mono = replaceOne(mono, "clientUserMessageId:c,input:s.input,cwd:", "clientUserMessageId:c,input:_cdrCodexInput,cwd:", "modern follower input");
+  const MODERN_SEND = "let n=PS.getTrace(c),i=await e.sendRequest(`turn/start`,Ce,{priority:`critical`,timeoutMs:X_,...n===void 0?{}:{trace:n}}),a=";
+  const MODERN_SEND_REPLACEMENT = "let n=PS.getTrace(c),i=await e.sendRequest(`turn/start`,Ce,{priority:`critical`,timeoutMs:X_,...n===void 0?{}:{trace:n}});try{if(_cdrCodexPend&&globalThis.__cdrHandoffV1)globalThis.__cdrHandoffV1.commitCodex(_cdrCodexKey,_cdrCodexPend.mark)}catch{}let a=";
+  mono = replaceOne(mono, MODERN_SEND, MODERN_SEND_REPLACEMENT, "modern handoff watermark commit");
+} else {
+  mono = replaceOne(mono, SEND_ANCHOR, SEND_ANCHOR + SEND_INJECT, "hidden chat->codex delta injection");
+  mono = replaceOne(
+    mono,
+    "messageMetadata:u,prompt:y,systemHints:d",
+    "messageMetadata:u,prompt:l.trim(),systemHints:d",
+    "use augmented prompt only for the outbound message",
+  );
+  mono = replaceOne(
+    mono,
+    "submittedAtMs:v,tppExecutionTarget:p})}",
+    "submittedAtMs:v,tppExecutionTarget:p}).then(_cdrResult=>{try{if(_cdrCodexPend&&globalThis.__cdrHandoffV1)globalThis.__cdrHandoffV1.commitCodex(_cdrCodexKey,_cdrCodexPend.mark)}catch{}return _cdrResult})}",
+    "commit chat->codex watermark after successful transport",
+  );
+}
 console.log("[ok] chat->codex context is transport-only and commits after success");
 
 // ─── Thread-bundle edit ─────────────────────────────────────────────

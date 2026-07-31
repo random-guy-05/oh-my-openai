@@ -32,10 +32,10 @@ const FEATURES = Object.freeze([
   { id: "mode-switch-work", script: "_apply-mode-switch-work-v1.js", platforms: ["mac-x64"], dependsOn: ["local-canonical-mode"] },
   { id: "luna-context", script: "_apply-luna-context-v2.js", platforms: ["mac-x64"], dependsOn: ["handoff-sync"] },
   { id: "mode-ui-invariants", script: "_apply-mode-ui-invariants-v1.js", platforms: ["mac-x64"], dependsOn: ["mode-switch-work", "chat-real", "luna-context"] },
-  { id: "custom-providers-settings", script: "_apply-custom-providers-settings-v1.js", platforms: ["mac-x64"], dependsOn: ["mode-ui-invariants"] },
-  // Later Chat catalog patches touch the same upstream model bridge. Re-run
-  // the structural allowlist patch last so one manifest pass is canonical.
-  { id: "latest-models-finalize", script: "patch-latest-models.js", platforms: ["mac-x64"], dependsOn: ["custom-providers-settings"] },
+  // Custom Providers is deliberately independent of the Chat/mode patch chain.
+  // The settings surface uses native Codex config and can be ported safely even
+  // when a future upstream refactors the unrelated composer/controller code.
+  { id: "custom-providers-settings", script: "_apply-custom-providers-settings-v1.js", platforms: ["mac-x64"] },
 ].map((feature) => Object.freeze({ critical: true, dependsOn: [], ...feature })));
 
 const TEST_SCRIPTS = Object.freeze([
@@ -45,6 +45,7 @@ const TEST_SCRIPTS = Object.freeze([
   "test-handoff-sync.js",
   "test-chat-transport.js",
   "test-new-feature-integrations.js",
+  "test-custom-providers-26727.js",
 ]);
 
 function orderedFeatures(platform = "mac-x64") {

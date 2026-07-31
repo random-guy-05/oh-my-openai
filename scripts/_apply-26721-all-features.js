@@ -167,6 +167,7 @@ const REACT = findReactAlias(mono);
 const JSX = findJsxAlias(mono);
 const SEND_FN = findSendFunction(mono);
 const SEND_ANCHOR = `async function ${SEND_FN}(e,{attachments:`;
+const MODERN_MODEL_NORMALIZER = mono.includes("return KUi(await this.request.getModelsResponse())") ? "KUi" : "P_a";
 const CHAT_UPSERT_V0 = "let upsert=turn=>{try{let rows=JSON.parse(localStorage.getItem(extrasKey)||'[]');if(!Array.isArray(rows))rows=[];let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);localStorage.setItem(extrasKey,JSON.stringify(rows));notify();return val.id}catch{return turn.id||null}};";
 const CHAT_UPSERT_V1 = "let historyStore=()=>{if(globalThis.__cdrChatHistoryStore)return globalThis.__cdrChatHistoryStore;let open=()=>new Promise((resolve,reject)=>{let req=indexedDB.open('cdr-chat-history-v1',1);req.onupgradeneeded=()=>{let db=req.result;if(!db.objectStoreNames.contains('threads'))db.createObjectStore('threads')};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)});let api={load:key=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readonly'),req=tx.objectStore('threads').get(key);req.onsuccess=()=>resolve(Array.isArray(req.result)?req.result:[]);req.onerror=()=>reject(req.error)})),save:(key,rows)=>open().then(db=>new Promise((resolve,reject)=>{let tx=db.transaction('threads','readwrite');tx.objectStore('threads').put(rows,key);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)}))};globalThis.__cdrChatHistoryStore=api;return api};let durableRows=await historyStore().load(extrasKey).catch(()=>[]);let upsert=turn=>{let rows=Array.isArray(durableRows)?durableRows:[];if(!rows.length){try{rows=JSON.parse(localStorage.getItem(extrasKey)||'[]')}catch{}if(!Array.isArray(rows))rows=[]}let val={...turn,id:turn.id||((crypto.randomUUID&&crypto.randomUUID())||'chat-'+Date.now()),ts:turn.ts||Date.now(),source:turn.source||'chat'};let idx=rows.findIndex(r=>r&&r.id===val.id);if(idx>=0)rows[idx]={...rows[idx],...val};else rows.push(val);durableRows=rows;try{localStorage.setItem(extrasKey,JSON.stringify(rows.slice(-100)))}catch{}try{historyStore().save(extrasKey,rows).catch(()=>{})}catch{}notify(rows);return val.id};";
 console.log(`[detect] React hooks/JSX alias: ${REACT}, JSX alias: ${JSX}`);
@@ -253,11 +254,15 @@ return result;
 
 // Inject CDRMergeChatModels before P_a
 if (!mono.includes(MARKER + ":catalog-merge")) {
-  mono = tryReplace(mono, "function P_a(e){", MERGE_HELPER + "\nfunction P_a(e){", "inject CDRMergeChatModels");
+  const mergeHelper = MERGE_HELPER.replaceAll("P_a(", `${MODERN_MODEL_NORMALIZER}(`);
+  const normalizerAnchor = `function ${MODERN_MODEL_NORMALIZER}(e){`;
+  mono = tryReplace(mono, normalizerAnchor, mergeHelper + "\n" + normalizerAnchor, "inject CDRMergeChatModels");
 }
 
 // Hook into models() to use CDRMergeChatModels and store raw models
-const modelsAnchor = "P_a(await this.request.getModelsResponse())";
+const modelsAnchor = MODERN_MODEL_NORMALIZER === "KUi"
+  ? "KUi(await this.request.getModelsResponse())"
+  : "P_a(await this.request.getModelsResponse())";
 if (mono.includes(modelsAnchor)) {
   const modelsReplacement = "(async()=>{let _r=await this.request.getModelsResponse();try{globalThis.__cdrChatRawModels=Array.isArray(_r&&_r.models)?_r.models:[]}catch{}return CDRMergeChatModels(_r)})()";
   mono = tryReplace(mono, modelsAnchor, modelsReplacement, "hook models() to CDRMergeChatModels");
@@ -385,8 +390,10 @@ if (!mono.includes(MARKER + ":bridge")) {
 // 4. SEND HOOK — Intercept the send function in Chat mode
 // ═══════════════════════════════════════════════════════════════
 
-const sendHookAnchor = "let v=CH(),y=l.trim();";
-const sendHookReplacement = "let v=CH(),y=l.trim();{/* " + MARKER + ":send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){try{CDRNavigateLocalThread(n)}catch{}/* codex-rebuild:chat-navigate-before-send-v1 */let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:f,attachments:t});if(_cdrRes){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(n),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(n),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(n,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(n),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(n))}catch{}/* codex-rebuild:chat-stream-clear-v1 */return{conversationId:n,serverConversationId:null,streamRequestId:null};}}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
+const sendHookAnchor = mono.includes("let v=CH(),y=l.trim();") ? "let v=CH(),y=l.trim();" : "let y=_I(),b=l.trim();";
+const sendHookReplacement = sendHookAnchor === "let y=_I(),b=l.trim();"
+  ? "let y=_I(),b=l.trim();{/* " + MARKER + ":send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){try{CDRNavigateLocalThread(n)}catch{}/* codex-rebuild:chat-navigate-before-send-v1 */let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:p,attachments:t});if(_cdrRes){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(n),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(n),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(n,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(n),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(n))}catch{}/* codex-rebuild:chat-stream-clear-v1 */return{conversationId:n,serverConversationId:null,streamRequestId:null};}}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}"
+  : "let v=CH(),y=l.trim();{/* " + MARKER + ":send-hook */try{if(globalThis.__cdrLocalModeV4&&typeof globalThis.__cdrLocalModeV4.mode==='function'&&globalThis.__cdrLocalModeV4.mode()==='chat'){try{CDRNavigateLocalThread(n)}catch{}/* codex-rebuild:chat-navigate-before-send-v1 */let _cdrRes=await CDRStickyChatSend(e,n,{input:l,model:a,thinkingEffort:f,attachments:t});if(_cdrRes){try{e.streamState&&(e.streamState.streamingConversations&&e.streamState.streamingConversations.delete(n),typeof e.streamState.deleteConversationStreamRole==='function'&&e.streamState.deleteConversationStreamRole(n),typeof e.streamState.clearConversationStreaming==='function'&&e.streamState.clearConversationStreaming(n),typeof e.setConversationStreamRole==='function'&&e.setConversationStreamRole(n,null),typeof e.notifyConversationUpdated==='function'&&e.notifyConversationUpdated(n),typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot(n))}catch{}/* codex-rebuild:chat-stream-clear-v1 */return{conversationId:n,serverConversationId:null,streamRequestId:null};}}}catch(_cdrErr){try{console.error('[cdr] send hook error',_cdrErr)}catch{}}}";
 
 if (!mono.includes(MARKER + ":send-hook")) {
   mono = tryReplace(mono, sendHookAnchor, sendHookReplacement, `inject send hook into ${SEND_FN}`);
@@ -781,7 +788,8 @@ try {
 if (allOk) {
   const appliedMarker = "/* " + MARKER + ":applied */";
   if (!mono.includes(appliedMarker)) {
-    mono = tryReplace(mono, "function P_a(e){", appliedMarker + "\nfunction P_a(e){", "add applied marker");
+    const markerAnchor = `function ${MODERN_MODEL_NORMALIZER}(e){`;
+    mono = tryReplace(mono, markerAnchor, appliedMarker + "\n" + markerAnchor, "add applied marker");
   }
 }
 

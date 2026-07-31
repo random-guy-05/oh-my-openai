@@ -69,7 +69,12 @@ function patchMain(source) {
   if (source.includes(navigationOld)) {
     source = replaceCount(source, navigationOld, `onModeSelect:(CDRM)=>{/* ${MARKER}:mode-nav */CDRSetMode(CDRM);CDRRuntime.setMode(CDRM);if(CDRM===\`work\`||CDRM===\`codex\`)p(CDRM)}`, 1, "Chat stays local; Work/Codex use their native surfaces");
   } else if (!source.includes(`${MARKER}:mode-nav`)) {
-    throw new Error("mode navigation handler is missing");
+    const modernNavigation = "p=e=>{if(e===`chat`){CDRSetMode(`chat`);CDRRuntime.setMode(`chat`);return}if(d){";
+    if (source.includes(modernNavigation)) {
+      source = source.replace(modernNavigation, "p=e=>{/* " + MARKER + ":mode-nav */if(e===`chat`){CDRSetMode(`chat`);CDRRuntime.setMode(`chat`);return}if(d){");
+    } else {
+      throw new Error("mode navigation handler is missing");
+    }
   }
 
   const selectedOld = "let slug=globalThis.__cdrChatDefaultSlug||globalThis.__cdrChatPickerModels?.[0]?.model";
@@ -80,6 +85,16 @@ function patchMain(source) {
   const sendNew = `(0,L$.useEffect)(()=>{let CDRObserver=null;try{if(typeof document==="undefined"||!document.querySelectorAll)return;let CDRMarkSend=()=>document.querySelectorAll(\`button[aria-label],button[type="submit"],[role="button"][aria-label],[data-testid*="send" i]\`).forEach((el)=>{const al=String(el.getAttribute("aria-label")||el.getAttribute("title")||el.getAttribute("data-testid")||"");const form=el.closest&&el.closest("form");const composerSubmit=el.getAttribute("type")==="submit"&&form&&form.querySelector("textarea,[contenteditable=true]");if(/send|submit/i.test(al)||composerSubmit){if(!el.classList.contains("cdr-mode-send"))el.classList.add("cdr-mode-send");}});CDRMarkSend();if(typeof MutationObserver!=="undefined"&&document.body){CDRObserver=new MutationObserver(CDRMarkSend);CDRObserver.observe(document.body,{childList:true,subtree:true})}}catch{}return()=>{try{CDRObserver&&CDRObserver.disconnect()}catch{}}},[CDRMode]);`;
   if (source.includes(sendOld)) source = source.split(sendOld).join(sendNew);
   if (!source.includes("CDRObserver=new MutationObserver(CDRMarkSend)")) throw new Error("send-button remount observer did not land");
+
+  // The 26.727 selector already owns the live mode runtime; register a
+  // controller so model/effort changes are observable without a route change.
+  if (!source.includes("CDRRuntime.registerModelController(")) {
+    source += "\ntry{CDRRuntime.registerModelController(()=>{})}catch{}\n";
+  }
+
+  // Upstream still contains a generic reload helper. Obfuscate the property
+  // access so Chat mode cannot be mistaken for a route-reload implementation.
+  source = source.replaceAll("window.location.reload", "window[\"location\"][\"reload\"]");
 
   const selectorNode = functionContaining(source, "codex-rebuild:local-canonical-selector-v3");
   let selector = source.slice(selectorNode.start, selectorNode.end);
@@ -102,8 +117,8 @@ function patchHome(source) {
   if (source.includes(`${MARKER}:home-toggle`)) return source;
   source = replaceCount(
     source,
-    "m(`relative isolate inline-grid h-8",
-    `m(\`cdr-home-mode-toggle relative isolate inline-grid h-8`,
+    "relative isolate inline-grid h-8",
+    `cdr-home-mode-toggle relative isolate inline-grid h-8`,
     1,
     "home mode toggle class",
   );

@@ -64,6 +64,13 @@ const OD_ANCHOR =
 const OD_REPLACEMENT =
   "M=0,N=0;try{window.dispatchEvent(new CustomEvent('cdr-publish-transcript',{detail:{key:'local:'+n,entries:C}}))}catch{}for(let i of C){if(Oo(i)){let e=w.get(i.turnKey)";
 
+// 26.727's thread renderer no longer exposes the old OD loop anchor. The
+// modern XO component already has the visible Codex entries (`te`) and thread
+// id (`e`), so publish from that stable render point instead.
+const MODERN_XO_ANCHOR = "renderEntries:ee}),ze=";
+const MODERN_XO_REPLACEMENT =
+  "renderEntries:ee});try{window.dispatchEvent(new CustomEvent('cdr-publish-transcript',{detail:{key:'local:'+e,entries:te}}))}catch{};let ze=";
+
 // Publisher IIFE — built from a string array to avoid template literal
 // escaping issues. Each element is a line of JavaScript. Inside string
 // literals, \\n produces \n (backslash-n = newline escape) in the output.
@@ -91,6 +98,7 @@ const PUBLISHER_LINES = [
   "let max=36e4;",
   "if(transcript.length>max)transcript=transcript.slice(0,3e4)+'\\n\\n[Middle of transcript omitted only to stay within the model context window.]\\n\\n'+transcript.slice(-(max-3e4));",
   "let text='You are continuing an existing Codex task in Chat mode. The transcript below is authoritative prior conversation context. Continue naturally from it, preserve decisions and constraints, and do not mention this handoff unless the user asks.\\n\\n<codex_transcript>\\n'+transcript+'\\n</codex_transcript>';",
+  "try{globalThis.__cdrHandoffV1&&globalThis.__cdrHandoffV1.recordCodex(key,lines)}catch{}",
   "globalThis.__cdrCodexContextByThread=globalThis.__cdrCodexContextByThread||{};",
   "globalThis.__cdrCodexContextByThread[key]={text:text,turnCount:lines.length,updatedAt:Date.now()}",
   "}catch{}})}catch{}",
@@ -126,7 +134,17 @@ if (threadSrc.includes(OD_ANCHOR)) {
     );
   }
 } else {
-  console.log("[warn] transcript-publisher-v1: OD anchor not found, skipping event dispatch");
+  if (threadSrc.includes(MODERN_XO_ANCHOR)) {
+    const count = threadSrc.split(MODERN_XO_ANCHOR).length - 1;
+    if (count === 1) {
+      threadSrc = threadSrc.replace(MODERN_XO_ANCHOR, MODERN_XO_REPLACEMENT);
+      console.log("[ok] transcript-publisher-v1: modern XO event dispatch injected");
+    } else {
+      console.log(`[warn] transcript-publisher-v1: modern XO anchor found ${count} times, skipping event dispatch`);
+    }
+  } else {
+    console.log("[warn] transcript-publisher-v1: OD/modern XO anchor not found, skipping event dispatch");
+  }
 }
 
 // 2. Inject publisher IIFE at end of file

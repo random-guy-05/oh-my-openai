@@ -343,8 +343,74 @@ function patchSelectorBundle(source, filePath) {
   }
 }
 
+function patch26727ModeFunctions(source, filePath, ast) {
+  const findTop = (name) => {
+    const node = ast.body.find((entry) => entry.type === "FunctionDeclaration" && entry.id?.name === name);
+    if (!node) throw new Error(`${relPath(filePath)} 26.727 function ${name} not found`);
+    return node;
+  };
+  const jvuNode = findTop("jvu");
+  const h8lNode = findTop("H8l");
+  let controller = source.slice(jvuNode.start, jvuNode.end);
+  let selector = source.slice(h8lNode.start, h8lNode.end);
+  const reactAlias = "Nvu";
+  const sendObserver =
+    `/* ${SEND_MARKER} */` +
+    `(0,${reactAlias}.useEffect)(()=>{let CDRObserver=null;try{if(typeof document===\"undefined\"||!document.querySelectorAll)return;let CDRMarkSend=()=>document.querySelectorAll(\`button[aria-label],button[type=\"submit\"],[role=\"button\"][aria-label],[data-testid*=\"send\" i]\`).forEach((el)=>{let al=String(el.getAttribute(\"aria-label\")||el.getAttribute(\"title\")||el.getAttribute(\"data-testid\")||\"\");let form=el.closest&&el.closest(\"form\");let submit=el.getAttribute(\"type\")==\"submit\"&&form&&form.querySelector(\"textarea,[contenteditable=true]\");if(/send|submit/i.test(al)||submit)el.classList.add(\"cdr-mode-send\")});CDRMarkSend();if(typeof MutationObserver!==\"undefined\"&&document.body){CDRObserver=new MutationObserver(CDRMarkSend);CDRObserver.observe(document.body,{childList:true,subtree:true})}}catch{}return()=>{try{CDRObserver&&CDRObserver.disconnect()}catch{}}},[CDRMode]);`;
+  if (!controller.includes(SELECTOR_MARKER) || !controller.includes(SEND_MARKER)) {      const stateAnchor = "d=s===Ycs,f=d||n?`codex`:i,p;";
+
+    const stateReplacement =
+      "d=f||n?`codex`:i,p;let [CDRMode,CDRSetMode]=(0,Nvu.useState)(()=>CDRRuntime.mode(i));(0,Nvu.useEffect)(()=>CDRRuntime.subscribe(CDRSetMode),[]);" +
+      `/* ${SELECTOR_MARKER}:26727-state */` +
+      sendObserver;
+    controller = replaceOne(controller, "function jvu(e){", "function jvu(e){let CDRRuntime=" + RUNTIME_SOURCE + ";", "26.727 mode runtime binding");
+    controller = replaceOne(controller, stateAnchor, stateReplacement, "26.727 mode state anchor");
+    controller = replaceOne(
+      controller,
+      "p=e=>{if(d){",
+      "p=e=>{if(e===`chat`){CDRSetMode(`chat`);CDRRuntime.setMode(`chat`);return}if(d){",
+      "26.727 Chat-local mode handler",
+    );
+    controller = replaceOne(controller, "t[10]!==f", "t[10]!==CDRMode", "26.727 mode memo dependency");
+    controller = replaceOne(controller, "mode:f,onModeSelect:p", "mode:CDRMode,onModeSelect:p", "26.727 selector mode prop");
+    controller = replaceOne(controller, "t[10]=f", "t[10]=CDRMode", "26.727 mode memo assignment");
+    controller = controller.replace("function jvu(e){let CDRRuntime=" + RUNTIME_SOURCE + ";", "function jvu(e){let CDRRuntime=" + RUNTIME_SOURCE + ";");
+  }
+  if (!selector.includes(SELECTOR_MARKER)) {
+    selector = replaceOne(
+      selector,
+      "i===`work`?(0,I8.jsx)(`span`,{className:`truncate font-openai-sans font-semibold`,children:n?(0,I8.jsx)(Z,{...L8.chatGpt}):(0,I8.jsx)(Z,{...L8.work})}):(0,I8.jsx)(`span`,{className:`truncate font-openai-sans font-semibold`,children:(0,I8.jsx)(Z,{...L8.codex})})",
+      "i===`chat`?(0,I8.jsx)(`span`,{className:`truncate font-openai-sans font-semibold`,children:`ChatGPT`}):i===`work`?(0,I8.jsx)(`span`,{className:`truncate font-openai-sans font-semibold`,children:n?(0,I8.jsx)(Z,{...L8.chatGpt}):(0,I8.jsx)(Z,{...L8.work})}):(0,I8.jsx)(`span`,{className:`truncate font-openai-sans font-semibold`,children:(0,I8.jsx)(Z,{...L8.codex})})",
+      "26.727 Chat selector trigger label",
+    );
+    selector = replaceOne(
+      selector,
+      "e=i===`codex`?o.formatMessage(L8.codex):n?o.formatMessage(L8.chatGpt):o.formatMessage(L8.work)",
+      "e=i===`chat`?`ChatGPT`:i===`codex`?o.formatMessage(L8.codex):n?o.formatMessage(L8.chatGpt):o.formatMessage(L8.work)",
+      "26.727 selector accessible label",
+    );
+    selector = replaceOne(
+      selector,
+      "let C;t[27]!==y||t[28]!==x||t[29]!==S?",
+      "let CDRChatItem=(0,I8.jsx)(_z.Item,{className:`py-2.5 text-base`,onSelect:()=>a(`chat`),children:(0,I8.jsx)(`span`,{className:`font-openai-sans`,children:`ChatGPT`})});let C;t[27]!==y||t[28]!==x||t[29]!==S?",
+      "26.727 Chat selector item",
+    );
+    selector = replaceOne(selector, "children:[C,O]", "children:[CDRChatItem,C,O]", "26.727 Chat selector menu");
+    selector = selector.replace("function H8l(e){", "function H8l(e){/* " + SELECTOR_MARKER + " */");
+  }
+  const next = [
+    { node: jvuNode, replacement: controller },
+    { node: h8lNode, replacement: selector },
+  ].sort((a, b) => b.node.start - a.node.start).reduce((value, item) => replaceFunction(value, item.node, item.replacement), source);
+  verifySelectorBundle(next, filePath);
+  return next;
+}
+
 function patchSelectorBundleInner(source, filePath) {
   const ast = parseBundle(source, filePath);
+  if (source.includes("function jvu(e){") && source.includes("function H8l(e){")) {
+    return patch26727ModeFunctions(source, filePath, ast);
+  }
 
   // ── Selector function (mLl in 26.721) ──────────────────────
   // Needles are reduced to a single stable key after the 26.721 refactor

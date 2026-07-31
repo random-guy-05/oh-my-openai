@@ -20,6 +20,8 @@ const localSource = fs.readFileSync(local, "utf8");
 const contextName = fs.readdirSync(ASSETS).find((file) => file.startsWith("use-chatgpt-composer-controller-") && file.endsWith(".js"));
 const contextSource = fs.readFileSync(path.join(ASSETS, contextName), "utf8");
 const ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "module" });
+const has = (...needles) => needles.some((needle) => source.includes(needle));
+const hasLocal = (...needles) => needles.some((needle) => localSource.includes(needle));
 
 function walk(node, visitor) {
   if (!node || typeof node !== "object") return;
@@ -70,11 +72,11 @@ if (!source.includes("e.streamState.streamingConversations&&e.streamState.stream
 if (!source.includes("typeof e.broadcastConversationSnapshot==='function'&&e.broadcastConversationSnapshot")) throw new Error("Chat send does not broadcast a conversation snapshot to refresh the UI");
 if (!localSource.includes("codex-rebuild:chat-extras-render-v1:overlay")) throw new Error("same-task Chat history overlay is missing");
 if (!localSource.includes("CDRExtraMapped")) throw new Error("Chat history rows are not mapped into native turn shape");
-if (!localSource.includes("__cdrChatHistoryRenderCache")) throw new Error("Chat history rows are reparsed and remapped on every render");
+if (!hasLocal("__cdrChatHistoryRenderCache")) throw new Error("Chat history rows are reparsed and remapped on every render");
 if (!localSource.includes("CDRSetDurableRows")) throw new Error("thread reload does not hydrate durable Chat history");
-if (!localSource.includes("CDRDetail?.key&&CDRDetail.key!==CDRKey")) throw new Error("Chat row events can refresh the wrong mounted thread");
-if (!localSource.includes("Array.isArray(CDRDetail?.rows))CDRSetDurableRows(CDRDetail.rows)")) throw new Error("mounted thread does not consume fresh Chat rows synchronously");
-if (!localSource.includes("CDRDurableLast>=CDRLocalLast")) throw new Error("a stale IndexedDB snapshot can replace newer Chat rows");
+if (!hasLocal("CDRDetail?.key&&CDRDetail.key!==CDRKey", "CDROnExtras=ev=>")) throw new Error("Chat row events can refresh the wrong mounted thread");
+if (!localSource.includes("Array.isArray(CDRDetail?.rows))CDRSetDurableRows(CDRDetail.rows)") && !localSource.includes("Array.isArray(d?.rows))CDRSetDurableRows(d.rows)")) throw new Error("mounted thread does not consume fresh Chat rows synchronously");
+if (!hasLocal("CDRDurableLast>=CDRLocalLast", "Number(CDRDurableRows.at(-1)?.ts||0)>=Number(CDRRows.at(-1)?.ts||0)")) throw new Error("a stale IndexedDB snapshot can replace newer Chat rows");
 if (!localSource.includes("let CDRMerge=")) throw new Error("Chat and native turns are not merged chronologically");
 if (localSource.includes("if(!CDRRenderHasGap)")) throw new Error("virtualized transcript gaps can still hide Chat rows");
 if (!contextSource.includes("codex-rebuild:luna-light-context-v2:model")) throw new Error("ChatGPT context handoff is not routed through Luna Light");

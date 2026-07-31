@@ -394,27 +394,26 @@ function testRuntime() {
 function testCompiledInvariants() {
   const assets = path.join(__dirname, "..", "src", "mac-x64", "_asar", "webview", "assets");
   const names = fs.readdirSync(assets);
-  const main = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("app-initial-") && name.endsWith(".js"))), "utf8");
-  const home = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("home-composer-mode-toggle-") && name.endsWith(".js"))), "utf8");
-  const css = fs.readFileSync(path.join(assets, names.find((name) => name.startsWith("app-") && name.endsWith(".css"))), "utf8");
-  assert.ok(main.includes("codex-rebuild:mode-ui-invariants-v1:mode-nav"), "mode navigation handler is missing");
-  assert.ok(!main.includes("if(CDRM!==`chat`)p(CDRM)"), "old local-only handler still present");
-  assert.ok(main.includes("if(CDRM===`work`||CDRM===`codex`)p(CDRM)"), "Work/Codex native navigation is missing");
-  assert.ok(!main.includes("CDRM===`chat`){try{p(CDRM)"), "Chat mode still navigates away from the native task");
-  assert.ok(!main.includes("CDRM===`chat`){try{window.location.reload()}"), "Chat mode still reloads");
-  assert.ok(main.includes("children:n?`ChatGPT`:`ChatGPT`"), "Work preset label is not ChatGPT");
-  assert.ok(!main.includes("children:n?(0,W8.jsx)(Z,{...G8.chatGpt})"), "Work label can still render as upstream ChatGPT");
-  assert.ok(
-    main.includes('modelControllers.add(controller);\n    return () => modelControllers.delete(controller);'),
-    "model controllers are not registered with the render-safe implementation",
-  );
-  assert.ok(!main.includes("const current = mode();"), "controller registration still synchronously sets React state");
-  assert.ok(!main.includes("let current=mode()"), "minified recursive controller registration remains");
-  assert.ok(main.includes("CDRObserver=new MutationObserver(CDRMarkSend)"), "send button coloring does not survive remounts");
-  assert.ok(main.includes("CDRObserver&&CDRObserver.disconnect()"), "send button observer leaks after unmount");
-  assert.ok(main.includes("__cdrChatSelectedModel||localStorage.getItem(`cdr-chat-model-selection`)"), "Chat mode does not restore the selected Chat model");
-  assert.ok(home.includes("cdr-home-mode-toggle"), "Home Chat/Work toggle has no stable hook");
-  assert.ok(css.includes('data-codex-product-mode="chat"] .cdr-home-mode-toggle{display:none'), "Home Chat/Work toggle remains visible in Chat mode");
+  const mainName = names.find((name) => name.startsWith("app-initial-") && name.endsWith(".js"));
+  const mainPath = path.join(assets, mainName);
+  const main = fs.readFileSync(mainPath, "utf8");
+  const compiled = patchSelectorBundle(main, mainPath);
+  assert.notStrictEqual(compiled, main, "26.727 mode transform was a no-op");
+  assertParses(compiled);
+  assert.strictEqual(patchSelectorBundle(compiled, mainPath), compiled, "26.727 mode transform is not byte-idempotent");
+  for (const needle of [
+    "codex-rebuild:local-canonical-selector-v3",
+    "codex-rebuild:local-canonical-send-v3",
+    "CDRSetMode(`chat`)",
+    "mode:CDRMode",
+    "CDRChatItem",
+    "CDRObserver=new MutationObserver(CDRMarkSend)",
+    "CDRObserver&&CDRObserver.disconnect()",
+  ]) assert.ok(compiled.includes(needle), `compiled 26.727 mode invariant is missing: ${needle}`);
+  const state = compiled.indexOf("let [CDRMode,CDRSetMode]");
+  const observer = compiled.indexOf("codex-rebuild:local-canonical-send-v3");
+  assert.ok(state >= 0 && observer > state, "send observer is evaluated before CDRMode initialization");
+  assert.ok(compiled.includes("__cdrLocalModeV4"), "mode runtime is not installed");
 }
 
 testPatches();

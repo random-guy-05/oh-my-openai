@@ -58,6 +58,12 @@ function findThreadComponent(source, file) {
       /\.useEffect\)/.test(body)
     ) {
       candidates.push(node);
+    } else if (
+      body.includes("renderEntries:ee,visibleTurnEntries:te") &&
+      body.includes("conversationId:e") &&
+      /\.useEffect\)/.test(body)
+    ) {
+      candidates.push(node);
     }
   });
   candidates.sort((a, b) => a.end - a.start - (b.end - b.start));
@@ -105,8 +111,22 @@ try{
 }catch{}
 `;
 
+const MODERN_OVERLAY = String.raw`/* ${MARKER}:overlay */
+let [CDRExtraTick,CDRSetExtraTick]=(0,NO.useState)(0),[CDRDurableRows,CDRSetDurableRows]=(0,NO.useState)(null);
+(0,NO.useEffect)(()=>{let CDRActive=!0,CDRKey='local:'+e;try{let CDRRaw=localStorage.getItem('cdr-thread-extras:'+CDRKey)||'[]';if(CDRRaw)CDRSetExtraTick(v=>v+1)}catch{}let CDROnExtras=ev=>{let d=ev?.detail;if(d?.key&&d.key!==CDRKey)return;if(Array.isArray(d?.rows))CDRSetDurableRows(d.rows);CDRSetExtraTick(v=>v+1)};try{window.addEventListener('cdr-thread-extras-change',CDROnExtras);return()=>{CDRActive=!1;window.removeEventListener('cdr-thread-extras-change',CDROnExtras)}}catch{return()=>{CDRActive=!1}}},[e]);
+void CDRExtraTick;try{let CDRKey='cdr-thread-extras:local:'+e,CDRRaw=localStorage.getItem(CDRKey)||'[]',CDRCache=globalThis.__cdrChatHistoryRenderCache;if(!CDRCache||CDRCache.key!==CDRKey||CDRCache.raw!==CDRRaw){let CDRParsed=JSON.parse(CDRRaw);if(!Array.isArray(CDRParsed))CDRParsed=[];CDRCache={key:CDRKey,raw:CDRRaw,rows:CDRParsed};globalThis.__cdrChatHistoryRenderCache=CDRCache}let CDRRows=CDRCache.rows;if(Array.isArray(CDRDurableRows)&&CDRDurableRows.length&&Number(CDRDurableRows.at(-1)?.ts||0)>=Number(CDRRows.at(-1)?.ts||0))CDRRows=CDRDurableRows;let CDRExtraMapped=CDRRows.map((r,i)=>{if(!r||!String(r.text||'').trim())return null;let id='cdr-extra-'+i+'-'+String(r.ts||i),user=r.role==='user',item=user?{id:id+'-item',type:'userMessage',content:[{type:'text',text:String(r.text),text_elements:[]}],attachments:[]}:{id:id+'-item',type:'agentMessage',text:String(r.text),phase:null,memoryCitation:null},turn={id,turnId:id,status:'completed',turnStartedAtMs:Number(r.ts)||Date.now(),durationMs:null,finalAssistantStartedAtMs:Number(r.ts)||Date.now(),error:null,diff:null,items:[item],params:{model:null,cwd:null,threadId:e,input:user?[{type:'text',text:String(r.text),text_elements:[]}]:[],attachments:[],clientUserMessageId:null},cdrSource:'chat'};return{physicalTurnIds:[id],preserveServerUserMessages:!1,requests:[],turn,turnId:id,turnIndex:1e6+i,turnKey:id,turnSearchKey:id,cdrSource:'chat'}}).filter(Boolean);if(CDRExtraMapped.length){let CDRMerge=(native,chat)=>[...native.map((entry,index)=>({entry,index,ts:Number(entry?.turn?.turnStartedAtMs)||Number.MAX_SAFE_INTEGER-1,kind:0})),...chat.map((entry,index)=>({entry,index,ts:Number(entry?.turn?.turnStartedAtMs)||Number.MAX_SAFE_INTEGER,kind:1}))].sort((a,b)=>a.ts-b.ts||a.kind-b.kind||a.index-b.index).map(v=>v.entry);ze=CDRMerge(ze.filter(CDREntry=>!CDREntry?.cdrSource),CDRExtraMapped)}}catch{};
+`;
+
 function patch(source, file) {
   if (source.includes(MARKER + ":overlay")) {
+    if (source.includes("renderEntries:ee,visibleTurnEntries:te") && !source.includes("__cdrChatHistoryRenderCache")) {
+      const oldCacheSeam = "let CDRKey='cdr-thread-extras:local:'+e,CDRRaw=localStorage.getItem(CDRKey)||'[]',CDRRows=JSON.parse(CDRRaw);if(!Array.isArray(CDRRows))CDRRows=[];";
+      const newCacheSeam = "let CDRKey='cdr-thread-extras:local:'+e,CDRRaw=localStorage.getItem(CDRKey)||'[]',CDRCache=globalThis.__cdrChatHistoryRenderCache;if(!CDRCache||CDRCache.key!==CDRKey||CDRCache.raw!==CDRRaw){let CDRParsed=JSON.parse(CDRRaw);if(!Array.isArray(CDRParsed))CDRParsed=[];CDRCache={key:CDRKey,raw:CDRRaw,rows:CDRParsed};globalThis.__cdrChatHistoryRenderCache=CDRCache}let CDRRows=CDRCache.rows;";
+      if (source.split(oldCacheSeam).length - 1 !== 1) throw new Error("modern Chat history cache seam drifted");
+      source = source.replace(oldCacheSeam, newCacheSeam);
+      parse(source, file);
+      return source;
+    }
     if (
       source.includes("__cdrChatHistoryRenderCache") &&
       source.includes("CDRSetDurableRows") &&
@@ -130,6 +150,17 @@ function patch(source, file) {
   }
   const node = findThreadComponent(source, file);
   let component = source.slice(node.start, node.end);
+  const isModern = component.includes("renderEntries:ee,visibleTurnEntries:te");
+  if (isModern) {
+    const modernAnchor = "ze=D&&O!=null?Mg({conversationId:e,cwd:ve,entries:Le,history:O,hostId:n,includeAppgenResources:x,showNux:!1,turns:k}):Le,Be=ee.some(U);";
+    if (component.split(modernAnchor).length - 1 !== 1) throw new Error(`${path.basename(file)} modern render seam anchor count is not exactly one`);
+    const hookAlias = component.match(/\(0,([A-Za-z_$][\w$]*)\.useEffect\)/)?.[1];
+    if (!hookAlias) throw new Error(`${path.basename(file)} React effect hook alias drifted`);
+    const upgraded = component.replace(modernAnchor, "ze=D&&O!=null?Mg({conversationId:e,cwd:ve,entries:Le,history:O,hostId:n,includeAppgenResources:x,showNux:!1,turns:k}):Le;" + MODERN_OVERLAY.replaceAll("NO", hookAlias) + "let Be=ee.some(U);");
+    const next = source.slice(0, node.start) + upgraded + source.slice(node.end);
+    parse(next, file);
+    return next;
+  }
   const anchor = "renderEntries:ie,visibleTurnEntries:ae}=H(S,{conversationId:e,isBackgroundSubagentsEnabled:c}),";
   if (component.split(anchor).length - 1 !== 1) {
     throw new Error(`${path.basename(file)} render seam anchor count is not exactly one`);

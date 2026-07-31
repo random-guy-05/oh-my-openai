@@ -42,12 +42,269 @@ function replaceOne(source, oldValue, newValue, label) {
   return source.replace(oldValue, newValue);
 }
 
+function dependencyTable(source) {
+  const start = source.indexOf("const __vite__mapDeps=");
+  if (start < 0) throw new Error("26.727 provider: __vite__mapDeps table is missing");
+  const arrayStart = source.indexOf("m.f=[", start);
+  if (arrayStart < 0) throw new Error("26.727 provider: __vite__mapDeps asset array is missing");
+  const open = arrayStart + "m.f=".length;
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "`" || char === "\"" || char === "'") { quote = char; continue; }
+    if (char === "[") depth += 1;
+    else if (char === "]" && --depth === 0) {
+      const body = source.slice(open + 1, index);
+      const assets = [];
+      const pattern = /["']([^"']+\.js)["']/g;
+      let match;
+      while ((match = pattern.exec(body))) assets.push(match[1]);
+      return assets;
+    }
+  }
+  throw new Error("26.727 provider: unterminated __vite__mapDeps asset array");
+}
+
+function resolveDependencyIndices(mainSource, chunkSource, mainBundleName) {
+  const assets = dependencyTable(mainSource);
+  const imports = [];
+  const pattern = /(?:from\s*|import\s*(?:\(\s*)?)[`'\"]\.\/([^`'\"]+)[`'\"]/g;
+  let match;
+  while ((match = pattern.exec(chunkSource))) {
+    const asset = `./${match[1]}`;
+    if (!imports.includes(asset)) imports.push(asset);
+  }
+  const indices = [];
+  for (const asset of imports) {
+    const index = assets.indexOf(asset);
+    if (index >= 0 && !indices.includes(index)) indices.push(index);
+    else if (asset !== `./${mainBundleName}`) {
+      throw new Error(`26.727 provider: Vite dependency is not in __vite__mapDeps: ${asset}`);
+    }
+  }
+  if (!indices.length) throw new Error("26.727 provider: no Vite dependencies resolved");
+  return indices;
+}
+
+function fileExists(io, file) {
+  try { return io.existsSync(file); } catch { return false; }
+}
+
+function cleanupTransactionArtifacts(state, io, removeJournal = true) {
+  const errors = [];
+  for (const entry of state.entries) {
+    for (const file of [entry.temp, entry.backup]) {
+      if (!file) continue;
+      try { io.unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+    }
+  }
+  if (removeJournal) {
+    for (const file of [state.journal, `${state.journal}.tmp`]) {
+      try { io.unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+    }
+  }
+  return errors;
+}
+
+function recoverTransaction(state, io = fs) {
+  if (state.status === "committed") {
+    const errors = cleanupTransactionArtifacts(state, io, false);
+    if (!errors.length) {
+      try { io.unlinkSync(state.journal); } catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+      try { io.unlinkSync(`${state.journal}.tmp`); } catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+    }
+    if (errors.length) throw new Error(`custom-provider committed transaction cleanup failed: ${errors[0].message}`);
+    return;
+  }
+  const errors = [];
+  for (const entry of state.entries.slice().reverse()) {
+    try { if (entry.temp) io.unlinkSync(entry.temp); } catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+    // Recovery is artifact-driven rather than flag-driven. If a rename
+    // succeeded but the following journal update did not, the backup still
+    // exists and must be restored.
+    if (!entry.backup || !fileExists(io, entry.backup)) continue;
+    try {
+      if (fileExists(io, entry.file)) io.unlinkSync(entry.file);
+      io.renameSync(entry.backup, entry.file);
+    } catch (error) { errors.push(error); }
+  }
+  // Never delete a backup while any restore failed. The journal and remaining
+  // backup are the only durable path for the next startup to finish recovery.
+  if (errors.length) throw new Error(`custom-provider transaction recovery failed: ${errors[0].message}`);
+  for (const entry of state.entries) {
+    if (entry.originalExisted !== false && !fileExists(io, entry.file)) {
+      errors.push(new Error(`original bundle was not restored: ${entry.file}`));
+    }
+  }
+  if (!errors.length) errors.push(...cleanupTransactionArtifacts(state, io, false));
+  if (!errors.length) {
+    try { io.unlinkSync(state.journal); } catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+    try { io.unlinkSync(`${state.journal}.tmp`); } catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+  }
+  if (errors.length) throw new Error(`custom-provider transaction recovery failed: ${errors[0].message}`);
+}
+
+function recoverBundleTransactions(directory, io = fs) {
+  const journals = io.readdirSync(directory).filter((name) => /^\.cdr-transaction-.*\.json$/.test(name));
+  for (const name of journals) {
+    const journal = path.join(directory, name);
+    let state;
+    try { state = JSON.parse(io.readFileSync(journal, "utf8")); } catch (error) {
+      throw new Error(`custom-provider transaction journal is unreadable: ${journal}: ${error.message}`);
+    }
+    state.journal = journal;
+    recoverTransaction(state, io);
+  }
+}
+
+function writeTransactionJournal(state, io) {
+  const temp = `${state.journal}.tmp`;
+  io.writeFileSync(temp, JSON.stringify(state), "utf8");
+  io.renameSync(temp, state.journal);
+}
+
+function commitBundleSet(entries, io = fs) {
+  const changed = entries.filter((entry) => entry.next !== entry.previous);
+  if (!changed.length) return { cleanupErrors: [] };
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const journal = path.join(path.dirname(changed[0].file), `.cdr-transaction-${token}.json`);
+  const state = {
+    version: 1,
+    status: "prepared",
+    journal,
+    entries: changed.map((entry) => ({
+      file: entry.file,
+      originalExisted: fileExists(io, entry.file),
+      temp: `${entry.file}.cdr-staged-${token}`,
+      backup: `${entry.file}.cdr-backup-${token}`,
+      staged: false,
+      backedUp: false,
+      installed: false,
+    })),
+  };
+  try {
+    writeTransactionJournal(state, io);
+    for (const [index, entry] of changed.entries()) {
+      io.writeFileSync(state.entries[index].temp, entry.next, "utf8");
+      state.entries[index].staged = true;
+      writeTransactionJournal(state, io);
+    }
+    state.status = "committing";
+    writeTransactionJournal(state, io);
+    for (const entry of state.entries) {
+      io.renameSync(entry.file, entry.backup);
+      entry.backedUp = true;
+      writeTransactionJournal(state, io);
+    }
+    for (const entry of state.entries) {
+      io.renameSync(entry.temp, entry.file);
+      entry.installed = true;
+      writeTransactionJournal(state, io);
+    }
+    // Persist the commit marker before changing the in-memory state. If this
+    // final journal write fails, the transaction is still only committing and
+    // the catch path must restore the original files rather than treating the
+    // patched files as an already-committed transaction.
+    writeTransactionJournal({ ...state, status: "committed" }, io);
+    state.status = "committed";
+    const cleanupErrors = cleanupTransactionArtifacts(state, io, false);
+    if (!cleanupErrors.length) {
+      for (const file of [state.journal, `${state.journal}.tmp`]) {
+        try { io.unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") cleanupErrors.push(error); }
+      }
+    }
+    if (cleanupErrors.length) {
+      console.warn(`[custom-providers] committed transaction cleanup deferred: ${cleanupErrors[0].message}`);
+    }
+    return { cleanupErrors };
+  } catch (error) {
+    try { recoverTransaction(state, io); } catch (rollbackError) {
+      error.message += `; rollback failed: ${rollbackError.message}`;
+      error.rollbackError = rollbackError;
+    }
+    throw error;
+  }
+}
+
+function stripOldPanelCode(source) {
+  // Remove any version of the panel code by finding the marker range.
+  // The old inline-style code won't match the current PANEL_CODE const,
+  // so we remove it by finding the text between the marker and the next
+  // function (CDRCustomProvidersPanelV2Skeleton) or export.
+  // Also handles leftover 'const CDRJsx=a();' / 'const CDRReact=CDRInterop' lines
+  // from multiple previous injection iterations.
+  const markerStart = '/* ' + PANEL_EXPORT_MARKER + ' */';
+  const startIdx = source.indexOf(markerStart);
+  if (startIdx < 0) return source;
+  // Find the start — go back to find 'function CDRCustomProvidersPanelV2('
+  const funcStart = source.lastIndexOf('CDRCustomProvidersPanelV2', startIdx);
+  if (funcStart < 0) return source;
+  // Walk backwards past any leftover CDR variable declarations (multiple layers)
+  let removeStart = Math.max(0, source.lastIndexOf('\n', funcStart));
+  let maxIter = 10; // safety limit
+  while (maxIter-- > 0) {
+    const beforeLines = source.slice(Math.max(0, removeStart - 100), removeStart).trim();
+    if (beforeLines.includes('CDRJsx') || beforeLines.includes('CDRReact') || beforeLines.includes('CDRInterop')) {
+      removeStart = Math.max(0, source.lastIndexOf('\n', removeStart - 1));
+    } else {
+      break;
+    }
+  }
+  // Find the end — next function or export
+  const markers = ['function CDRCustomProvidersPanelV2Skeleton', '\nexport{', '\n//# sourceMappingURL='];
+  let removeEnd = source.length;
+  for (const m of markers) {
+    const idx = source.indexOf(m, startIdx);
+    if (idx >= 0 && idx < removeEnd) removeEnd = idx;
+  }
+  return source.slice(0, removeStart) + '\n' + source.slice(removeEnd);
+}
+
+function stripOldIconCode(source) {
+  const markerStart = '/* ' + ICON_EXPORT_MARKER + ' */';
+  const startIdx = source.indexOf(markerStart);
+  if (startIdx < 0) return source;
+  const funcStart = source.lastIndexOf('CDRCustomProvidersIconV2', startIdx);
+  if (funcStart < 0) return source;
+  const removeStart = Math.max(0, source.lastIndexOf('\n', funcStart));
+  const markers = ['function CDRCustomProvidersPanelV2Skeleton', '\nexport{', '\n//# sourceMappingURL='];
+  let removeEnd = source.length;
+  for (const m of markers) {
+    const idx = source.indexOf(m, startIdx);
+    if (idx >= 0 && idx < removeEnd) removeEnd = idx;
+  }
+  return source.slice(0, removeStart) + '\n' + source.slice(removeEnd);
+}
+
+function cleanExportEntries(source) {
+  // Strips ALL duplicate CDRCustomProvidersPanelV2 entries from the export
+  // statement, leaving only the non-panel exports. The fresh entry is added
+  // by ensurePanelLoaderExport afterward.
+  const expStart = source.indexOf('export{');
+  if (expStart < 0) return source;
+  const expEnd = source.indexOf('}', expStart);
+  if (expEnd < 0) return source;
+  const exportBody = source.slice(expStart + 7, expEnd);
+  // Split entries, filter out any that reference CDRCustomProvidersPanelV2
+  const entries = exportBody.split(',').map(e => e.trim()).filter(e => e);
+  const cleanEntries = entries.filter(e => !e.includes('CDRCustomProvidersPanelV2'));
+  if (cleanEntries.length === entries.length) return source; // no duplicates to clean
+  const newExport = 'export{' + cleanEntries.join(',') + '}';
+  return source.slice(0, expStart) + newExport + source.slice(expEnd + 1);
+}
+
 function ensurePanelLoaderExport(source) {
-  // Older patch revisions installed a second copy inside the bundle initializer
-  // and published it through window. The lazy route now consumes a real ESM
-  // export, so keeping that registry only adds an initialization-order hazard.
-  source = source.replace(PANEL_CODE, "");
-  source = source.replace(ICON_CODE, "");
+  // Strip ANY old panel/icon code by marker range (handles version mismatches)
+  source = stripOldPanelCode(source);
+  source = stripOldIconCode(source);
   source = source.replace("\ntry{window.__CDRCustomProvidersPanel=CDRCustomProvidersPanel}catch{}\n", "");
   source = source.replace(
     '"custom-providers":CDRCustomProvidersIcon,',
@@ -65,51 +322,30 @@ function ensurePanelLoaderExport(source) {
       "custom providers React interop import",
     );
   }
-  if (source.includes(PANEL_EXPORT_MARKER)) {
-    source = source.replace(/\bs\.use(State|Effect)\b/g, "CDRReact.use$1");
-    source = source.replace("return(0,U.jsx)(tag,p)", "return(0,CDRJsx.jsx)(tag,p)");
-    source = source.replace(
-      "function CDRCustomProvidersIconV2(e){/* " + ICON_EXPORT_MARKER + " */return(0,U.jsx)",
-      "function CDRCustomProvidersIconV2(e){/* " + ICON_EXPORT_MARKER + " */return(0,CDRJsx.jsx)",
-    );
-    if (!source.includes("const CDRReact=CDRInterop(y(),1);")) {
-      source = source.replace(
-        "function CDRCustomProvidersPanelV2(){",
-        "const CDRReact=CDRInterop(y(),1);\nfunction CDRCustomProvidersPanelV2(){",
-      );
-    }
-    if (!source.includes("const CDRJsx=a();")) {
-      source = source.replace("const CDRReact=", "const CDRJsx=a();\nconst CDRReact=");
-    }
-  }
-  const hasPanel = source.includes(PANEL_EXPORT_MARKER);
-  const hasIcon = source.includes(ICON_EXPORT_MARKER);
-  if (hasPanel && hasIcon) return source;
-  const definitions = [];
-  if (!hasPanel) {
-    definitions.push(PANEL_CODE.replace(
-      `function CDRCustomProvidersPanel(){/* ${MARKER}:panel */`,
-      `function CDRCustomProvidersPanelV2(){/* ${PANEL_EXPORT_MARKER} */`,
-    ));
-  }
-  if (!hasIcon) {
-    definitions.push(ICON_CODE.replace(
-      "function CDRCustomProvidersIcon(e){",
-      `function CDRCustomProvidersIconV2(e){/* ${ICON_EXPORT_MARKER} */`,
-    ));
-  }
+  // Clean export of any stale duplicate CDRCustomProvidersPanelV2 entries
+  source = cleanExportEntries(source);
+  // Always inject fresh panel and icon code
+  const newPanelCode = PANEL_CODE.replace(
+    `function CDRCustomProvidersPanel(){/* ${MARKER}:panel */`,
+    `function CDRCustomProvidersPanelV2(){/* ${PANEL_EXPORT_MARKER} */`,
+  );
+  const newIconCode = ICON_CODE.replace(
+    "function CDRCustomProvidersIcon(e){",
+    `function CDRCustomProvidersIconV2(e){/* ${ICON_EXPORT_MARKER} */`,
+  );
+  const definitions = newPanelCode + '\n' + newIconCode;
   return replaceOne(
     source,
     "export{",
-    definitions.join("\n") + "\nexport{" + (hasPanel ? "" : "CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2,"),
+    definitions + "\nexport{CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2,",
     "export module-scoped custom providers panel and icon",
   );
 }
 
 // ─── The React component injected into the settings page ───
-// Uses U (JSX factory) and React hooks from the bundle's imports.
-// Provider data is stored in localStorage as JSON. TOML is generated
-// client-side and shown in a textarea for the user to copy.
+// Styled with Tailwind CSS classes matching the native settings panel conventions.
+// Uses the app's theme CSS variables via native classes (text-token-*, heading-lg, etc.).
+// Provider data is cached in localStorage. Apply writes config via the batchWrite bridge.
 const PANEL_CODE = `
 const CDRJsx=a();
 const CDRReact=CDRInterop(y(),1);
@@ -119,103 +355,173 @@ let [editing,setEditing]=CDRReact.useState(null);
 let [showToml,setShowToml]=CDRReact.useState(!1);
 let [copied,setCopied]=CDRReact.useState(!1);
 let [removed,setRemoved]=CDRReact.useState([]);
+let [renamed,setRenamed]=CDRReact.useState({});
+let [credentialCleared,setCredentialCleared]=CDRReact.useState({});
 let [status,setStatus]=CDRReact.useState('');
 let [saving,setSaving]=CDRReact.useState(!1);
-CDRReact.useEffect(()=>{try{let d=JSON.parse(localStorage.getItem('${LS_KEY}')||'[]');if(Array.isArray(d))setProviders(d)}catch{}},[]);
-let save=(next)=>{setProviders(next);try{localStorage.setItem('${LS_KEY}',JSON.stringify(next.map(({api_key,...p})=>p)))}catch{}};
-let addProvider=()=>{let id='prov-'+Date.now();let p={id,name:'',display_name:'',base_url:'',api_key:'',model:'',env_key:'',active:providers.length===0};let next=[...providers,p];save(next);setEditing(id)};
-let updateProvider=(id,field,val)=>{let next=providers.map(p=>p.id===id?{...p,[field]:val}:p);save(next)};
-let deleteProvider=(id)=>{let old=providers.find(p=>p.id===id);if(old?.name)setRemoved(v=>[...new Set([...v,old.name])]);let next=providers.filter(p=>p.id!==id);save(next);if(editing===id)setEditing(null)};
-let applyPreset=(preset)=>{let id='prov-'+Date.now();let p={id,...preset,api_key:'',model:'',active:providers.length===0};let next=[...providers,p];save(next);setEditing(id)};
-let validName=p=>/^[A-Za-z0-9_-]+$/.test(String(p.name||''))&&!['openai','ollama','lmstudio'].includes(String(p.name||'').toLowerCase());
-let genToml=()=>{let lines=[];for(let p of providers){if(!validName(p))continue;lines.push('[model_providers.'+p.name+']');lines.push('name = "'+(p.display_name||p.name)+'"');if(p.base_url)lines.push('base_url = "'+p.base_url+'"');if(p.env_key)lines.push('env_key = "'+p.env_key.toUpperCase()+'"');else if(p.api_key)lines.push('experimental_bearer_token = "<redacted>"');lines.push('wire_api = "responses"');lines.push('')}let m=providers.find(p=>p.active&&p.model&&validName(p));if(m){lines.push('model = "'+m.model+'"');lines.push('model_provider = "'+m.name+'"');lines.push('')}return lines.join('\\n')};
-let applyConfig=async()=>{if(saving)return;let clean=providers.filter(validName);if(clean.length!==providers.length){setStatus('Provider IDs may use letters, numbers, _ or - and cannot be openai, ollama, or lmstudio.');return}if(!clean.length&&removed.length===0){setStatus('Add a provider first.');return}let edits=[];for(let name of removed)edits.push({keyPath:'model_providers.'+name,value:null,mergeStrategy:'replace'});for(let p of clean){let value={name:p.display_name||p.name,wire_api:'responses'};if(p.base_url)value.base_url=p.base_url;if(p.env_key)value.env_key=p.env_key.toUpperCase();else if(p.api_key)value.experimental_bearer_token=p.api_key;edits.push({keyPath:'model_providers.'+p.name,value,mergeStrategy:'replace'})}let active=clean.find(p=>p.active&&p.model);if(active){edits.push({keyPath:'model_provider',value:active.name,mergeStrategy:'upsert'},{keyPath:'model',value:active.model,mergeStrategy:'upsert'})}setSaving(!0);setStatus('Saving to Codex config…');try{let write=globalThis.__cdrWriteConfigEdits;if(typeof write!=='function')throw Error('Codex config bridge is unavailable');await write(edits);setRemoved([]);save(clean.map(p=>({...p,api_key:''})));setStatus('Saved. New turns will use the updated config.')}catch(err){setStatus('Save failed: '+String(err&&err.message||err))}finally{setSaving(!1)}};
-let copyToml=()=>{try{navigator.clipboard.writeText(genToml());setCopied(!0);setTimeout(()=>setCopied(!1),2e3)}catch{}};
+let providerId=()=>{try{if(globalThis.crypto&&typeof globalThis.crypto.randomUUID==='function')return'prov-'+globalThis.crypto.randomUUID()}catch{}return'prov-'+Date.now()+'-'+Math.random().toString(36).slice(2,8)};
+let trim=v=>String(v==null?'':v).trim();
+let validName=p=>/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(trim(p.name))&&!['openai','ollama','lmstudio'].includes(trim(p.name).toLowerCase());
+let validEnvKey=p=>!trim(p.env_key)||/^[A-Z_][A-Z0-9_]{0,127}$/.test(trim(p.env_key).toUpperCase());
+let statusError=s=>/^(Save failed|Provider|This provider|Copy failed|.* needs an HTTPS|.* has an invalid environment)/.test(String(s||''));
+let fieldId=(p,field)=>'cdr-provider-'+p.id+'-'+field;
+let validBaseUrl=p=>{let raw=trim(p.base_url);if(!raw)return!1;try{let u=new URL(raw);if(u.username||u.password)return!1;if(u.protocol==='https:')return!0;if(u.protocol!=='http:')return!1;let h=u.hostname.toLowerCase();return h==='localhost'||h==='127.0.0.1'||h==='[::1]'||h==='::1'}catch{return!1}};
+let providerError=p=>{let name=trim(p.name)||'This provider';if(!validName(p))return'Provider ID must start with a letter or number, use only letters, numbers, _ or -, and cannot be a built-in provider.';if(!validBaseUrl(p))return name+' needs an HTTPS base URL (HTTP is allowed only for localhost).';if(!validEnvKey(p))return name+' has an invalid environment variable name.';return''};
+let normalizeProvider=p=>({id:trim(p.id)||providerId(),name:trim(p.name),display_name:trim(p.display_name),base_url:trim(p.base_url),api_key:String(p.api_key||''),model:trim(p.model),env_key:trim(p.env_key).toUpperCase(),active:!!p.active});
+let save=(next)=>{let normalized=next.map(normalizeProvider);setProviders(normalized);try{localStorage.setItem('${LS_KEY}',JSON.stringify(normalized.map(({api_key,...p})=>p)))}catch{}};
+let loadDraft=()=>{try{let d=JSON.parse(localStorage.getItem('${LS_KEY}')||'[]');if(Array.isArray(d))return d.map(normalizeProvider)}catch{}return[]};
+CDRReact.useEffect(()=>{setProviders(loadDraft())},[]);
+let addProvider=()=>{let p=normalizeProvider({id:providerId(),active:providers.length===0});let next=[...providers,p];save(next);setEditing(p.id)};
+let updateProvider=(id,field,val)=>{let next=providers.map(p=>{if(p.id!==id)return p;let updated={...p,[field]:val};if(field==='name'&&trim(p.name)&&trim(val)!==trim(p.name))setRenamed(v=>({...v,[id]:[...(v[id]||[]),trim(p.name)]}));if(field==='api_key'&&trim(val))updated.env_key='';if(field==='env_key'&&trim(val))updated.api_key='';return updated});save(next);if((field==='api_key'&&trim(val))||(field==='env_key'&&trim(val)))setCredentialCleared(v=>({...v,[id]:!1}))};
+let clearCredential=(id)=>{setCredentialCleared(v=>({...v,[id]:!0}));let next=providers.map(p=>p.id===id?{...p,api_key:'',env_key:''}:p);save(next)};
+let deleteProvider=(id)=>{let old=providers.find(p=>p.id===id);if(!old)return;if(typeof window!=='undefined'&&typeof window.confirm==='function'&&!window.confirm('Remove '+(old.display_name||old.name||'this provider')+' from Codex?'))return;let oldNames=[...(renamed[id]||[]),trim(old?.name)].filter(Boolean);if(oldNames.length)setRemoved(v=>[...new Set([...v,...oldNames])]);let next=providers.filter(p=>p.id!==id);save(next);setRenamed(v=>{let copy={...v};delete copy[id];return copy});setCredentialCleared(v=>{let copy={...v};delete copy[id];return copy});if(editing===id)setEditing(null)};
+let applyPreset=(preset)=>{let p=normalizeProvider({...preset,id:providerId(),api_key:'',model:'',active:providers.length===0});let next=[...providers,p];save(next);setEditing(p.id)};
+let validateDrafts=()=>{let clean=providers.map(normalizeProvider);let errors=[];let seen=new Set();for(let p of clean){let error=providerError(p);if(error)errors.push(error);let key=trim(p.name).toLowerCase();if(key&&seen.has(key))errors.push('Provider IDs must be unique.');else if(key)seen.add(key)}return{clean,errors}};
+let tomlString=v=>JSON.stringify(String(v==null?'':v));
+let genToml=()=>{let lines=[];for(let p of providers.map(normalizeProvider)){if(providerError(p))continue;lines.push('[model_providers.'+p.name+']');lines.push('name = '+tomlString(p.display_name||p.name));lines.push('base_url = '+tomlString(p.base_url));if(p.env_key)lines.push('env_key = '+tomlString(p.env_key));else if(p.api_key)lines.push('experimental_bearer_token = "<redacted>"');lines.push('wire_api = "responses"');lines.push('')}let m=providers.map(normalizeProvider).find(p=>p.active&&p.model&&!providerError(p));if(m){lines.push('model = '+tomlString(m.model));lines.push('model_provider = '+tomlString(m.name));lines.push('')}return lines.join('\\n')};
+let applyConfig=async()=>{if(saving)return;let validation=validateDrafts();if(validation.errors.length){setStatus(validation.errors[0]);return}let clean=validation.clean;if(!clean.length&&removed.length===0){setStatus('Add a provider first.');return}let renamedNames=Object.values(renamed).flat();let namesToRemove=[...new Set([...removed.map(trim),...renamedNames.map(trim)].filter(Boolean))];let currentNames=new Set(clean.map(p=>trim(p.name)));let edits=[];for(let name of namesToRemove)if(!currentNames.has(name))edits.push({keyPath:'model_providers.'+name,value:null,mergeStrategy:'replace'});for(let p of clean){let providerPath='model_providers.'+p.name;let value={name:p.display_name||p.name,base_url:p.base_url,wire_api:'responses'};if(p.env_key)value.env_key=p.env_key;else if(p.api_key)value.experimental_bearer_token=p.api_key;edits.push({keyPath:providerPath,value,mergeStrategy:'upsert'});if(credentialCleared[p.id]){edits.push({keyPath:providerPath+'.experimental_bearer_token',value:null,mergeStrategy:'replace'},{keyPath:providerPath+'.env_key',value:null,mergeStrategy:'replace'})}else if(p.env_key){edits.push({keyPath:providerPath+'.experimental_bearer_token',value:null,mergeStrategy:'replace'})}else if(p.api_key){edits.push({keyPath:providerPath+'.env_key',value:null,mergeStrategy:'replace'})}}let active=clean.find(p=>p.active&&p.model);if(active){edits.push({keyPath:'model_provider',value:active.name,mergeStrategy:'upsert'},{keyPath:'model',value:active.model,mergeStrategy:'upsert'})}setSaving(!0);setStatus('Saving to Codex config…');try{let write=globalThis.__cdrWriteConfigEdits;if(typeof write!=='function')throw Error('Codex config bridge is unavailable');await write(edits);setRemoved([]);setRenamed({});setCredentialCleared({});save(clean);setStatus('Saved. Existing credentials are preserved unless you replace or clear them.')}catch(err){setStatus('Save failed: '+String(err&&err.message||err))}finally{setSaving(!1)}};
+let copyToml=()=>{try{let text=genToml();if(!text)throw Error('No valid provider configuration to copy');navigator.clipboard.writeText(text);setCopied(!0);setTimeout(()=>setCopied(!1),2e3)}catch(err){setStatus('Copy failed: '+String(err&&err.message||err))}};
 let presets=[{name:'openrouter',display_name:'OpenRouter',base_url:'https://openrouter.ai/api/v1',env_key:'OPENROUTER_API_KEY',label:'OpenRouter'}];
-let inputStyle={width:'100%',padding:'8px 12px',borderRadius:'8px',border:'1px solid var(--token-border,rgba(255,255,255,.15))',background:'var(--token-main-surface,transparent)',color:'inherit',fontSize:'14px',outline:'none'};
-let labelStyle={display:'block',fontSize:'12px',color:'var(--token-text-tertiary,#888)',marginBottom:'4px',marginTop:'12px'};
-let btnStyle={padding:'8px 16px',borderRadius:'8px',border:'1px solid var(--token-border,rgba(255,255,255,.15))',background:'transparent',color:'inherit',fontSize:'14px',cursor:'pointer'};
-let primaryBtn={...btnStyle,background:'var(--token-main,#2563eb)',borderColor:'transparent',color:'#fff',fontWeight:600};
-let cardStyle={border:'1px solid var(--token-border,rgba(255,255,255,.1))',borderRadius:'12px',padding:'16px',marginBottom:'12px'};
+// Native-matching Tailwind component helpers
 let el=(tag,props,...kids)=>{let p={...props};if(kids.length===1)p.children=kids[0];else if(kids.length>1)p.children=kids;return(0,CDRJsx.jsx)(tag,p)};
-return el('div',{style:{padding:'24px',maxWidth:'680px'},['data-cdr-custom-providers']:!0},
-  el('h2',{style:{fontSize:'20px',fontWeight:700,marginBottom:'4px'}},'Custom Models & Providers'),
-  el('p',{style:{fontSize:'14px',color:'var(--token-text-tertiary,#888)',marginBottom:'20px'}},'Add Responses API-compatible providers and save them directly to Codex config.'),
-  // Preset buttons
-  el('div',{style:{marginBottom:'20px'}},
-    el('p',{style:{...labelStyle,marginTop:'0'}},'Quick presets:'),
-    ...presets.map(p=>el('button',{key:p.name,onClick:()=>applyPreset(p),style:{...btnStyle,marginRight:'8px'}},p.label))
+let Input=(p)=>el('input',{className:'h-9 w-full rounded-md border border-token-border bg-token-input-background px-3 text-sm text-token-foreground placeholder:text-token-text-tertiary outline-none transition-colors focus:border-token-focus-border focus:ring-2 focus:ring-[var(--color-token-focus-border)]',...p});
+let Label=(p)=>el('label',{className:'mb-1.5 mt-4 block text-xs font-medium text-token-text-secondary',...p});
+let Btn=(p)=>el('button',{className:'inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-token-border bg-transparent px-3 py-1.5 text-sm text-token-foreground transition-colors hover:bg-token-list-hover-background focus:outline-none focus:ring-2 focus:ring-[var(--color-token-focus-border)] disabled:cursor-not-allowed disabled:opacity-40',...p});
+let PrimaryBtn=(p)=>el('button',{className:'inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md bg-[var(--token-main)] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-[var(--color-token-focus-border)] disabled:cursor-not-allowed disabled:opacity-40',...p});
+let DangerBtn=(p)=>el('button',{className:'inline-flex cursor-pointer items-center justify-center gap-1 rounded-md border border-transparent bg-transparent px-2 py-1 text-xs text-token-text-secondary transition-colors hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:cursor-not-allowed disabled:opacity-40',...p});
+let SectionTitle=(p)=>el('h3',{className:'text-sm font-medium text-token-foreground',...p});
+let MutedText=(p)=>el('p',{className:'mt-1 text-xs text-token-text-secondary',...p});
+return el('div',{className:'flex flex-col gap-6',['data-cdr-custom-providers']:!0},
+  // Section header — matches native heading-lg without font-weight override
+  el('div',{className:'flex flex-col gap-1'},
+    el('h2',{className:'heading-lg text-token-foreground'},'Custom Models & Providers'),
+    el('p',{className:'text-sm text-token-text-secondary'},'Add Responses API-compatible providers and save them directly to Codex config.')
+  ),
+  // Presets use native settings rows rather than dashboard-style pills.
+  el('div',{className:'flex flex-col gap-2'},
+    el('div',{className:'flex flex-col gap-0.5'},
+      el('h3',{className:'text-sm font-medium text-token-foreground'},'Start with a preset'),
+      el('p',{className:'text-xs text-token-text-secondary'},'Use an environment variable when possible. You can edit every value before saving.')
+    ),
+    el('div',{className:'divide-y divide-token-border-light overflow-hidden rounded-lg border border-token-border'},
+      ...presets.map(p=>el('button',{key:p.name,onClick:()=>applyPreset(p),className:'flex w-full items-center justify-between gap-4 px-3.5 py-3 text-left transition-colors hover:bg-token-list-hover-background focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--color-token-focus-border)]'},
+        el('span',{className:'flex min-w-0 flex-col gap-0.5'},
+          el('span',{className:'text-sm font-medium text-token-foreground'},p.label),
+          el('span',{className:'truncate text-xs text-token-text-secondary'},p.base_url)
+        ),
+        el('span',{className:'text-xs text-token-text-secondary'},'Add')
+      ))
+    )
   ),
   // Provider list
-  ...providers.map(p=>el('div',{key:p.id,style:cardStyle},
-    el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}},
-      el('strong',{style:{fontSize:'15px'}},p.name||'(unnamed)'),
-      el('div',{},
-        el('button',{onClick:()=>setEditing(editing===p.id?null:p.id),style:{...btnStyle,marginRight:'4px',padding:'4px 12px',fontSize:'12px'}},editing===p.id?'Done':'Edit'),
-        el('button',{onClick:()=>deleteProvider(p.id),style:{...btnStyle,padding:'4px 12px',fontSize:'12px',color:'#dc2626'}},'Delete')
-      )
+  el('div',{className:'flex flex-col gap-2'},
+    el('div',{className:'flex items-center justify-between gap-3'},
+      el('div',{className:'flex flex-col gap-0.5'},
+        el('h3',{className:'text-sm font-medium text-token-foreground'},'Configured providers'),
+        el('p',{className:'text-xs text-token-text-secondary'},providers.length?providers.length+' provider'+(providers.length===1?'':'s'):'Nothing configured yet')
+      ),
+      el(Btn,{onClick:addProvider},'+ Add provider')
     ),
-    editing===p.id?el('div',{},
-      el('label',{style:labelStyle},'Provider ID'),
-      el('input',{style:inputStyle,value:p.name,onChange:e=>updateProvider(p.id,'name',e.target.value),placeholder:'openrouter'}),
-      el('label',{style:labelStyle},'Display name'),
-      el('input',{style:inputStyle,value:p.display_name||'',onChange:e=>updateProvider(p.id,'display_name',e.target.value),placeholder:'OpenRouter'}),
-      el('label',{style:labelStyle},'Base URL'),
-      el('input',{style:inputStyle,value:p.base_url,onChange:e=>updateProvider(p.id,'base_url',e.target.value),placeholder:'https://openrouter.ai/api/v1'}),
-      el('label',{style:labelStyle},'Direct bearer token (optional; env var is recommended)'),
-      el('input',{type:'password',style:inputStyle,value:p.api_key,onChange:e=>updateProvider(p.id,'api_key',e.target.value),placeholder:'sk-...'}),
-      el('label',{style:labelStyle},'Env var name (for config.toml env_key)'),
-      el('input',{style:inputStyle,value:p.env_key,onChange:e=>updateProvider(p.id,'env_key',e.target.value),placeholder:'OPENROUTER_API_KEY'}),
-      el('label',{style:labelStyle},'Default model (optional)'),
-      el('input',{style:inputStyle,value:p.model,onChange:e=>updateProvider(p.id,'model',e.target.value),placeholder:'provider/model-name'}),
-      el('label',{style:{...labelStyle,display:'flex',gap:'8px',alignItems:'center'}},el('input',{type:'checkbox',checked:!!p.active,onChange:e=>{let next=providers.map(x=>({...x,active:x.id===p.id?e.target.checked:!1}));save(next)}}),'Make this the active Codex provider/model')
-    ):el('div',{style:{fontSize:'13px',color:'var(--token-text-tertiary,#aaa)'}},
-      el('div',{},'URL: '+(p.base_url||'—')+'  |  Responses API'+(p.model?'  |  model: '+p.model:'')+(p.active?'  |  active':''))
-    )
-  )),
-  // Add + TOML buttons
-  el('div',{style:{display:'flex',gap:'8px',marginBottom:'20px'}},
-    el('button',{onClick:addProvider,style:primaryBtn},'+ Add Provider'),
-    el('button',{onClick:applyConfig,style:primaryBtn,disabled:saving},saving?'Saving…':'Save to Codex'),
-    el('button',{onClick:()=>setShowToml(!showToml),style:btnStyle,disabled:providers.length===0},showToml?'Hide TOML':'Generate TOML')
+    ...providers.length===0?[el('div',{key:'empty',className:'rounded-lg border border-dashed border-token-border px-4 py-8 text-center'},
+      el('p',{className:'text-sm text-token-text-secondary'},'No providers added yet.'),
+      el('p',{className:'mt-1 text-xs text-token-text-tertiary'},'Choose a preset above or add a provider manually.')
+    )]:[],
+    ...providers.map(p=>el('div',{key:p.id,className:'overflow-hidden rounded-lg border border-token-border transition-colors '+(editing===p.id?'border-token-focus-border':'') ,'data-cdr-provider-row':p.id},
+      el('div',{className:'flex items-start justify-between gap-3 px-3.5 py-3 transition-colors hover:bg-token-list-hover-background'},
+        el('div',{className:'flex min-w-0 flex-1 flex-col'},
+          el(SectionTitle,{},p.display_name||p.name||'(unnamed)'),
+          el(MutedText,{},'URL: '+(p.base_url||'—')+(p.active?'  \u2022  Active':'')+(p.model?'  \u2022  Model: '+p.model:''))
+        ),
+        el('div',{className:'flex shrink-0 items-center gap-1'},
+          el(Btn,{onClick:()=>setEditing(editing===p.id?null:p.id),className:'px-2.5 py-1 text-xs'},editing===p.id?'Done':'Edit'),
+          el(DangerBtn,{onClick:()=>deleteProvider(p.id),'aria-label':'Delete '+(p.display_name||p.name||'provider')},'Delete')
+        )
+      ),
+      editing===p.id?el('div',{className:'border-t border-token-border bg-token-list-hover-background/30 px-3.5 pb-4 pt-1'},
+        el(Label,{htmlFor:fieldId(p,'name')},'Provider ID'),
+        el(Input,{id:fieldId(p,'name'),value:p.name,onChange:e=>updateProvider(p.id,'name',e.target.value),placeholder:'openrouter'}),
+        el(Label,{htmlFor:fieldId(p,'display')},'Display name'),
+        el(Input,{id:fieldId(p,'display'),value:p.display_name||'',onChange:e=>updateProvider(p.id,'display_name',e.target.value),placeholder:'OpenRouter'}),
+        el(Label,{htmlFor:fieldId(p,'base-url')},'Base URL'),
+        el(Input,{id:fieldId(p,'base-url'),value:p.base_url,onChange:e=>updateProvider(p.id,'base_url',e.target.value),placeholder:'https://openrouter.ai/api/v1'}),
+        el(Label,{htmlFor:fieldId(p,'token')},'Bearer token (optional; env var recommended)'),
+        el(Input,{id:fieldId(p,'token'),type:'password',value:p.api_key,onChange:e=>updateProvider(p.id,'api_key',e.target.value),placeholder:'sk-...',autoComplete:'new-password','aria-label':'Bearer token'}),
+        el(Label,{htmlFor:fieldId(p,'env')},'Environment variable name'),
+        el(Input,{id:fieldId(p,'env'),value:p.env_key,onChange:e=>updateProvider(p.id,'env_key',e.target.value),placeholder:'OPENROUTER_API_KEY','aria-label':'Environment variable name'}),
+        el(Btn,{onClick:()=>clearCredential(p.id),disabled:!!credentialCleared[p.id]},credentialCleared[p.id]?'Credential will be cleared':'Clear saved credential'),
+        el(Label,{htmlFor:fieldId(p,'model')},'Default model'),
+        el(Input,{id:fieldId(p,'model'),value:p.model,onChange:e=>updateProvider(p.id,'model',e.target.value),placeholder:'provider/model-name'}),
+        providerError(p)?el('p',{role:'alert',className:'mt-3 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-500'},providerError(p)):null,
+        el('label',{className:'mt-4 flex cursor-pointer items-center gap-2.5'},
+          el('input',{type:'checkbox',checked:!!p.active,onChange:e=>{let next=providers.map(x=>({...x,active:x.id===p.id?e.target.checked:!1}));save(next)},className:'h-4 w-4 rounded border-token-border text-[var(--token-main)] focus:ring-[var(--token-main)]'}),
+          el('span',{className:'text-sm text-token-foreground'},'Make this the active provider')
+        )
+      ):null
+    ))
   ),
-  status?el('p',{role:'status',style:{fontSize:'13px',marginBottom:'16px',color:status.startsWith('Save failed')||status.startsWith('Provider IDs')?'#dc2626':'var(--token-text-secondary,#aaa)'}},status):null,
+  // Action buttons
+  el('div',{className:'flex flex-wrap items-center gap-2 border-t border-token-border-light pt-4'},
+    el(PrimaryBtn,{onClick:applyConfig,disabled:saving},saving?'Saving\u2026':'Save changes'),
+    el(Btn,{onClick:()=>setShowToml(!showToml),disabled:providers.length===0},showToml?'Hide preview':'Preview TOML')
+  ),
+  // Status message
+  status?el('div',{role:'status','aria-live':'polite',className:'rounded-md px-3 py-2 text-xs '+(statusError(status)?'bg-red-500/10 text-red-500':'bg-token-list-hover-background text-token-text-secondary')},status):null,
   // TOML output
-  showToml&&providers.length>0?el('div',{style:{...cardStyle,background:'var(--token-code-surface,rgba(0,0,0,.3))'}},
-    el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}},
-      el('strong',{style:{fontSize:'14px'}},'config.toml snippet'),
-      el('button',{onClick:copyToml,style:{...btnStyle,padding:'4px 12px',fontSize:'12px'}},copied?'Copied!':'Copy')
+  showToml&&providers.length>0?el('div',{className:'overflow-hidden rounded-lg border border-token-border bg-token-main-surface-primary',['data-toml']:!0},
+    el('div',{className:'flex items-center justify-between gap-2 border-b border-token-border-light px-3.5 py-2.5'},
+      el('div',{className:'flex flex-col gap-0.5'},
+        el('span',{className:'text-xs font-medium text-token-foreground'},'TOML preview'),
+        el('span',{className:'text-[11px] text-token-text-secondary'},'Credentials are redacted in this preview.')
+      ),
+      el(Btn,{onClick:copyToml,className:'px-2.5 py-1 text-xs'},copied?'Copied':'Copy')
     ),
-    el('pre',{style:{whiteSpace:'pre-wrap',wordBreak:'break-all',fontSize:'13px',fontFamily:'monospace',margin:0,padding:'12px',background:'rgba(0,0,0,.2)',borderRadius:'8px',color:'var(--token-text-secondary,#ccc)'}},genToml())
+    el('pre',{className:'max-h-80 overflow-auto whitespace-pre-wrap break-all px-3.5 py-3 font-mono text-xs leading-relaxed text-token-text-secondary'},genToml())
   ):null,
-  el('p',{style:{fontSize:'12px',color:'var(--token-text-tertiary,#666)',marginTop:'16px'}},'Environment variables are recommended. A direct bearer token is written to config.toml only when supplied and is never cached in localStorage. Codex supports the Responses wire API for custom providers.')
+  // Footer note
+  el(MutedText,{className:'mt-1',role:'note'},'Remote providers must use HTTPS. Environment variables are recommended; direct bearer tokens are never cached in localStorage.')
 )}
 `;
 
 // ─── Patch use-visible-settings-sections ───
 function patchSectionsBundle(source) {
+  const currentPanelSignature = [
+    `/* ${PANEL_EXPORT_MARKER} */`,
+    `/* ${ICON_EXPORT_MARKER} */`,
+    "let [credentialCleared,setCredentialCleared]",
+    "Clear saved credential",
+    "Provider IDs must be unique.",
+    "data-cdr-provider-row",
+    "Start with a preset",
+    "htmlFor:fieldId",
+    "window.confirm",
+    "s as CDRInterop",
+  ];
+  if (source.includes(MARKER + ":applied") && currentPanelSignature.every((signature) => source.includes(signature))) {
+    return source;
+  }
   if (source.includes(MARKER + ":applied")) return ensurePanelLoaderExport(source);
 
-  // 1. Add slug to the Z array
-  const zOld = "Z=[`profile`,`agent`,`personalization`,`mcp-settings`,`plugins-settings`,`hooks-settings`,`local-environments`,`worktrees`,`data-controls`]";
-  const zNew = "Z=[`profile`,`agent`,`personalization`,`mcp-settings`,`plugins-settings`,`hooks-settings`,`local-environments`,`worktrees`,`data-controls`,`" + SLUG + "`]";
-  if (source.includes(zOld)) {
-    source = replaceOne(source, zOld, zNew, "add custom-providers slug to Z array");
-  } else if (!source.includes("`custom-providers`")) {
-    throw new Error("Z array anchor not found");
+  // 1. 26.727 keeps the visible-settings list in Q and the section icon map
+  //    in Z. Both are module-scope structures, so these anchors are stable
+  //    without relying on the old 26.721 minified variable names.
+  const qOld = "Q=[`profile`,`agent`,`personalization`,`mcp-settings`,`plugins-settings`,`hooks-settings`,`local-environments`,`worktrees`,`data-controls`]";
+  const qNew = "Q=[`profile`,`agent`,`personalization`,`mcp-settings`,`plugins-settings`,`hooks-settings`,`local-environments`,`worktrees`,`data-controls`,`" + SLUG + "`]";
+  if (source.includes(qOld)) {
+    source = replaceOne(source, qOld, qNew, "add custom-providers to visible settings list");
+  } else if (!source.includes("Q=[") || !source.includes("`custom-providers`")) {
+    throw new Error("26.727 visible settings list anchor not found");
   }
 
-  // 2. Inject the icon component. The panel itself is appended at module scope
-  //    by ensurePanelLoaderExport so the route can import it directly.
-  //    before the it={...} map. The it map maps slugs to ICON components (not panels).
-  //    So "custom-providers" maps to CDRCustomProvidersIcon, not CDRCustomProvidersPanel.
-  //    The bundle initializer publishes the panel after a real dynamic import.
-  const itAnchor = "it={\"general-settings\":N,";
-  const itNew = "it={\"custom-providers\":CDRCustomProvidersIconV2,\"general-settings\":N,";
-  if (source.includes(itAnchor)) {
-    source = source.replace(itAnchor, itNew);
-  } else {
-    throw new Error("it component map anchor not found");
+  const iconAnchor = "Z={\"general-settings\":c,";
+  if (source.includes(iconAnchor)) {
+    source = replaceOne(
+      source,
+      iconAnchor,
+      "Z={\"custom-providers\":CDRCustomProvidersIconV2,\"general-settings\":c,",
+      "add custom-providers icon to 26.727 section map",
+    );
+  } else if (!source.includes('"custom-providers":CDRCustomProvidersIconV2')) {
+    throw new Error("26.727 settings icon map anchor not found");
   }
 
   source = replaceOne(
@@ -226,8 +532,8 @@ function patchSectionsBundle(source) {
   );
   source = replaceOne(
     source,
-    "case`git-settings`:case`data-controls`:case`code-review`:",
-    "case`git-settings`:case`data-controls`:case`custom-providers`:case`code-review`:",
+    "case`appearance`:case`pets`:case`general-settings`:case`agent`:case`git-settings`:case`data-controls`:case`code-review`:case`cloud-settings`:case`cloud-environments`:case`personalization`:V=!1;",
+    "case`appearance`:case`pets`:case`general-settings`:case`agent`:case`git-settings`:case`data-controls`:case`custom-providers`:case`code-review`:case`cloud-settings`:case`cloud-environments`:case`personalization`:V=!1;",
     "make custom-providers immediately renderable",
   );
 
@@ -244,7 +550,61 @@ function patchSectionsBundle(source) {
 }
 
 // ─── Patch app-initial monolith: add custom-providers to r4l nav message map + s4l switch ───
-function patchMonolith(source, sectionsModuleName) {
+function patchMonolith(source, sectionsModuleName, dependencyIndices) {
+  if (dependencyIndices == null) throw new Error("modern provider patch requires resolved Vite dependency indices");
+  const dependencyList = Array.isArray(dependencyIndices) ? dependencyIndices : String(dependencyIndices).split(",").map((value) => Number(value.trim())).filter(Number.isInteger);
+  if (!dependencyList.length || dependencyList.some((value) => value < 0)) throw new Error("invalid Vite dependency indices for custom-provider loader");
+  const MODERN_MARKER = MARKER + ":26727";
+  const modernRouteMarker = MODERN_MARKER + ":gls";
+  const modernLoaderMarker = MODERN_MARKER + ":KJ";
+  const modernSectionMarker = MODERN_MARKER + ":Yyu";
+  if (source.includes(MODERN_MARKER)) {
+    if (!source.includes("function Yyu(e){") || !source.includes("return rp(`batch-write-config-value`")) {
+      throw new Error("modern custom-provider patch is missing its section-label or config-bridge anchor");
+    }
+    for (const needle of [
+      modernRouteMarker,
+      modernLoaderMarker,
+      modernSectionMarker,
+      MARKER + ":config-bridge",
+      'fls=`general-settings',
+      'gls=[{slug:`general-settings`',
+      '"custom-providers":KJ(',
+      'case`custom-providers`:',
+    ]) {
+      if (!source.includes(needle)) throw new Error(`modern custom-provider patch is incomplete: ${needle}`);
+    }
+    return source;
+  }
+  // 26.727 moved settings registration to the module-scope fls/gls lists,
+  // the KJ Vite loader map, and Yyu's memoized section-label switch. Keep
+  // this port separate from the retired r4l/s4l/Q3o/L2l implementation so a
+  // clean modern bundle can never pass by appending legacy markers only.
+  if (source.includes('fls=`general-settings') && source.includes('gls=[{slug:`general-settings`') && source.includes('"data-controls":KJ(')) {
+    if (!sectionsModuleName) throw new Error("settings sections module name is required");
+    if (!source.includes('function rp(e,t){return J6e.sendRequest(e,t)}')) {
+      throw new Error("26.727 AppServer request dispatcher rp is not resolvable");
+    }
+    const bridgeAnchor = 'function Yyu(e){let t=(0,Xyu.c)(29),';
+    const bridgeCode = "globalThis.__cdrWriteConfigEdits=edits=>{let providerPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;let credentialPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}\\.(?:experimental_bearer_token|env_key)$/;let validEnv=v=>!v||/^[A-Z_][A-Z0-9_]{0,127}$/.test(v);let validUrl=v=>{try{let u=new URL(v);let h=u.hostname.toLowerCase();return!u.username&&!u.password&&(u.protocol===`https:`||(u.protocol===`http:`&&[`localhost`,`127.0.0.1`,`[::1]`,`::1`].includes(h)))}catch{return!1}};let valid=e=>{if(!e||typeof e.keyPath!==`string`||!(`model`===e.keyPath||`model_provider`===e.keyPath||providerPath.test(e.keyPath)||credentialPath.test(e.keyPath)))return!1;if(!(`replace`===e.mergeStrategy||`upsert`===e.mergeStrategy))return!1;if(`model`===e.keyPath||`model_provider`===e.keyPath)return typeof e.value===`string`&&e.value.length>0;if(credentialPath.test(e.keyPath))return e.value===null||(e.keyPath.endsWith(`.env_key`)?typeof e.value===`string`&&validEnv(e.value):typeof e.value===`string`);if(!e.value||typeof e.value!==`object`||Array.isArray(e.value))return!1;let keys=Object.keys(e.value);if(!keys.includes(`name`)||!keys.includes(`base_url`)||!keys.includes(`wire_api`))return!1;if(keys.includes(`env_key`)&&keys.includes(`experimental_bearer_token`))return!1;if(e.value.wire_api!==`responses`||typeof e.value.name!==`string`||!e.value.name||typeof e.value.base_url!==`string`||!validUrl(e.value.base_url)||(`env_key`in e.value&&!validEnv(e.value.env_key)))return!1;return keys.every(k=>[`name`,`base_url`,`wire_api`,`env_key`,`experimental_bearer_token`].includes(k))&&keys.every(k=>typeof e.value[k]===`string`)};if(!Array.isArray(edits)||edits.length>64||edits.some(e=>!valid(e)))throw Error(`Invalid custom provider config edits`);return rp(`batch-write-config-value`,{hostId:`local`,edits,filePath:null,expectedVersion:null,reloadUserConfig:!0})};/* " + MARKER + ":config-bridge */";
+    source = replaceOne(source, bridgeAnchor, bridgeCode + bridgeAnchor, "install modern custom-provider config bridge");
+    source = replaceOne(source, 'skills-settings`.split(`.`)', 'skills-settings.custom-providers`.split(`.`)', "add custom-providers to fls visibility list");
+    source = replaceOne(source, '{slug:`data-controls`}]', '{slug:`data-controls`},{slug:`custom-providers`}]/* ' + modernRouteMarker + ' */', "add custom-providers to gls route list");
+    const dependencyText = dependencyList.join(",");
+    const loader = '"custom-providers":KJ(async()=>(await eu(async()=>{let{CDRCustomProvidersPanelV2:e}=await import(`./' + sectionsModuleName + '`);return{CDRCustomProvidersPanelV2:e}},__vite__mapDeps([' + dependencyText + ']),import.meta.url)).CDRCustomProvidersPanelV2)/* ' + modernLoaderMarker + ' */,';
+    source = replaceOne(source, '"skills-settings":KJ(', loader + '"skills-settings":KJ(', "add custom-providers to KJ loader map");
+    const ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "module" });
+    const yyuNode = ast.body.find((node) => node.type === "FunctionDeclaration" && node.id?.name === "Yyu");
+    if (!yyuNode) throw new Error("26.727 Yyu section-label switch not found");
+    let yyu = source.slice(yyuNode.start, yyuNode.end);
+    yyu = replaceOne(yyu, 'function Yyu(e){let t=(0,Xyu.c)(29),', 'function Yyu(e){let t=(0,Xyu.c)(30),', "bump Yyu memo cache to 30");
+    if (!yyu.endsWith('e}}}')) throw new Error("Yyu switch tail changed; refusing non-atomic section-label patch");
+    yyu = yyu.slice(0, -3) + 'e}case`custom-providers`:{let e;return t[29]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,w7.jsx)(Z,{id:`settings.section.custom-providers`,defaultMessage:`Custom Providers`,description:`Title for custom models and providers settings section`}),t[29]=e):e=t[29],e}' + '}}';
+    source = source.slice(0, yyuNode.start) + yyu + source.slice(yyuNode.end);
+    source += "\n/* " + modernSectionMarker + " */\n/* " + MODERN_MARKER + " */\n";
+    try { acorn.parse(source, { ecmaVersion: "latest", sourceType: "module" }); } catch (error) { throw new Error("parse failed after modern monolith patch: " + error.message); }
+    return source;
+  }
   const R4L_MARKER = MARKER + ":r4l";
   if (source.includes(R4L_MARKER)) {
     if (!source.includes(MARKER + ":config-bridge")) {
@@ -256,6 +616,13 @@ function patchMonolith(source, sectionsModuleName) {
     const newLoader = '"custom-providers":JY(async()=>{let module=await import(`./' + sectionsModuleName + '`);let panel=module.CDRCustomProvidersPanelV2;if(typeof panel!==`function`)throw new Error(`Custom Providers module export is unavailable`);return panel})';
     if (source.includes(oldLoader)) source = replaceOne(source, oldLoader, newLoader, "upgrade custom providers initialized loader");
     if (source.includes(intermediateLoader)) source = replaceOne(source, intermediateLoader, newLoader, "upgrade custom providers module loader");
+    const safeBridge = "globalThis.__cdrWriteConfigEdits=edits=>{let providerPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;let credentialPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}\\.(?:experimental_bearer_token|env_key)$/;let validEnv=v=>!v||/^[A-Z_][A-Z0-9_]{0,127}$/.test(v);let validUrl=v=>{try{let u=new URL(v);let h=u.hostname.toLowerCase();return!u.username&&!u.password&&(u.protocol===`https:`||(u.protocol===`http:`&&[`localhost`,`127.0.0.1`,`[::1]`,`::1`].includes(h)))}catch{return!1}};let valid=e=>{if(!e||typeof e.keyPath!==`string`||!(`model`===e.keyPath||`model_provider`===e.keyPath||providerPath.test(e.keyPath)||credentialPath.test(e.keyPath)))return!1;if(!(`replace`===e.mergeStrategy||`upsert`===e.mergeStrategy))return!1;if(`model`===e.keyPath||`model_provider`===e.keyPath)return typeof e.value===`string`&&e.value.length>0;if(credentialPath.test(e.keyPath))return e.value===null||(e.keyPath.endsWith(`.env_key`)?typeof e.value===`string`&&validEnv(e.value):typeof e.value===`string`);if(!e.value||typeof e.value!==`object`||Array.isArray(e.value))return!1;let keys=Object.keys(e.value);if(!keys.includes(`name`)||!keys.includes(`base_url`)||!keys.includes(`wire_api`))return!1;if(keys.includes(`env_key`)&&keys.includes(`experimental_bearer_token`))return!1;if(e.value.wire_api!==`responses`||typeof e.value.name!==`string`||!e.value.name||typeof e.value.base_url!==`string`||!validUrl(e.value.base_url)||(`env_key`in e.value&&!validEnv(e.value.env_key)))return!1;return keys.every(k=>[`name`,`base_url`,`wire_api`,`env_key`,`experimental_bearer_token`].includes(k))&&keys.every(k=>typeof e.value[k]===`string`)};if(!Array.isArray(edits)||edits.length>64||edits.some(e=>!valid(e)))throw Error(`Invalid custom provider config edits`);return rp(`batch-write-config-value`,{hostId:`local`,edits,filePath:null,expectedVersion:null,reloadUserConfig:!0})};/* " + MARKER + ":config-bridge */";
+    const bridgeMarker = "/* " + MARKER + ":config-bridge */";
+    const markerIndex = source.indexOf(bridgeMarker);
+    const bridgeStart = source.lastIndexOf("globalThis.__cdrWriteConfigEdits=", markerIndex);
+    if (markerIndex < 0 || bridgeStart < 0) throw new Error("custom-provider config bridge marker is malformed");
+    source = source.slice(0, bridgeStart) + safeBridge + source.slice(markerIndex + bridgeMarker.length);
+    if (!source.includes(safeBridge)) throw new Error("custom-provider config bridge is not the validated bridge");
     for (const marker of [MARKER + ":route", MARKER + ":l2l"]) {
       if (!source.includes(marker)) throw new Error(`custom providers ${marker} is missing`);
     }
@@ -265,12 +632,12 @@ function patchMonolith(source, sectionsModuleName) {
 
   // Expose the existing, host-aware config dispatcher to the settings panel.
   // The panel sends the same batchWrite shape used by native settings.
-  const bridgeAnchor = 'r4l=nd({';
-  const bridgeCode = "globalThis.__cdrWriteConfigEdits=edits=>Rf(`batch-write-config-value`,{hostId:`local`,edits,filePath:null,expectedVersion:null,reloadUserConfig:!0});/* " + MARKER + ":config-bridge */";
+  const bridgeAnchor = 'function Yyu(e){let t=(0,Xyu.c)(29),';
+  const bridgeCode = "globalThis.__cdrWriteConfigEdits=edits=>{let providerPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;let credentialPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}\\.(?:experimental_bearer_token|env_key)$/;let validEnv=v=>!v||/^[A-Z_][A-Z0-9_]{0,127}$/.test(v);let validUrl=v=>{try{let u=new URL(v);let h=u.hostname.toLowerCase();return!u.username&&!u.password&&(u.protocol===`https:`||(u.protocol===`http:`&&[`localhost`,`127.0.0.1`,`[::1]`,`::1`].includes(h)))}catch{return!1}};let valid=e=>{if(!e||typeof e.keyPath!==`string`||!(`model`===e.keyPath||`model_provider`===e.keyPath||providerPath.test(e.keyPath)||credentialPath.test(e.keyPath)))return!1;if(!(`replace`===e.mergeStrategy||`upsert`===e.mergeStrategy))return!1;if(`model`===e.keyPath||`model_provider`===e.keyPath)return typeof e.value===`string`&&e.value.length>0;if(credentialPath.test(e.keyPath))return e.value===null||(e.keyPath.endsWith(`.env_key`)?typeof e.value===`string`&&validEnv(e.value):typeof e.value===`string`);if(!e.value||typeof e.value!==`object`||Array.isArray(e.value))return!1;let keys=Object.keys(e.value);if(!keys.includes(`name`)||!keys.includes(`base_url`)||!keys.includes(`wire_api`))return!1;if(keys.includes(`env_key`)&&keys.includes(`experimental_bearer_token`))return!1;if(e.value.wire_api!==`responses`||typeof e.value.name!==`string`||!e.value.name||typeof e.value.base_url!==`string`||!validUrl(e.value.base_url)||(`env_key`in e.value&&!validEnv(e.value.env_key)))return!1;return keys.every(k=>[`name`,`base_url`,`wire_api`,`env_key`,`experimental_bearer_token`].includes(k))&&keys.every(k=>typeof e.value[k]===`string`)};if(!Array.isArray(edits)||edits.length>64||edits.some(e=>!valid(e)))throw Error(`Invalid custom provider config edits`);return rp(`batch-write-config-value`,{hostId:`local`,edits,filePath:null,expectedVersion:null,reloadUserConfig:!0})};/* " + MARKER + ":config-bridge */";
   if (source.includes(bridgeAnchor)) {
     source = replaceOne(source, bridgeAnchor, bridgeCode + bridgeAnchor, "install custom-provider config bridge");
   } else {
-    throw new Error("settings nav map initializer not found for config bridge");
+    throw new Error("26.727 settings module boundary not found for config bridge");
   }
 
   // 1. Add custom-providers entry to the r4l nav message descriptor map.
@@ -290,11 +657,11 @@ function patchMonolith(source, sectionsModuleName) {
   //    The last case ends with: ...e=t[28],e}}
   //    The first } closes the case block, the second } closes the switch statement.
   //    We must insert the new case BETWEEN them — so the anchor uses only ONE }.
-  const s4lAnchor = 'case`skills-settings`:{let e;return t[28]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,T7.jsx)(Z,{id:`settings.section.skills-settings`,defaultMessage:`Skills`,description:`Title for skills settings section`}),t[28]=e):e=t[28],e}';
+  const s4lAnchor = 'case`skills-settings`:{let e;return t[28]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,w7.jsx)(Z,{id:`settings.section.skills-settings`,defaultMessage:`Skills`,description:`Title for skills settings section`}),t[28]=e):e=t[28],e}';
   //    IMPORTANT: s4lNew ends with ONE `}` (case block close only), NOT `}}`.
   //    The remaining source after the anchor has `}}` (switch close + function close)
   //    which follow naturally — adding `}}` here would produce an extra `}` on rebuild.
-  const s4lNew = s4lAnchor + 'case`custom-providers`:{let e;return t[29]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,T7.jsx)(Z,{id:`settings.section.custom-providers`,defaultMessage:`Custom Providers`,description:`Title for custom models and providers settings section`}),t[29]=e):e=t[29],e}';
+  const s4lNew = s4lAnchor + 'case`custom-providers`:{let e;return t[29]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,w7.jsx)(Z,{id:`settings.section.custom-providers`,defaultMessage:`Custom Providers`,description:`Title for custom models and providers settings section`}),t[29]=e):e=t[29],e}';
   if (source.includes(s4lAnchor)) {
     source = replaceOne(source, s4lAnchor, s4lNew, "add custom-providers to s4l section label switch");
   } else {
@@ -375,6 +742,7 @@ function patchSettingsPage(source) {
 }
 
 function main() {
+  recoverBundleTransactions(ASSETS);
   const sectionsFile = asset("use-visible-settings-sections-");
   const settingsFile = asset("settings-page-");
   const monoFile = asset("app-initial-");
@@ -383,15 +751,20 @@ function main() {
   const settingsSrc = fs.readFileSync(settingsFile, "utf8");
   const monoSrc = fs.readFileSync(monoFile, "utf8");
 
+  const sectionsChunk = fs.readFileSync(sectionsFile, "utf8");
+  const dependencyIndices = resolveDependencyIndices(monoSrc, sectionsChunk, path.basename(monoFile));
   const nextSections = patchSectionsBundle(sectionsSrc);
   const nextSettings = patchSettingsPage(settingsSrc);
-  const nextMono = patchMonolith(monoSrc, path.basename(sectionsFile));
-
+  const nextMono = patchMonolith(monoSrc, path.basename(sectionsFile), dependencyIndices);
   if (!process.argv.includes("--check")) {
-    if (nextSections !== sectionsSrc) fs.writeFileSync(sectionsFile, nextSections);
-    if (nextSettings !== settingsSrc) fs.writeFileSync(settingsFile, nextSettings);
-    if (nextMono !== monoSrc) fs.writeFileSync(monoFile, nextMono);
+
+    commitBundleSet([
+      { file: sectionsFile, previous: sectionsSrc, next: nextSections },
+      { file: settingsFile, previous: settingsSrc, next: nextSettings },
+      { file: monoFile, previous: monoSrc, next: nextMono },
+    ]);
   }
+
   console.log(process.argv.includes("--check") ? "custom providers settings check ok" : "custom providers settings patched");
 }
 
@@ -399,4 +772,4 @@ if (require.main === module) {
   try { main(); } catch (error) { console.error(error.stack || error); process.exitCode = 1; }
 }
 
-module.exports = { MARKER, LOADER_MARKER, PANEL_EXPORT_MARKER, ICON_EXPORT_MARKER, SLUG, LS_KEY, ensurePanelLoaderExport, patchSectionsBundle, patchSettingsPage, patchMonolith };
+module.exports = { MARKER, LOADER_MARKER, PANEL_EXPORT_MARKER, ICON_EXPORT_MARKER, SLUG, LS_KEY, commitBundleSet, recoverBundleTransactions, recoverTransaction, dependencyTable, resolveDependencyIndices, ensurePanelLoaderExport, patchSectionsBundle, patchSettingsPage, patchMonolith };

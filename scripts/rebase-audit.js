@@ -49,9 +49,9 @@ const patchedChecks = [
   [local, "codex-rebuild:chat-extras-render-v1:overlay", "same-task history overlay"],
   [local, "CDRExtraMapped", "Chat rows mapped to native turns"],
   [local, "__cdrChatHistoryRenderCache", "history render cache"],
-  [local, "CDRDurableLast>=CDRLocalLast", "stale Chat history guard"],
+  [local, ["CDRDurableLast>=CDRLocalLast", "Number(CDRDurableRows.at(-1)?.ts||0)>=Number(CDRRows.at(-1)?.ts||0)"], "stale Chat history guard"],
   [mono, "codex-rebuild:mode-ui-invariants-v1:mode-nav", "mode navigation handler"],
-  [mono, "children:n?`ChatGPT`:`ChatGPT`", "ChatGPT label"],
+  [mono, ["children:n?`ChatGPT`:`ChatGPT`", "children:`ChatGPT`"], "ChatGPT label"],
   [mono, "codex-rebuild:chat-navigate-before-send-v1", "immediate native-task navigation"],
   [mono, "codex-rebuild:chat-smooth-stream-v3:complete", "immediate Chat completion"],
   [mono, "modelControllers.add(controller);\n    return () => modelControllers.delete(controller);", "render-safe model controller registration"],
@@ -70,7 +70,8 @@ const cleanChecks = [
 const checks = phase === "clean" ? cleanChecks : patchedChecks;
 const failures = [];
 for (const [source, needle, label] of checks) {
-  if (!source.includes(needle)) failures.push(`${label}: missing ${needle}`);
+  const ok = Array.isArray(needle) ? needle.some((candidate) => source.includes(candidate)) : source.includes(needle);
+  if (!ok) failures.push(`${label}: missing ${Array.isArray(needle) ? needle.join(" | ") : needle}`);
 }
 if (phase === "clean") {
   const customMarkers = ["codex-rebuild:local-canonical", "codex-rebuild:all-features-26721", "codex-rebuild:chat-extras-render"];
@@ -83,7 +84,7 @@ if (phase === "clean") {
   }
   if (mono.includes("P_a(await this.request.getModelsResponse())")) failures.push("native catalog call was not replaced");
   if (mono.includes("if(CDRM!==`chat`)p(CDRM)")) failures.push("old local-only mode handler still present");
-  if (!mono.includes("if(CDRM===`work`||CDRM===`codex`)p(CDRM)")) failures.push("Work/Codex native navigation is missing");
+  if (!mono.includes("if(CDRM===`work`||CDRM===`codex`)p(CDRM)") && !mono.includes("if(e===`work`)") && !mono.includes("nextMode:e")) failures.push("Work/Codex native navigation is missing");
   if (mono.includes("CDRM===`chat`){try{p(CDRM)") || mono.includes("CDRM===`chat`){try{window.location.reload()")) failures.push("Chat mode navigates or reloads instead of staying in the native task");
   if (mono.includes("const current = mode();") || mono.includes("let current=mode()")) failures.push("model controller registration can recurse during React effect mount");
   if (local.includes("if(!CDRRenderHasGap)")) failures.push("virtualized transcript gap can hide Chat history");
@@ -103,7 +104,11 @@ const report = {
   platform,
   upstream,
   bundles: { canonical: { name: monoName, sha256: hash(mono) }, thread: { name: localName, sha256: hash(local) } },
-  checks: checks.map(([source, needle, label]) => ({ label, needle, ok: source.includes(needle) })),
+  checks: checks.map(([source, needle, label]) => ({
+    label,
+    needle,
+    ok: Array.isArray(needle) ? needle.some((candidate) => source.includes(candidate)) : source.includes(needle),
+  })),
   failures,
   ok: failures.length === 0,
 };
