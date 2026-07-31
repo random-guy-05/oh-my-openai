@@ -83,12 +83,12 @@ for (const [needle, label] of [
   ["codex-rebuild:custom-providers-settings-v1:icon-v2-export", "Custom Providers module-scoped icon"],
   ['"custom-providers":CDRCustomProvidersIconV2', "Custom Providers module-scoped icon map"],
   ["s as CDRInterop", "Custom Providers React runtime interop"],
-  ["const CDRReact=CDRInterop(y(),1)", "Custom Providers React hooks namespace"],
-  ["const CDRJsx=a()", "Custom Providers JSX runtime namespace"],
+  [["const CDRReact=CDRInterop(y(),1)", "const CDRReact=CDRInterop(U(),1)"], "Custom Providers React hooks namespace"],
+  [["const CDRJsx=a()", "const CDRJsx=w()"], "Custom Providers JSX runtime namespace"],
   ["return(0,CDRJsx.jsx)(tag,p)", "Custom Providers stable JSX render path"],
   ["case`data-controls`:case`custom-providers`:return!0", "Custom Providers visibility filter"],
 ]) {
-  assert.ok(visibleSettings.includes(needle), `packaged runtime missing ${label}`);
+  assert.ok((Array.isArray(needle) ? needle.some((candidate) => visibleSettings.includes(candidate)) : visibleSettings.includes(needle)), `packaged runtime missing ${label}`);
 }
 assert.ok(!visibleSettings.includes("s.useState"), "packaged runtime uses a non-React initializer for Custom Providers hooks");
 assert.ok(!visibleSettings.includes("s.useEffect"), "packaged runtime uses a non-React initializer for Custom Providers effects");

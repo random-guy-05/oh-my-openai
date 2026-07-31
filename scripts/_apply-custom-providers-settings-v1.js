@@ -310,10 +310,8 @@ function ensurePanelLoaderExport(source) {
     '"custom-providers":CDRCustomProvidersIcon,',
     '"custom-providers":CDRCustomProvidersIconV2,',
   );
-  // Nvt is the app's React module initializer. The minified `s` binding is a
-  // different initializer entirely; treating it as React only fails once the
-  // settings panel actually renders. Import the runtime interop helper and
-  // materialize a stable React namespace at module scope.
+  // The app-initial React and JSX initializers drift between upstream builds;
+  // resolve them from the aliases already used by the surrounding bundle.
   if (!source.includes("s as CDRInterop")) {
     source = replaceOne(
       source,
@@ -325,10 +323,15 @@ function ensurePanelLoaderExport(source) {
   // Clean export of any stale duplicate CDRCustomProvidersPanelV2 entries
   source = cleanExportEntries(source);
   // Always inject fresh panel and icon code
-  const newPanelCode = PANEL_CODE.replace(
+  const reactRuntime = source.includes("jSt as U") ? "U" : "y";
+  const jsxRuntime = source.includes("TSt as w") ? "w" : "a";
+  const newPanelCode = PANEL_CODE
+    .replace("const CDRJsx=a();", `const CDRJsx=${jsxRuntime}();`)
+    .replace("CDRInterop(y(),1)", `CDRInterop(${reactRuntime}(),1)`)
+    .replace(
     `function CDRCustomProvidersPanel(){/* ${MARKER}:panel */`,
     `function CDRCustomProvidersPanelV2(){/* ${PANEL_EXPORT_MARKER} */`,
-  );
+    );
   const newIconCode = ICON_CODE.replace(
     "function CDRCustomProvidersIcon(e){",
     `function CDRCustomProvidersIconV2(e){/* ${ICON_EXPORT_MARKER} */`,
@@ -496,7 +499,8 @@ function patchSectionsBundle(source) {
     "window.confirm",
     "s as CDRInterop",
   ];
-  if (source.includes(MARKER + ":applied") && currentPanelSignature.every((signature) => source.includes(signature))) {
+  const currentRuntimeBindings = source.includes("const CDRJsx=w();") && source.includes("const CDRReact=CDRInterop(U(),1);");
+  if (source.includes(MARKER + ":applied") && currentPanelSignature.every((signature) => source.includes(signature)) && currentRuntimeBindings) {
     return source;
   }
   if (source.includes(MARKER + ":applied")) return ensurePanelLoaderExport(source);
