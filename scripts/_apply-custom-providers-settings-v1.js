@@ -312,13 +312,35 @@ function ensurePanelLoaderExport(source) {
   );
   // The app-initial React and JSX initializers drift between upstream builds;
   // resolve them from the aliases already used by the surrounding bundle.
-  if (!source.includes("s as CDRInterop")) {
+  // The rolldown runtime's namespace interop helper is exported under a
+  // minified public name (currently `o` in 26.727), so never assume the
+  // internal implementation name is also the import name. The old `s`
+  // import caused Settings to fail before the panel could render because the
+  // runtime does not export `s`; using its CommonJS factory (`t`) instead
+  // returns a module factory, not the React namespace.
+  const runtimeInteropAlias = (() => {
+    const runtimeImport = source.match(/from"\.\/(rolldown-runtime-[^"]+\.js)"/);
+    if (!runtimeImport) throw new Error("custom providers: rolldown runtime import not found");
+    const runtimePath = path.join(ASSETS, runtimeImport[1]);
+    const runtimeSource = fs.readFileSync(runtimePath, "utf8");
+    const implementation = runtimeSource.match(/(?:^|[;,])([A-Za-z_$][\w$]*)=\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)=>\([^;]*__esModule[^;]*default[^;]*\)\)/);
+    const exportBlock = runtimeSource.match(/export\{[^}]+\}/)?.[0] ?? "";
+    if (!implementation) throw new Error(`custom providers: namespace interop helper missing in ${runtimeImport[1]}`);
+    const alias = exportBlock.match(new RegExp(`(?:^|,)${implementation[1]} as ([A-Za-z_$][\\w$]*)`))?.[1];
+    if (!alias) throw new Error(`custom providers: namespace interop export missing in ${runtimeImport[1]}`);
+    return alias;
+  })();
+  const interopImport = `import{n as e,${runtimeInteropAlias} as CDRInterop}from"./rolldown-runtime-`;
+  const existingInteropImport = /import\{n as e,[^}]+ as CDRInterop\}from"\.\/rolldown-runtime-/;
+  if (!existingInteropImport.test(source)) {
     source = replaceOne(
       source,
       'import{n as e}from"./rolldown-runtime-',
-      'import{n as e,s as CDRInterop}from"./rolldown-runtime-',
+      interopImport,
       "custom providers React interop import",
     );
+  } else {
+    source = source.replace(existingInteropImport, interopImport);
   }
   // Clean export of any stale duplicate CDRCustomProvidersPanelV2 entries
   source = cleanExportEntries(source);
@@ -497,7 +519,7 @@ function patchSectionsBundle(source) {
     "Start with a preset",
     "htmlFor:fieldId",
     "window.confirm",
-    "s as CDRInterop",
+    "o as CDRInterop",
   ];
   const currentRuntimeBindings = source.includes("const CDRJsx=w();") && source.includes("const CDRReact=CDRInterop(U(),1);");
   if (source.includes(MARKER + ":applied") && currentPanelSignature.every((signature) => source.includes(signature)) && currentRuntimeBindings) {
@@ -553,6 +575,17 @@ function patchSectionsBundle(source) {
   return source;
 }
 
+function ensureModernSectionLabelDescriptor(source) {
+  const descriptor = '"custom-providers":{id:`settings.nav.custom-providers`,defaultMessage:`Custom Providers`,description:`Title for custom models and providers settings section`}';
+  if (source.includes(descriptor)) return source;
+  // Insert the sibling immediately after the skills-settings property, while
+  // leaving the surrounding Qu(...) call's closing braces untouched. The
+  // previous implementation matched that whole suffix and could add one
+  // extra brace when the minifier changed the surrounding closure.
+  const property = '"skills-settings":{id:`settings.nav.skills-settings`,defaultMessage:`Skills`,description:`Title for skills settings section`}';
+  return replaceOne(source, property, property + "," + descriptor, "add custom-providers section label descriptor");
+}
+
 // ─── Patch app-initial monolith: add custom-providers to r4l nav message map + s4l switch ───
 function patchMonolith(source, sectionsModuleName, dependencyIndices) {
   if (dependencyIndices == null) throw new Error("modern provider patch requires resolved Vite dependency indices");
@@ -578,6 +611,7 @@ function patchMonolith(source, sectionsModuleName, dependencyIndices) {
     ]) {
       if (!source.includes(needle)) throw new Error(`modern custom-provider patch is incomplete: ${needle}`);
     }
+    source = ensureModernSectionLabelDescriptor(source);
     return source;
   }
   // 26.727 moved settings registration to the module-scope fls/gls lists,
@@ -592,6 +626,7 @@ function patchMonolith(source, sectionsModuleName, dependencyIndices) {
     const bridgeAnchor = 'function Yyu(e){let t=(0,Xyu.c)(29),';
     const bridgeCode = "globalThis.__cdrWriteConfigEdits=edits=>{let providerPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;let credentialPath=/^model_providers\\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}\\.(?:experimental_bearer_token|env_key)$/;let validEnv=v=>!v||/^[A-Z_][A-Z0-9_]{0,127}$/.test(v);let validUrl=v=>{try{let u=new URL(v);let h=u.hostname.toLowerCase();return!u.username&&!u.password&&(u.protocol===`https:`||(u.protocol===`http:`&&[`localhost`,`127.0.0.1`,`[::1]`,`::1`].includes(h)))}catch{return!1}};let valid=e=>{if(!e||typeof e.keyPath!==`string`||!(`model`===e.keyPath||`model_provider`===e.keyPath||providerPath.test(e.keyPath)||credentialPath.test(e.keyPath)))return!1;if(!(`replace`===e.mergeStrategy||`upsert`===e.mergeStrategy))return!1;if(`model`===e.keyPath||`model_provider`===e.keyPath)return typeof e.value===`string`&&e.value.length>0;if(credentialPath.test(e.keyPath))return e.value===null||(e.keyPath.endsWith(`.env_key`)?typeof e.value===`string`&&validEnv(e.value):typeof e.value===`string`);if(!e.value||typeof e.value!==`object`||Array.isArray(e.value))return!1;let keys=Object.keys(e.value);if(!keys.includes(`name`)||!keys.includes(`base_url`)||!keys.includes(`wire_api`))return!1;if(keys.includes(`env_key`)&&keys.includes(`experimental_bearer_token`))return!1;if(e.value.wire_api!==`responses`||typeof e.value.name!==`string`||!e.value.name||typeof e.value.base_url!==`string`||!validUrl(e.value.base_url)||(`env_key`in e.value&&!validEnv(e.value.env_key)))return!1;return keys.every(k=>[`name`,`base_url`,`wire_api`,`env_key`,`experimental_bearer_token`].includes(k))&&keys.every(k=>typeof e.value[k]===`string`)};if(!Array.isArray(edits)||edits.length>64||edits.some(e=>!valid(e)))throw Error(`Invalid custom provider config edits`);return rp(`batch-write-config-value`,{hostId:`local`,edits,filePath:null,expectedVersion:null,reloadUserConfig:!0})};/* " + MARKER + ":config-bridge */";
     source = replaceOne(source, bridgeAnchor, bridgeCode + bridgeAnchor, "install modern custom-provider config bridge");
+    source = ensureModernSectionLabelDescriptor(source);
     source = replaceOne(source, 'skills-settings`.split(`.`)', 'skills-settings.custom-providers`.split(`.`)', "add custom-providers to fls visibility list");
     source = replaceOne(source, '{slug:`data-controls`}]', '{slug:`data-controls`},{slug:`custom-providers`}]/* ' + modernRouteMarker + ' */', "add custom-providers to gls route list");
     const dependencyText = dependencyList.join(",");

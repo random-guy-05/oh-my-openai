@@ -38,6 +38,7 @@ const required = [
   [compiledSections, "codex-rebuild:custom-providers-settings-v1:icon-v2-export"],
   [compiledSections, '"custom-providers":CDRCustomProvidersIconV2'],
   [compiledSections, "globalThis.__cdrWriteConfigEdits"],
+  [compiledSections, "o as CDRInterop"],
   [compiledSections, "normalized.map(({api_key,...p})=>p)"],
   [compiledSections, "Save changes"],
   [compiledSections, "data-cdr-provider-row"],
@@ -48,6 +49,7 @@ const required = [
   [compiledMonolith, "custom-providers-settings-v1:26727:KJ"],
   [compiledMonolith, "custom-providers-settings-v1:26727:Yyu"],
   [compiledMonolith, "skills-settings.custom-providers"],
+  [compiledMonolith, "settings.nav.custom-providers"],
   [compiledMonolith, '"custom-providers":KJ(async()=>(await eu(async()=>{let{CDRCustomProvidersPanelV2:e}=await import(`./use-visible-settings-sections-'],
   [compiledMonolith, `__vite__mapDeps([${dependencyIndices.join(",")}])`],
   [compiledMonolith, "rp(`batch-write-config-value`"],
@@ -70,6 +72,7 @@ assert.strictEqual(provider.patchSettingsPage(compiledSettings), compiledSetting
 // The bridge uses the real 26.727 request helper, not the unrelated Rf tracer.
 assert.ok(compiledMonolith.includes("function rp(e,t){return J6e.sendRequest(e,t)}"));
 assert.ok(!compiledMonolith.includes("Rf(`batch-write-config-value`"));
+assert.ok(!compiledSections.includes("t as CDRInterop"), "provider panel uses the CommonJS factory instead of namespace interop");
 
 // A later anchor failure must abort before any caller can write a result.
 const broken = monolith.source.replace("function Yyu(e){", "function NotYyu(e){");

@@ -56,6 +56,7 @@ for (const [needle, label] of [
   ["codex-rebuild:chat-smooth-stream-v3:complete", "immediate Chat completion"],
   ["codex-rebuild:custom-providers-settings-v1:config-bridge", "Custom Providers config bridge"],
   ["defaultMessage:`Custom Providers`", "Custom Providers visible label"],
+  ["settings.nav.custom-providers", "Custom Providers navigation message descriptor"],
   ["d.message.end_turn===true", "Chat terminal lifecycle"],
 ]) {
   assert.ok(main.includes(needle), `packaged runtime missing ${label}`);
@@ -82,7 +83,7 @@ for (const [needle, label] of [
   ["CDRCustomProvidersPanelV2 as CDRCustomProvidersPanelV2", "Custom Providers module-scoped export"],
   ["codex-rebuild:custom-providers-settings-v1:icon-v2-export", "Custom Providers module-scoped icon"],
   ['"custom-providers":CDRCustomProvidersIconV2', "Custom Providers module-scoped icon map"],
-  ["s as CDRInterop", "Custom Providers React runtime interop"],
+  ["o as CDRInterop", "Custom Providers React runtime interop"],
   [["const CDRReact=CDRInterop(y(),1)", "const CDRReact=CDRInterop(U(),1)"], "Custom Providers React hooks namespace"],
   [["const CDRJsx=a()", "const CDRJsx=w()"], "Custom Providers JSX runtime namespace"],
   ["return(0,CDRJsx.jsx)(tag,p)", "Custom Providers stable JSX render path"],
@@ -92,6 +93,7 @@ for (const [needle, label] of [
 }
 assert.ok(!visibleSettings.includes("s.useState"), "packaged runtime uses a non-React initializer for Custom Providers hooks");
 assert.ok(!visibleSettings.includes("s.useEffect"), "packaged runtime uses a non-React initializer for Custom Providers effects");
+assert.ok(!visibleSettings.includes("t as CDRInterop"), "packaged runtime uses the CommonJS factory instead of namespace interop");
 assert.ok(!visibleSettings.includes("return(0,U.jsx)(tag,p)"), "packaged runtime uses an initializer-owned JSX binding for Custom Providers");
 assert.ok(!visibleSettings.includes("window.__CDRCustomProvidersPanel"), "packaged runtime retains the obsolete Custom Providers window registry");
 assert.ok(!visibleSettings.includes("function CDRCustomProvidersPanel(){"), "packaged runtime retains the duplicate legacy Custom Providers panel");
@@ -106,6 +108,7 @@ assert.ok(main.includes("custom-providers-settings-v1:26727:gls"), "Custom Provi
 assert.ok(main.includes('"custom-providers":KJ(async()=>(await eu(async()=>{let{CDRCustomProvidersPanelV2:e}=await import(`./use-visible-settings-sections-'), "Custom Providers panel does not use a native KJ module import");
 assert.ok(main.includes("custom-providers-settings-v1:26727:KJ"), "Custom Providers KJ loader marker is missing");
 assert.ok(main.includes("custom-providers-settings-v1:26727:Yyu"), "Custom Providers Yyu label marker is missing");
+assert.ok(main.includes("settings.nav.custom-providers"), "Custom Providers navigation message descriptor is missing");
 assert.ok(main.includes("rp(`batch-write-config-value`"), "Custom Providers bridge does not use the AppServer request helper");
 
 for (const removed of ["codex-rebuild:usage-controls-v1", "CDRTaskUsageBadge", "CDRTurnUsageBadge", "cdr-turn-usage-v1"]) {
