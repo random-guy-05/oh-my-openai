@@ -298,6 +298,7 @@ static void ShowUsageReportForEnhancement(NSDictionary *enhancement) {
     gUsageTextView.font = [NSFont monospacedSystemFontOfSize:12
                                                        weight:NSFontWeightRegular];
     gUsageTextView.autoresizingMask = NSViewWidthSizable;
+    gUsageTextView.textContainerInset = NSMakeSize(12, 12);
     scrollView.documentView = gUsageTextView;
     gUsageWindow.contentView = scrollView;
   }
@@ -336,24 +337,95 @@ static void OpenEnhancement(NSString *identifier, NSString *view) {
   }
 }
 
+static NSString *EnhancementSymbol(NSString *identifier) {
+  if ([identifier isEqualToString:@"opencodex"]) return @"globe";
+  if ([identifier isEqualToString:@"ccusage"]) return @"chart.bar.xaxis";
+  if ([identifier isEqualToString:@"codex-chatgpt-web"]) return @"bubble.left.and.bubble.right.fill";
+  if ([identifier isEqualToString:@"codexpp"]) return @"wand.and.stars";
+  return @"sparkles";
+}
+
+static NSColor *EnhancementTintColor(NSString *identifier) {
+  if ([identifier isEqualToString:@"opencodex"]) return NSColor.systemTealColor;
+  if ([identifier isEqualToString:@"ccusage"]) return NSColor.systemOrangeColor;
+  if ([identifier isEqualToString:@"codex-chatgpt-web"]) return NSColor.systemIndigoColor;
+  if ([identifier isEqualToString:@"codexpp"]) return NSColor.systemPinkColor;
+  return NSColor.systemBlueColor;
+}
+
+static NSImage *EnhancementSymbolImage(NSString *identifier, CGFloat pointSize) {
+  NSImage *symbol = [NSImage imageWithSystemSymbolName:EnhancementSymbol(identifier)
+                              accessibilityDescription:identifier];
+  NSImageSymbolConfiguration *configuration =
+    [NSImageSymbolConfiguration configurationWithPointSize:pointSize
+                                                    weight:NSFontWeightRegular];
+  NSImageSymbolConfiguration *palette =
+    [NSImageSymbolConfiguration configurationWithPaletteColors:
+      @[EnhancementTintColor(identifier)]];
+  return [symbol imageWithSymbolConfiguration:
+    [configuration configurationByApplyingConfiguration:palette]];
+}
+
+static NSMenuItem *MenuItemWithSymbol(NSString *title, SEL action, NSString *symbol) {
+  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                action:action
+                                         keyEquivalent:@""];
+  item.target = gAppDelegate;
+  if (symbol) {
+    item.image = [NSImage imageWithSystemSymbolName:symbol
+                           accessibilityDescription:title];
+  }
+  return item;
+}
+
+static NSView *MakeStatusPill(NSString *title, NSColor *color) {
+  NSView *pill = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 66, 20)];
+  pill.wantsLayer = YES;
+  pill.layer.cornerRadius = 10;
+  pill.layer.backgroundColor = [color colorWithAlphaComponent:0.16].CGColor;
+  NSTextField *label = [NSTextField labelWithString:title];
+  label.font = [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold];
+  label.textColor = color;
+  [label sizeToFit];
+  label.frame = NSMakeRect(round((66 - label.frame.size.width) / 2),
+                           round((20 - label.frame.size.height) / 2),
+                           label.frame.size.width, label.frame.size.height);
+  [pill addSubview:label];
+  return pill;
+}
+
 static void RebuildEnhancementMenu(void) {
   NSMenu *menu = [[NSMenu alloc] init];
+
+  NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:@"Oh My OpenAI"
+                                                  action:nil
+                                           keyEquivalent:@""];
+  header.enabled = NO;
+  header.attributedTitle = [[NSAttributedString alloc]
+    initWithString:@"Oh My OpenAI"
+        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13
+                                                             weight:NSFontWeightSemibold]}];
+  [menu addItem:header];
+  [menu addItem:[NSMenuItem separatorItem]];
+
   for (NSDictionary *enhancement in LoadEnhancementManifest()) {
     NSDictionary *ui = enhancement[@"ui"];
     if (!ui) continue;
     if (!EnhancementEnabled(enhancement[@"id"])) continue;
     NSString *identifier = enhancement[@"id"];
     NSString *kind = ui[@"kind"];
+    NSImage *symbol = [NSImage imageWithSystemSymbolName:EnhancementSymbol(identifier)
+                                accessibilityDescription:ui[@"label"]];
     if ([kind isEqualToString:@"web"]) {
       NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:ui[@"label"]
                                                     action:nil
                                              keyEquivalent:@""];
+      item.image = symbol;
       NSMenu *submenu = [[NSMenu alloc] init];
       for (NSString *view in EnhancementViewOptions(enhancement)) {
-        NSMenuItem *option = [[NSMenuItem alloc] initWithTitle:EnhancementViewLabel(view)
-                                                        action:@selector(openEnhancementAction:)
-                                                 keyEquivalent:@""];
-        option.target = gAppDelegate;
+        NSMenuItem *option = MenuItemWithSymbol(EnhancementViewLabel(view),
+                                                @selector(openEnhancementAction:),
+                                                @"chevron.right");
         option.representedObject = @[identifier, view];
         [submenu addItem:option];
       }
@@ -362,25 +434,25 @@ static void RebuildEnhancementMenu(void) {
     } else {
       NSString *title = ui[@"openLabel"];
       if (!title) title = ui[@"label"];
-      NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
-                                                    action:@selector(openEnhancementAction:)
-                                             keyEquivalent:@""];
-      item.target = gAppDelegate;
+      NSMenuItem *item = MenuItemWithSymbol(title,
+                                            @selector(openEnhancementAction:),
+                                            EnhancementSymbol(identifier));
       NSString *view = EnhancementViewOptions(enhancement).firstObject;
       item.representedObject = @[identifier, view];
       [menu addItem:item];
     }
   }
 
-  if (menu.numberOfItems > 0) [menu addItem:[NSMenuItem separatorItem]];
-  NSMenuItem *settings = [[NSMenuItem alloc] initWithTitle:@"Enhancements Settings…"
-                                                    action:@selector(showSettingsAction:)
-                                             keyEquivalent:@","];
-  settings.target = gAppDelegate;
+  [menu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem *settings = MenuItemWithSymbol(@"Enhancements Settings…",
+                                            @selector(showSettingsAction:),
+                                            @"gearshape");
+  settings.keyEquivalent = @",";
   [menu addItem:settings];
-  NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"Quit Codex"
-                                                action:@selector(terminate:)
-                                         keyEquivalent:@"q"];
+  NSMenuItem *quit = MenuItemWithSymbol(@"Quit Codex",
+                                        @selector(terminate:),
+                                        @"power");
+  quit.keyEquivalent = @"q";
   [menu addItem:quit];
   gEnhancementStatusItem.menu = menu;
 }
@@ -397,49 +469,105 @@ static void InstallEnhancementStatusItem(void) {
 static void ShowEnhancementSettings(void) {
   if (!gEnhancementSettingsWindow) {
     NSArray<NSDictionary *> *enhancements = LoadEnhancementManifest();
+    const CGFloat rowHeight = 72;
+    const CGFloat windowWidth = 680;
+    const CGFloat headerHeight = 92;
+    const CGFloat footerHeight = 36;
+    const CGFloat contentHeight = headerHeight + enhancements.count * rowHeight + footerHeight;
+
     gEnhancementSettingsWindow = [[NSWindow alloc]
-      initWithContentRect:NSMakeRect(0, 0, 620, 60 + enhancements.count * 54)
+      initWithContentRect:NSMakeRect(0, 0, windowWidth, contentHeight)
                 styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                            NSWindowStyleMaskMiniaturizable)
                   backing:NSBackingStoreBuffered
                     defer:NO];
-    gEnhancementSettingsWindow.title = @"Oh My OpenAI — Enhancements";
+    gEnhancementSettingsWindow.title = @"Enhancements";
     gEnhancementSettingsWindow.releasedWhenClosed = NO;
 
+    NSVisualEffectView *root = [[NSVisualEffectView alloc]
+      initWithFrame:NSMakeRect(0, 0, windowWidth, contentHeight)];
+    root.material = NSVisualEffectMaterialSidebar;
+    root.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    root.state = NSVisualEffectStateActive;
+
+    // ── Header ──
+    NSView *header = [[NSView alloc] initWithFrame:
+      NSMakeRect(0, contentHeight - headerHeight, windowWidth, headerHeight)];
+    NSImageView *logo = [[NSImageView alloc] initWithFrame:NSMakeRect(24, 34, 44, 44)];
+    NSImage *logoImage = [NSImage imageWithSystemSymbolName:@"sparkles"
+                                   accessibilityDescription:@"Oh My OpenAI"];
+    NSImageSymbolConfiguration *logoConfig =
+      [NSImageSymbolConfiguration configurationWithPointSize:26 weight:NSFontWeightMedium];
+    NSImageSymbolConfiguration *logoPalette =
+      [NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.systemTealColor]];
+    logo.image = [logoImage imageWithSymbolConfiguration:
+      [logoConfig configurationByApplyingConfiguration:logoPalette]];
+    [header addSubview:logo];
+
+    NSTextField *title = [NSTextField labelWithString:@"Enhancements"];
+    title.frame = NSMakeRect(84, 46, 400, 26);
+    title.font = [NSFont systemFontOfSize:19 weight:NSFontWeightSemibold];
+    [header addSubview:title];
+
+    NSTextField *subtitle = [NSTextField labelWithString:
+      @"Custom features bundled with this build"];
+    subtitle.frame = NSMakeRect(84, 26, 480, 16);
+    subtitle.font = [NSFont systemFontOfSize:11];
+    subtitle.textColor = NSColor.secondaryLabelColor;
+    [header addSubview:subtitle];
+
+    // ── Rows ──
     NSStackView *stack = [[NSStackView alloc] initWithFrame:
-      NSMakeRect(0, 0, 600, 40 + enhancements.count * 54)];
+      NSMakeRect(16, footerHeight + 10, windowWidth - 32, enhancements.count * rowHeight)];
     stack.orientation = NSUserInterfaceLayoutOrientationVertical;
     stack.alignment = NSLayoutAttributeLeading;
-    stack.spacing = 8;
-    stack.edgeInsets = NSEdgeInsetsMake(12, 12, 12, 12);
+    stack.spacing = 10;
 
     for (NSDictionary *enhancement in enhancements) {
       NSDictionary *ui = enhancement[@"ui"];
       if (!ui) continue;
       NSString *identifier = enhancement[@"id"];
-      NSView *row = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 570, 40)];
 
-      NSButton *checkbox = [NSButton checkboxWithTitle:@""
-                                                target:gAppDelegate
-                                                action:@selector(toggleEnhancementAction:)];
-      checkbox.frame = NSMakeRect(0, 10, 24, 20);
-      checkbox.state = EnhancementEnabled(identifier) ? NSControlStateValueOn
-                                                      : NSControlStateValueOff;
-      checkbox.identifier = identifier;
+      NSView *card = [[NSView alloc] initWithFrame:
+        NSMakeRect(0, 0, windowWidth - 32, rowHeight - 10)];
+      card.wantsLayer = YES;
+      card.layer.cornerRadius = 12;
+      card.layer.backgroundColor = NSColor.controlBackgroundColor.CGColor;
+
+      NSSwitch *toggle = [[NSSwitch alloc] initWithFrame:NSMakeRect(16, 26, 40, 20)];
+      toggle.state = EnhancementEnabled(identifier) ? NSControlStateValueOn
+                                                    : NSControlStateValueOff;
+      toggle.target = gAppDelegate;
+      toggle.action = @selector(toggleEnhancementAction:);
+      toggle.identifier = identifier;
+      [card addSubview:toggle];
+
+      NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(66, 22, 28, 28)];
+      icon.image = EnhancementSymbolImage(identifier, 16);
+      [card addSubview:icon];
 
       NSTextField *label = [NSTextField labelWithString:ui[@"label"]];
-      label.frame = NSMakeRect(28, 12, 190, 18);
+      label.frame = NSMakeRect(104, 36, 240, 20);
       label.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+      [card addSubview:label];
 
-      NSTextField *meta = [NSTextField labelWithString:
-        [NSString stringWithFormat:@"%@ · v%@",
-          enhancement[@"type"],
-          enhancement[@"resolvedVersion"] ? enhancement[@"resolvedVersion"] : @"?"]];
-      meta.frame = NSMakeRect(222, 12, 130, 16);
-      meta.font = [NSFont systemFontOfSize:11];
-      meta.textColor = NSColor.secondaryLabelColor;
+      NSString *description = enhancement[@"description"];
+      if (!description) description = @"";
+      NSTextField *detail = [NSTextField labelWithString:description];
+      detail.frame = NSMakeRect(104, 16, 330, 16);
+      detail.font = [NSFont systemFontOfSize:11];
+      detail.textColor = NSColor.secondaryLabelColor;
+      detail.lineBreakMode = NSLineBreakByTruncatingTail;
+      [card addSubview:detail];
 
-      NSPopUpButton *viewPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(356, 8, 130, 24)
+      BOOL isService = [enhancement[@"type"] isEqualToString:@"service"];
+      NSView *pill = MakeStatusPill(isService ? @"Service" : @"Tool",
+                                    isService ? NSColor.systemGreenColor
+                                              : NSColor.systemBlueColor);
+      pill.frame = NSMakeRect(356, 38, 66, 20);
+      [card addSubview:pill];
+
+      NSPopUpButton *viewPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(432, 24, 130, 26)
                                                            pullsDown:NO];
       [viewPopup removeAllItems];
       for (NSString *view in EnhancementViewOptions(enhancement)) {
@@ -453,25 +581,40 @@ static void ShowEnhancementSettings(void) {
       viewPopup.target = gAppDelegate;
       viewPopup.action = @selector(viewChangedAction:);
       viewPopup.identifier = identifier;
+      [card addSubview:viewPopup];
 
       NSString *openLabel = ui[@"openLabel"];
       if (!openLabel) openLabel = @"Open";
       NSButton *openButton = [NSButton buttonWithTitle:openLabel
                                                 target:gAppDelegate
                                                 action:@selector(openRowAction:)];
-      openButton.frame = NSMakeRect(492, 8, 78, 24);
+      openButton.frame = NSMakeRect(574, 24, 88, 26);
       openButton.bezelStyle = NSBezelStyleRounded;
+      openButton.controlSize = NSControlSizeRegular;
       openButton.identifier = identifier;
+      [card addSubview:openButton];
 
-      [row addSubview:checkbox];
-      [row addSubview:label];
-      [row addSubview:meta];
-      [row addSubview:viewPopup];
-      [row addSubview:openButton];
-      [stack addArrangedSubview:row];
+      if (!EnhancementEnabled(identifier)) {
+        for (NSView *subview in card.subviews) {
+          if (subview == toggle) continue;
+          subview.alphaValue = 0.45;
+        }
+      }
+
+      [stack addArrangedSubview:card];
     }
 
-    gEnhancementSettingsWindow.contentView = stack;
+    // ── Footer ──
+    NSTextField *footer = [NSTextField labelWithString:
+      @"Codex side-by-side · settings are saved automatically"];
+    footer.frame = NSMakeRect(22, 10, windowWidth - 44, 16);
+    footer.font = [NSFont systemFontOfSize:10];
+    footer.textColor = NSColor.tertiaryLabelColor;
+    [root addSubview:footer];
+
+    [root addSubview:header];
+    [root addSubview:stack];
+    gEnhancementSettingsWindow.contentView = root;
   }
   [gEnhancementSettingsWindow center];
   [gEnhancementSettingsWindow makeKeyAndOrderFront:nil];
@@ -1230,10 +1373,16 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
   ShowEnhancementSettings();
 }
 
-- (void)toggleEnhancementAction:(NSButton *)sender {
+- (void)toggleEnhancementAction:(NSSwitch *)sender {
   NSString *identifier = sender.identifier;
-  SetEnhancementEnabled(identifier, sender.state == NSControlStateValueOn);
+  BOOL enabled = sender.state == NSControlStateValueOn;
+  SetEnhancementEnabled(identifier, enabled);
   RebuildEnhancementMenu();
+  NSView *card = sender.superview;
+  for (NSView *subview in card.subviews) {
+    if (subview == sender) continue;
+    subview.alphaValue = enabled ? 1.0 : 0.45;
+  }
 }
 
 - (void)viewChangedAction:(NSPopUpButton *)sender {
