@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const { bundleEnhancements } = require("./bundle-enhancements");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const OUT_DIR = path.join(PROJECT_ROOT, "out");
@@ -30,10 +31,67 @@ const RUNTIME_ID = "io.haleclipse.codexdesktop.runtime";
 const RUNTIME_DESIGNATED_REQUIREMENT = `=designated => identifier "${RUNTIME_ID}"`;
 const SOURCE_RUNTIME_IDS = new Set(["com.openai.codex", RUNTIME_ID]);
 
+// Entitlements extracted from the official OpenAI app are team-bound (Apple
+// Team ID 2DC432GLL2). Re-signing ad-hoc with those entitlements makes AMFI
+// kill the runtime at exec (SIGKILL before any output), so strip team-bound
+// keys and opt out of library validation — mirroring build-from-upstream.js.
+const OPENAI_TEAM_ID = "2DC432GLL2";
+const TEAM_BOUND_ENTITLEMENTS = new Set([
+  "com.apple.application-identifier",
+  "com.apple.developer.team-identifier",
+  "com.apple.security.application-groups",
+  "keychain-access-groups",
+]);
+const REQUIRED_LOCAL_ENTITLEMENTS = new Set([
+  "com.apple.security.automation.apple-events",
+  "com.apple.security.cs.allow-jit",
+  "com.apple.security.cs.allow-unsigned-executable-memory",
+  "com.apple.security.cs.disable-library-validation",
+  "com.apple.security.network.client",
+]);
+
+function valueContainsTeamIdentifier(value) {
+  if (typeof value === "string") return value.includes(OPENAI_TEAM_ID);
+  if (Array.isArray(value)) return value.some(valueContainsTeamIdentifier);
+  if (value && typeof value === "object") return Object.values(value).some(valueContainsTeamIdentifier);
+  return false;
+}
+
+function sanitizeEntitlements(entitlements) {
+  const sanitized = {};
+  for (const [key, value] of Object.entries(entitlements)) {
+    if (TEAM_BOUND_ENTITLEMENTS.has(key)) continue;
+    if (key.startsWith("com.apple.developer.")) continue;
+    if (valueContainsTeamIdentifier(value)) continue;
+    sanitized[key] = value;
+  }
+  // Hardened-runtime library validation requires matching Apple Team IDs.
+  // Ad-hoc signatures have no Team ID, so opt out or dyld rejects the
+  // separately signed framework before startup.
+  sanitized["com.apple.security.cs.disable-library-validation"] = true;
+  for (const key of REQUIRED_LOCAL_ENTITLEMENTS) {
+    if (sanitized[key] !== true) throw new Error(`Required upstream entitlement is missing: ${key}`);
+  }
+  return sanitized;
+}
+
+function sanitizeEntitlementsFile(entitlementsPath) {
+  const json = run("/usr/bin/plutil", ["-convert", "json", "-o", "-", entitlementsPath], {
+    encoding: "utf-8",
+  });
+  const sanitized = sanitizeEntitlements(JSON.parse(json));
+  run("/usr/bin/plutil", ["-convert", "xml1", "-o", entitlementsPath, "-"], {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    input: JSON.stringify(sanitized),
+  });
+}
+
 function run(executable, args, options = {}) {
   return execFileSync(executable, args, {
     encoding: options.encoding,
     stdio: options.stdio || ["ignore", "pipe", "pipe"],
+    input: options.input,
   });
 }
 
@@ -175,14 +233,18 @@ function parseArguments(argv) {
   return { runtimeApp: path.resolve(runtimeApp), skipDmg, skipPayload };
 }
 
-function main() {
+async function main() {
   if (process.platform !== "darwin") {
     throw new Error("The side-by-side macOS build must run on macOS");
   }
 
   const { runtimeApp, skipDmg, skipPayload } = parseArguments(process.argv.slice(2));
   const sourceInfo = path.join(runtimeApp, "Contents", "Info.plist");
-  const sourceExecutable = path.join(runtimeApp, "Contents", "MacOS", "ChatGPT");
+  // The source may be the original upstream app (executable ChatGPT) or a
+  // previously built side-by-side runtime (executable already renamed Codex).
+  // Resolve the real name instead of hardcoding it.
+  const sourceExecutableName = plistValue(sourceInfo, "CFBundleExecutable") || "ChatGPT";
+  const sourceExecutable = path.join(runtimeApp, "Contents", "MacOS", sourceExecutableName);
   const sourceIcon = path.join(runtimeApp, "Contents", "Resources", "electron.icns");
   const sourceCli = path.join(runtimeApp, "Contents", "Resources", "codex");
   const sourceAsar = path.join(runtimeApp, "Contents", "Resources", "app.asar");
@@ -238,6 +300,7 @@ function main() {
 
     console.log(`   [runtime] copying ${runtimeApp}`);
     extractEntitlements(runtimeApp, sourceEntitlements);
+    sanitizeEntitlementsFile(sourceEntitlements);
     run("/usr/bin/ditto", [runtimeApp, uniqueRuntimeApp]);
 
     // Preserve the upstream ASAR package identity. The renderer uses it to
@@ -245,8 +308,10 @@ function main() {
     // Side-by-side isolation is provided by the private bundle identifier,
     // renamed executable, CODEX_HOME, and explicit Electron user-data path.
 
-    fs.renameSync(path.join(uniqueRuntimeApp, "Contents", "MacOS", "ChatGPT"),
-      uniqueRuntimeExecutable);
+    if (sourceExecutableName !== "Codex") {
+      fs.renameSync(path.join(uniqueRuntimeApp, "Contents", "MacOS", sourceExecutableName),
+        uniqueRuntimeExecutable);
+    }
 
     replacePlistString(uniqueRuntimeInfo, "CFBundleIdentifier", RUNTIME_ID);
     replacePlistString(uniqueRuntimeInfo, "CFBundleExecutable", "Codex");
@@ -272,17 +337,6 @@ function main() {
     fs.copyFileSync(ORIGINAL_CODEX_ASSET_CATALOG,
       path.join(uniqueRuntimeResources, "Assets.car"));
 
-    const alertsApp = path.join(
-      uniqueRuntimeApp,
-      "Contents", "Frameworks", "Codex Framework.framework", "Versions", "Current",
-      "Helpers", "Codex (Alerts).app",
-    );
-    const alertsInfo = path.join(alertsApp, "Contents", "Info.plist");
-    const alertsIcon = path.join(alertsApp, "Contents", "Resources", "app.icns");
-    if (!fs.existsSync(alertsIcon) || sha256(alertsIcon) !== sha256(ORIGINAL_CODEX_ICON) ||
-        plistHasKey(alertsInfo, "CFBundleIconName")) {
-      throw new Error("Source runtime does not contain the corrected Codex Alerts icon");
-    }
     const contentHash = runtimeContentHash(uniqueRuntimeApp, uniqueRuntimeInfo);
     replacePlistString(uniqueRuntimeInfo, "CodexRebuildContentSHA256", contentHash);
 
@@ -355,6 +409,7 @@ function main() {
       "-Werror",
       "-mmacosx-version-min=13.0",
       "-framework", "Cocoa",
+      "-framework", "WebKit",
       path.join(PROJECT_ROOT, "launcher", "CodexLauncher.m"),
       "-o", launcherExecutable,
     ]);
@@ -384,6 +439,9 @@ function main() {
         throw new Error("Embedded payload historical Codex asset catalog is incorrect");
       }
     }
+
+    console.log("   [enhancements] bundling");
+    await bundleEnhancements(wrapperApp, { planOnly: false, platform: "mac-x64" });
 
     run("/usr/bin/codesign", [
       "--force", "--sign", "-", "--timestamp=none", "--options", "runtime", launcherExecutable,
@@ -445,4 +503,7 @@ function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(`\n[x] ${error.message}`);
+  process.exit(1);
+});

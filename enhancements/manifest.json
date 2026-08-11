@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "platforms": ["mac-x64"],
+  "enhancements": [
+    {
+      "id": "opencodex",
+      "type": "service",
+      "source": "npm:@bitkyc08/opencodex@2.12.0",
+      "config": {
+        "port": 10100
+      },
+      "lifecycle": "launcher",
+      "startCommand": [
+        "node_modules/bun/bin/bun.exe",
+        "run",
+        "node_modules/@bitkyc08/opencodex/bin/ocx.mjs",
+        "start"
+      ],
+      "ui": {
+        "label": "opencodex gateway",
+        "kind": "web",
+        "openLabel": "Open dashboard",
+        "url": "http://127.0.0.1:10100"
+      }
+    },
+    {
+      "id": "ccusage",
+      "type": "tool",
+      "source": "npm:ccusage@20.0.19",
+      "description": "Native CLI for Codex usage/cost analysis, scoped to this app's isolated CodexHome",
+      "toolCommand": ["node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage"],
+      "verify": ["node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage"],
+      "ui": {
+        "label": "Usage analyzer",
+        "kind": "ccusage",
+        "openLabel": "Show usage report"
+      }
+    },
+    {
+      "id": "codex-chatgpt-web",
+      "type": "tool",
+      "source": "github:miuuyy/codex-chatgpt-web@v2.1.7",
+      "dependencies": ["npm:bun@1.3.14"],
+      "description": "Use ChatGPT Web (incl. Pro) as native Codex models via a local Responses bridge; its launcher app handles setup",
+      "toolCommand": ["node_modules/bun/bin/bun.exe", "run", "--cwd", "source", "app"],
+      "verify": ["source/package.json", "node_modules/bun/bin/bun.exe"],
+      "ui": {
+        "label": "ChatGPT Web bridge",
+        "kind": "tool",
+        "openLabel": "Open launcher"
+      }
+    },
+    {
+      "id": "codexpp",
+      "type": "tool",
+      "source": "github:BigPizzaV3/CodexPlusPlus@v1.2.46",
+      "asset": "CodexPlusPlus-1.2.46-macos-x64.zip",
+      "sha256": "3272909effb04080849921307adbbf938bd5eb0b17076f12133741e2f6d1db71",
+      "description": "Codex++ — external launcher/manager for Codex (provider switching, themes, UI enhancements); point its app path at this bundle",
+      "toolCommand": ["app-x64/codex-plus-plus-manager"],
+      "verify": ["app-x64/codex-plus-plus-manager", "app-x64/codex-plus-plus"],
+      "ui": {
+        "label": "Codex++ manager",
+        "kind": "tool",
+        "openLabel": "Open manager"
+      }
+    }
+  ]
+}

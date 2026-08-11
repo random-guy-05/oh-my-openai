@@ -1,7 +1,9 @@
 #import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
 #import <errno.h>
 #import <fcntl.h>
 #import <spawn.h>
+#import <signal.h>
 #import <stdlib.h>
 #import <string.h>
 #import <sys/file.h>
@@ -98,6 +100,517 @@ static BOOL RunTool(NSString *launchPath, NSArray<NSString *> *arguments,
 
   if (diagnostic) *diagnostic = ConciseToolOutput(output);
   return NO;
+}
+
+// ─── Enhancement UI (menu bar + settings) ───────────────────────
+
+@class CodexLauncherDelegate;
+
+static CodexLauncherDelegate *gAppDelegate = nil;
+static BOOL gShowSettingsOnLaunch = NO;
+
+static NSStatusItem *gEnhancementStatusItem = nil;
+static NSWindow *gEnhancementSettingsWindow = nil;
+static NSMutableDictionary<NSString *, NSWindow *> *gWebWindows = nil;
+static NSWindow *gUsageWindow = nil;
+static NSTextView *gUsageTextView = nil;
+static NSArray<NSDictionary *> *gLoadedEnhancements = nil;
+
+static NSString *const kEnabledDefaultsKey = @"OMOEEnhancementsEnabled";
+static NSString *const kViewDefaultsKey = @"OMOEEnhancementsView";
+
+static NSArray<NSDictionary *> *LoadEnhancementManifest(void) {
+  if (gLoadedEnhancements) return gLoadedEnhancements;
+  NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
+    URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
+  NSData *data = [NSData dataWithContentsOfURL:manifestURL];
+  NSDictionary *manifest = data
+    ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]
+    : nil;
+  gLoadedEnhancements = [manifest[@"enhancements"] isKindOfClass:[NSArray class]]
+    ? manifest[@"enhancements"]
+    : @[];
+  return gLoadedEnhancements;
+}
+
+static NSDictionary *EnhancementDefaults(void) {
+  NSDictionary *stored = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kEnabledDefaultsKey];
+  return stored ? stored : @{};
+}
+
+static BOOL EnhancementEnabled(NSString *identifier) {
+  NSNumber *value = EnhancementDefaults()[identifier];
+  return value ? value.boolValue : YES;
+}
+
+static void SetEnhancementEnabled(NSString *identifier, BOOL enabled) {
+  NSMutableDictionary *stored = [EnhancementDefaults() mutableCopy];
+  if (!stored) stored = [NSMutableDictionary dictionary];
+  stored[identifier] = @(enabled);
+  [[NSUserDefaults standardUserDefaults] setObject:stored forKey:kEnabledDefaultsKey];
+}
+
+static NSString *EnhancementView(NSString *identifier) {
+  return [[NSUserDefaults standardUserDefaults] dictionaryForKey:kViewDefaultsKey][identifier];
+}
+
+static void SetEnhancementView(NSString *identifier, NSString *view) {
+  NSMutableDictionary *stored = [NSMutableDictionary dictionary];
+  [stored addEntriesFromDictionary:
+    [[NSUserDefaults standardUserDefaults] dictionaryForKey:kViewDefaultsKey]];
+  stored[identifier] = view;
+  [[NSUserDefaults standardUserDefaults] setObject:stored forKey:kViewDefaultsKey];
+}
+
+static NSArray<NSString *> *EnhancementViewOptions(NSDictionary *enhancement) {
+  NSString *kind = enhancement[@"ui"][@"kind"];
+  if ([kind isEqualToString:@"web"]) return @[@"window", @"browser"];
+  if ([kind isEqualToString:@"ccusage"]) return @[@"report"];
+  return @[@"launch"];
+}
+
+static NSString *EnhancementViewLabel(NSString *view) {
+  if ([view isEqualToString:@"window"]) return @"In-app window";
+  if ([view isEqualToString:@"browser"]) return @"Browser";
+  if ([view isEqualToString:@"report"]) return @"Native report";
+  return @"Launch";
+}
+
+static NSString *ResolveEnhancementBinary(NSString *enhDir, NSString *command) {
+  if ([command hasPrefix:@"/"]) return command;
+  NSString *joined = [enhDir stringByAppendingPathComponent:command];
+  if ([[NSFileManager defaultManager] isExecutableFileAtPath:joined]) return joined;
+  NSString *path = [NSProcessInfo.processInfo.environment objectForKey:@"PATH"];
+  if (!path) path = @"/usr/bin:/bin:/usr/local/bin";
+  for (NSString *dir in [path componentsSeparatedByString:@":"]) {
+    NSString *candidate = [dir stringByAppendingPathComponent:command];
+    if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) return candidate;
+  }
+  return nil;
+}
+
+static NSString *EnhancementDirectory(NSDictionary *enhancement) {
+  return [[NSBundle.mainBundle.bundleURL
+    URLByAppendingPathComponent:
+      [@"Contents/Resources/enhancements" stringByAppendingPathComponent:enhancement[@"id"]]]
+    path];
+}
+
+static NSTask *LaunchToolEnhancement(NSDictionary *enhancement,
+                                     void (^outputHandler)(NSString *text)) {
+  NSArray<NSString *> *toolCommand = enhancement[@"toolCommand"];
+  if (![toolCommand isKindOfClass:[NSArray class]] || toolCommand.count == 0) return nil;
+  NSString *enhDir = EnhancementDirectory(enhancement);
+  NSString *binary = ResolveEnhancementBinary(enhDir, toolCommand[0]);
+  if (!binary) {
+    NSLog(@"[CodexLauncher] tool %@ binary not found: %@", enhancement[@"id"], toolCommand[0]);
+    return nil;
+  }
+
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSTask *task = [[NSTask alloc] init];
+  task.launchPath = binary;
+  task.arguments = [toolCommand subarrayWithRange:NSMakeRange(1, toolCommand.count - 1)];
+  task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
+  NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+  environment[@"CODEX_HOME"] = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+  environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
+    [supportPath stringByAppendingPathComponent:@"Profile"];
+  task.environment = environment;
+
+  if (outputHandler) {
+    NSPipe *pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    NSFileHandle *handle = pipe.fileHandleForReading;
+    [handle setReadabilityHandler:^(NSFileHandle *fileHandle) {
+      NSData *data = [fileHandle availableData];
+      if (data.length == 0) return;
+      NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+      if (text.length > 0) outputHandler(text);
+    }];
+    [task setTerminationHandler:^(NSTask *terminatedTask) {
+      (void)terminatedTask;
+      [handle setReadabilityHandler:nil];
+    }];
+  } else {
+    task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+    task.standardError = [NSFileHandle fileHandleWithNullDevice];
+  }
+
+  @try {
+    [task launch];
+  } @catch (NSException *exception) {
+    NSLog(@"[CodexLauncher] failed to launch tool %@: %@", enhancement[@"id"], exception.reason);
+    return nil;
+  }
+  NSLog(@"[CodexLauncher] tool %@ launched (pid %d)", enhancement[@"id"], task.processIdentifier);
+  return task;
+}
+
+static void ShowWebEnhancement(NSDictionary *enhancement) {
+  if (!gWebWindows) gWebWindows = [NSMutableDictionary dictionary];
+  NSString *identifier = enhancement[@"id"];
+  NSWindow *window = gWebWindows[identifier];
+  if (window) {
+    [window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    return;
+  }
+  NSURL *url = [NSURL URLWithString:enhancement[@"ui"][@"url"]];
+  if (!url) return;
+  window = [[NSWindow alloc]
+    initWithContentRect:NSMakeRect(0, 0, 1180, 760)
+              styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                         NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
+                backing:NSBackingStoreBuffered
+                  defer:NO];
+  window.title = enhancement[@"ui"][@"label"];
+  window.releasedWhenClosed = NO;
+  WKWebView *webView = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 1180, 760)
+                                          configuration:[[WKWebViewConfiguration alloc] init]];
+  window.contentView = webView;
+  [webView loadRequest:[NSURLRequest requestWithURL:url]];
+  gWebWindows[identifier] = window;
+  [window center];
+  [window makeKeyAndOrderFront:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
+static void ShowUsageReportForEnhancement(NSDictionary *enhancement) {
+  if (!gUsageWindow) {
+    gUsageWindow = [[NSWindow alloc]
+      initWithContentRect:NSMakeRect(0, 0, 940, 620)
+                styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
+    gUsageWindow.title = @"Usage report (ccusage)";
+    gUsageWindow.releasedWhenClosed = NO;
+    NSScrollView *scrollView = [[NSScrollView alloc]
+      initWithFrame:NSMakeRect(0, 0, 940, 620)];
+    [scrollView setHasVerticalScroller:YES];
+    [scrollView setAutoresizingMask:
+      (NSViewWidthSizable | NSViewHeightSizable)];
+    gUsageTextView = [[NSTextView alloc] initWithFrame:
+      NSMakeRect(0, 0, 920, 600)];
+    gUsageTextView.editable = NO;
+    gUsageTextView.font = [NSFont monospacedSystemFontOfSize:12
+                                                       weight:NSFontWeightRegular];
+    gUsageTextView.autoresizingMask = NSViewWidthSizable;
+    scrollView.documentView = gUsageTextView;
+    gUsageWindow.contentView = scrollView;
+  }
+  gUsageTextView.string = @"Collecting usage report…\n";
+  [gUsageWindow makeKeyAndOrderFront:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+
+  LaunchToolEnhancement(enhancement, ^(NSString *text) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (gUsageTextView) {
+        [gUsageTextView.textStorage appendAttributedString:
+          [[NSAttributedString alloc] initWithString:text]];
+        [gUsageTextView scrollToEndOfDocument:nil];
+      }
+    });
+  });
+}
+
+static void OpenEnhancement(NSString *identifier, NSString *view) {
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if (![enhancement[@"id"] isEqualToString:identifier]) continue;
+    NSString *kind = enhancement[@"ui"][@"kind"];
+    if ([kind isEqualToString:@"web"]) {
+      if ([view isEqualToString:@"browser"]) {
+        NSURL *url = [NSURL URLWithString:enhancement[@"ui"][@"url"]];
+        if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+      } else {
+        ShowWebEnhancement(enhancement);
+      }
+    } else if ([kind isEqualToString:@"ccusage"]) {
+      ShowUsageReportForEnhancement(enhancement);
+    } else {
+      LaunchToolEnhancement(enhancement, nil);
+    }
+    return;
+  }
+}
+
+static void RebuildEnhancementMenu(void) {
+  NSMenu *menu = [[NSMenu alloc] init];
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    NSDictionary *ui = enhancement[@"ui"];
+    if (!ui) continue;
+    if (!EnhancementEnabled(enhancement[@"id"])) continue;
+    NSString *identifier = enhancement[@"id"];
+    NSString *kind = ui[@"kind"];
+    if ([kind isEqualToString:@"web"]) {
+      NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:ui[@"label"]
+                                                    action:nil
+                                             keyEquivalent:@""];
+      NSMenu *submenu = [[NSMenu alloc] init];
+      for (NSString *view in EnhancementViewOptions(enhancement)) {
+        NSMenuItem *option = [[NSMenuItem alloc] initWithTitle:EnhancementViewLabel(view)
+                                                        action:@selector(openEnhancementAction:)
+                                                 keyEquivalent:@""];
+        option.target = gAppDelegate;
+        option.representedObject = @[identifier, view];
+        [submenu addItem:option];
+      }
+      item.submenu = submenu;
+      [menu addItem:item];
+    } else {
+      NSString *title = ui[@"openLabel"];
+      if (!title) title = ui[@"label"];
+      NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                    action:@selector(openEnhancementAction:)
+                                             keyEquivalent:@""];
+      item.target = gAppDelegate;
+      NSString *view = EnhancementViewOptions(enhancement).firstObject;
+      item.representedObject = @[identifier, view];
+      [menu addItem:item];
+    }
+  }
+
+  if (menu.numberOfItems > 0) [menu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem *settings = [[NSMenuItem alloc] initWithTitle:@"Enhancements Settings…"
+                                                    action:@selector(showSettingsAction:)
+                                             keyEquivalent:@","];
+  settings.target = gAppDelegate;
+  [menu addItem:settings];
+  NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"Quit Codex"
+                                                action:@selector(terminate:)
+                                         keyEquivalent:@"q"];
+  [menu addItem:quit];
+  gEnhancementStatusItem.menu = menu;
+}
+
+static void InstallEnhancementStatusItem(void) {
+  gEnhancementStatusItem = [[NSStatusBar systemStatusBar]
+    statusItemWithLength:NSVariableStatusItemLength];
+  gEnhancementStatusItem.button.image =
+    [NSImage imageWithSystemSymbolName:@"square.grid.2x2.fill"
+              accessibilityDescription:@"Oh My OpenAI"];
+  RebuildEnhancementMenu();
+}
+
+static void ShowEnhancementSettings(void) {
+  if (!gEnhancementSettingsWindow) {
+    NSArray<NSDictionary *> *enhancements = LoadEnhancementManifest();
+    gEnhancementSettingsWindow = [[NSWindow alloc]
+      initWithContentRect:NSMakeRect(0, 0, 620, 60 + enhancements.count * 54)
+                styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                           NSWindowStyleMaskMiniaturizable)
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
+    gEnhancementSettingsWindow.title = @"Oh My OpenAI — Enhancements";
+    gEnhancementSettingsWindow.releasedWhenClosed = NO;
+
+    NSStackView *stack = [[NSStackView alloc] initWithFrame:
+      NSMakeRect(0, 0, 600, 40 + enhancements.count * 54)];
+    stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+    stack.alignment = NSLayoutAttributeLeading;
+    stack.spacing = 8;
+    stack.edgeInsets = NSEdgeInsetsMake(12, 12, 12, 12);
+
+    for (NSDictionary *enhancement in enhancements) {
+      NSDictionary *ui = enhancement[@"ui"];
+      if (!ui) continue;
+      NSString *identifier = enhancement[@"id"];
+      NSView *row = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 570, 40)];
+
+      NSButton *checkbox = [NSButton checkboxWithTitle:@""
+                                                target:gAppDelegate
+                                                action:@selector(toggleEnhancementAction:)];
+      checkbox.frame = NSMakeRect(0, 10, 24, 20);
+      checkbox.state = EnhancementEnabled(identifier) ? NSControlStateValueOn
+                                                      : NSControlStateValueOff;
+      checkbox.identifier = identifier;
+
+      NSTextField *label = [NSTextField labelWithString:ui[@"label"]];
+      label.frame = NSMakeRect(28, 12, 190, 18);
+      label.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+
+      NSTextField *meta = [NSTextField labelWithString:
+        [NSString stringWithFormat:@"%@ · v%@",
+          enhancement[@"type"],
+          enhancement[@"resolvedVersion"] ? enhancement[@"resolvedVersion"] : @"?"]];
+      meta.frame = NSMakeRect(222, 12, 130, 16);
+      meta.font = [NSFont systemFontOfSize:11];
+      meta.textColor = NSColor.secondaryLabelColor;
+
+      NSPopUpButton *viewPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(356, 8, 130, 24)
+                                                           pullsDown:NO];
+      [viewPopup removeAllItems];
+      for (NSString *view in EnhancementViewOptions(enhancement)) {
+        [viewPopup addItemWithTitle:EnhancementViewLabel(view)];
+      }
+      NSString *storedView = EnhancementView(identifier);
+      if (storedView) {
+        NSInteger index = [EnhancementViewOptions(enhancement) indexOfObject:storedView];
+        if (index != NSNotFound) [viewPopup selectItemAtIndex:index];
+      }
+      viewPopup.target = gAppDelegate;
+      viewPopup.action = @selector(viewChangedAction:);
+      viewPopup.identifier = identifier;
+
+      NSString *openLabel = ui[@"openLabel"];
+      if (!openLabel) openLabel = @"Open";
+      NSButton *openButton = [NSButton buttonWithTitle:openLabel
+                                                target:gAppDelegate
+                                                action:@selector(openRowAction:)];
+      openButton.frame = NSMakeRect(492, 8, 78, 24);
+      openButton.bezelStyle = NSBezelStyleRounded;
+      openButton.identifier = identifier;
+
+      [row addSubview:checkbox];
+      [row addSubview:label];
+      [row addSubview:meta];
+      [row addSubview:viewPopup];
+      [row addSubview:openButton];
+      [stack addArrangedSubview:row];
+    }
+
+    gEnhancementSettingsWindow.contentView = stack;
+  }
+  [gEnhancementSettingsWindow center];
+  [gEnhancementSettingsWindow makeKeyAndOrderFront:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
+// ─── Enhancement lifecycle ──────────────────────────────────────
+
+static BOOL gEnhancementsStarted = NO;
+static NSMutableArray<NSTask *> *gEnhancementTasks = nil;
+
+// Async-signal-safe PID tracking so a raw SIGTERM/SIGINT/SIGHUP (AppKit only
+// delivers applicationWillTerminate: on ordinary quit paths) still stops every
+// enhancement instead of orphaning it.
+static pid_t gEnhancementPids[32];
+static int gEnhancementPidCount = 0;
+
+static void HandleTerminationSignal(int signalNumber) {
+  for (int index = 0; index < gEnhancementPidCount; index++) {
+    kill(gEnhancementPids[index], SIGTERM);
+  }
+  _exit(128 + signalNumber);
+}
+
+// Forward declaration (defined later in this file)
+static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
+
+static BOOL StartEnhancements(void) {
+  if (gEnhancementsStarted) return YES;
+  gEnhancementsStarted = YES;
+
+  NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
+    URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:manifestURL.path]) {
+    NSLog(@"[CodexLauncher] no enhancements manifest; skipping");
+    return YES;
+  }
+
+  NSData *manifestData = [NSData dataWithContentsOfURL:manifestURL];
+  NSDictionary *manifest;
+  @try {
+    manifest = [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil];
+  } @catch (NSException *e) {
+    NSLog(@"[CodexLauncher] failed to parse enhancements manifest: %@", e.reason);
+    return YES;
+  }
+  if (!manifest) {
+    NSLog(@"[CodexLauncher] enhancements manifest is empty or invalid");
+    return YES;
+  }
+
+  NSNumber *version = manifest[@"version"];
+  if (!version || [version integerValue] != 1) {
+    NSLog(@"[CodexLauncher] unsupported manifest version %@; expected 1", version);
+    return YES;
+  }
+
+  NSArray<NSDictionary *> *enhancements = manifest[@"enhancements"];
+  if (![enhancements isKindOfClass:[NSArray class]]) {
+    NSLog(@"[CodexLauncher] enhancements is not an array");
+    return YES;
+  }
+
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSString *enhancementsLogDir = [supportPath stringByAppendingPathComponent:@"enhancements"];
+  CreatePrivateDirectory(enhancementsLogDir, nil);
+
+  for (NSDictionary *enhancement in enhancements) {
+    NSString *id = enhancement[@"id"];
+    NSArray<NSString *> *startCommand = enhancement[@"startCommand"];
+    if (!id || ![id isKindOfClass:[NSString class]] || !startCommand ||
+        ![startCommand isKindOfClass:[NSArray class]] || startCommand.count == 0) {
+      NSLog(@"[CodexLauncher] skipping malformed enhancement entry");
+      continue;
+    }
+    if (!EnhancementEnabled(id)) {
+      NSLog(@"[CodexLauncher] enhancement %@ disabled in settings; skipping", id);
+      continue;
+    }
+
+    NSString *enhDir = [[[NSBundle.mainBundle.bundleURL
+      URLByAppendingPathComponent:@"Contents/Resources/enhancements"]
+      URLByAppendingPathComponent:id] path];
+    NSString *binaryPath = [enhDir stringByAppendingPathComponent:startCommand[0]];
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:binaryPath]) {
+      NSLog(@"[CodexLauncher] enhancement %@ binary not executable at %@", id, startCommand[0]);
+      continue;
+    }
+
+    NSString *logPath = [enhancementsLogDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.log", id]];
+    if (![[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil]) {
+      NSLog(@"[CodexLauncher] cannot create log file for enhancement %@", id);
+      continue;
+    }
+    NSFileHandle *logHandle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    if (!logHandle) {
+      NSLog(@"[CodexLauncher] cannot open log file for enhancement %@", id);
+      continue;
+    }
+    [logHandle seekToEndOfFile];
+
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = binaryPath;
+    task.arguments = [startCommand subarrayWithRange:NSMakeRange(1, startCommand.count - 1)];
+    task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
+    task.standardOutput = logHandle;
+    task.standardError = logHandle;
+
+    @try {
+      [task launch];
+      if (!gEnhancementTasks) gEnhancementTasks = [[NSMutableArray alloc] init];
+      [gEnhancementTasks addObject:task];
+      if (gEnhancementPidCount < 32) {
+        gEnhancementPids[gEnhancementPidCount++] = task.processIdentifier;
+      }
+      NSLog(@"[CodexLauncher] enhancement %@ started (pid %d)", id, task.processIdentifier);
+    } @catch (NSException *e) {
+      NSLog(@"[CodexLauncher] failed to start enhancement %@: %@", id, e.reason);
+    }
+  }
+  return YES;
+}
+
+static void StopEnhancements(void) {
+  if (!gEnhancementTasks) return;
+  for (NSTask *task in gEnhancementTasks) {
+    if (!task.isRunning) continue;
+    [task terminate];
+    NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] + 3.0;
+    while (task.isRunning && [NSDate timeIntervalSinceReferenceDate] < deadline) {
+      usleep(50000); // 50ms
+    }
+    if (task.isRunning) {
+      kill(task.processIdentifier, SIGKILL);
+      NSLog(@"[CodexLauncher] force-killed enhancement pid %d", task.processIdentifier);
+    }
+  }
+  NSLog(@"[CodexLauncher] stopped %lu enhancements", (unsigned long)gEnhancementTasks.count);
+  [gEnhancementTasks removeAllObjects];
 }
 
 static NSDictionary *RuntimeInfo(NSURL *runtimeURL) {
@@ -635,6 +1148,10 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
   // establishes the isolated profile before Electron's singleton lock.
   ClaimLauncherURLScheme();
 
+  // Native command center for bundled enhancements (menu bar + settings).
+  InstallEnhancementStatusItem();
+  if (gShowSettingsOnLaunch) [self showSettingsAction:nil];
+
   // GURL is normally delivered before didFinishLaunching. One short run-loop
   // grace period also covers LaunchServices versions that enqueue it immediately
   // afterward, without adding noticeable latency to an ordinary app launch.
@@ -645,6 +1162,7 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
+  StopEnhancements();
   [[NSAppleEventManager sharedAppleEventManager]
     removeEventHandlerForEventClass:kCodexInternetEventClass
                           andEventID:kCodexGetURLEvent];
@@ -693,10 +1211,58 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
 }
 
 - (void)launchWithArguments:(NSArray<NSString *> *)arguments {
+  StartEnhancements();
   NSString *failure = nil;
   if (!LaunchRuntime(arguments, &failure)) {
     ShowLaunchError(failure ? failure : @"The Codex runtime could not be launched.");
   }
+}
+
+// ─── Enhancement menu/settings actions ─────────────────────────
+
+- (void)openEnhancementAction:(NSMenuItem *)sender {
+  NSArray<NSString *> *payload = sender.representedObject;
+  if (payload.count == 2) OpenEnhancement(payload[0], payload[1]);
+}
+
+- (void)showSettingsAction:(id)sender {
+  (void)sender;
+  ShowEnhancementSettings();
+}
+
+- (void)toggleEnhancementAction:(NSButton *)sender {
+  NSString *identifier = sender.identifier;
+  SetEnhancementEnabled(identifier, sender.state == NSControlStateValueOn);
+  RebuildEnhancementMenu();
+}
+
+- (void)viewChangedAction:(NSPopUpButton *)sender {
+  NSString *identifier = sender.identifier;
+  NSArray<NSString *> *options = nil;
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if ([enhancement[@"id"] isEqualToString:identifier]) {
+      options = EnhancementViewOptions(enhancement);
+      break;
+    }
+  }
+  NSInteger index = sender.indexOfSelectedItem;
+  if (options && index >= 0 && index < (NSInteger)options.count) {
+    SetEnhancementView(identifier, options[index]);
+  }
+}
+
+- (void)openRowAction:(NSButton *)sender {
+  NSString *identifier = sender.identifier;
+  NSArray<NSString *> *options = nil;
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if ([enhancement[@"id"] isEqualToString:identifier]) {
+      options = EnhancementViewOptions(enhancement);
+      break;
+    }
+  }
+  NSString *view = EnhancementView(identifier);
+  if (!view || ![options containsObject:view]) view = options.firstObject;
+  OpenEnhancement(identifier, view);
 }
 
 @end
@@ -705,10 +1271,19 @@ int main(int argc, const char *argv[]) {
   @autoreleasepool {
     SanitizeEnvironment();
 
+    signal(SIGTERM, HandleTerminationSignal);
+    signal(SIGINT, HandleTerminationSignal);
+    signal(SIGHUP, HandleTerminationSignal);
+
     NSMutableArray<NSString *> *arguments = [NSMutableArray array];
     for (int index = 1; index < argc; index++) {
       NSString *argument = [NSString stringWithUTF8String:argv[index]];
-      if (!argument || [argument hasPrefix:@"-psn_"]) continue;
+      if (!argument) continue;
+      if ([argument isEqualToString:@"--show-settings"]) {
+        gShowSettingsOnLaunch = YES;
+        continue;
+      }
+      if ([argument hasPrefix:@"-psn_"]) continue;
       [arguments addObject:argument];
     }
 
@@ -718,6 +1293,7 @@ int main(int argc, const char *argv[]) {
     static CodexLauncherDelegate *launcherDelegate = nil;
     launcherDelegate = [[CodexLauncherDelegate alloc]
       initWithCommandLineArguments:arguments];
+    gAppDelegate = launcherDelegate;
     application.delegate = launcherDelegate;
 
     // Register before entering NSApplication's run loop so a cold-launch GURL

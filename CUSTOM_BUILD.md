@@ -1,87 +1,105 @@
 # Intel Codex custom build
 
-Supported upstream: official Intel macOS app `26.721.41059` (`5848`).
+The side-by-side Intel build is **stock Codex + an enhancements layer**. There
+is no patch pipeline: the runtime is the official OpenAI app, packaged with a
+launcher that starts bundled enhancement services. Custom behavior lives in
+the enhancements, not in edited app bundles.
 
-## Conversation architecture
+Supported upstream: any current official Intel macOS app
+(`/Applications/ChatGPT.app`, `com.openai.codex`, x86_64).
 
-Chat mode remains on the current native Codex task and never swaps the route,
-task ID, sidebar data, or native history owner for a ChatGPT conversation.
-ChatGPT Work and Codex select their corresponding native product surfaces.
-Chat is intercepted in the local submitter and uses the signed-in ChatGPT Web
-`startCompletionStream` client while keeping the local task identity and
-mixed transcript.
+## Architecture
 
-`scripts/patch-local-canonical-mode.js`:
+The wrapper app (`out/side-by-side-mac-x64/Codex.app`) embeds:
 
-- stores only the selected preset in `cdr-product-mode`;
-- keeps Chat on the native local-task surface and uses native Work/Codex
-  navigation for the other presets;
-- updates the native model-and-effort setting only on an explicit preset click;
-- overrides the next local collaboration mode with the same model and effort;
-- colors the native send control by preset;
-- leaves `thread/read`, `thread/turns/list`, and history hydration unchanged;
-- routes model-consuming ChatGPT context handoffs and background resumes through
-  GPT-5.6 Luna Light.
+- `Contents/MacOS/CodexLauncher` — the Objective-C launcher.
+- `Contents/Resources/Codex.payload` — the stock runtime, uniquely identified
+  (bundle id `io.haleclipse.codexdesktop.runtime`, executable renamed to
+  `Codex`) so it never conflicts with the official app.
+- `Contents/Resources/enhancements/` — bundled services: the effective
+  `manifest.json` plus one staged directory per enhancement. Staged by
+  `scripts/bundle-enhancements.js` before the wrapper is signed.
 
-`_apply-26721-all-features.js` owns the Chat transport and live model catalog.
-The picker consumes the current ChatGPT Web `models()` response directly; it
-does not invent obsolete fallback rows, and filters only explicit Codex
-namespaces. `CDRStickyChatSend` persists every Chat user/assistant row under
-`cdr-thread-extras:local:<task-id>`. `_apply-chat-extras-render-v1.js` overlays
-those rows into the native task transcript, so switching tasks and modes does
-not hide or replace prior history.
+On first launch the launcher atomically installs its fingerprinted private
+runtime under `~/Library/Application Support/CodexDesktop-Rebuild/Codex.app`.
+It starts enhancements before spawning Codex and stops them cleanly on quit,
+including raw SIGTERM/SIGINT/SIGHUP (which never reach
+`applicationWillTerminate:`). `CODEX_HOME` and the Electron user-data path are
+isolated inside the support directory; the official app's data is untouched
+and runtime upgrades keep the profile and Codex home.
 
-`_apply-handoff-sync-v1.js` attaches only the missing cross-mode transcript
-delta as hidden transport context and advances its watermark only after a
-successful send. `_apply-chat-fake-stream-v1.js` retains its legacy filename
-but now smooths live snapshots; it does not replay a completed response.
+## Enhancements
 
-The visible Custom Providers settings panel writes `model_providers.<id>`
-through the native config bridge. It supports Codex's Responses wire API,
-rejects reserved built-in provider IDs, prefers `env_key`, and never persists
-direct bearer-token values in local storage.
+The side-by-side wrapper can carry enhancement services that the launcher
+starts before Codex and stops cleanly on quit (including raw SIGTERM/SIGINT/
+SIGHUP, which never reach `applicationWillTerminate:`), plus staged tools the
+user invokes on demand.
 
-Referenced-thread context uses upstream `thread/read` with `includeTurns: true`.
-Background transcript hydration also retains full turns. These reads are local
-data operations and consume no model tokens.
+- Source manifest: `enhancements/manifest.json` (versioned, per-platform).
+- Bundler: `scripts/bundle-enhancements.js` resolves each source, verifies
+  declared executables (exists, executable, matching arch), records
+  `resolvedVersion` + sha256, and writes the effective
+  `Contents/Resources/enhancements/manifest.json` inside the wrapper before
+  the wrapper is signed. Dry-run with `--plan`; build-time failures abort the
+  build.
+- Sources: `npm:<spec>` (package at the enhancement root) and
+  `github:<owner>/<repo>@<tag>` (repo tarball extracted to `source/`, or —
+  with `asset` + `sha256` — a pinned release asset verified on download).
+  `dependencies` installs extra npm packages into the same staging tree.
+- Types: `service` (launcher-managed `startCommand`, optional `config.port`)
+  and `tool` (staged; invoked via `scripts/enhancement-tool.js`, which sets
+  `CODEX_HOME` to the app's isolated CodexHome). Tools are ignored by the
+  launcher's lifecycle.
+- UI descriptors: each enhancement can declare `ui` (`label`, `kind`,
+  `openLabel`, `url`). The launcher renders a native command center from
+  them: a menu bar item with one entry per enhancement and an
+  **Enhancements Settings…** window (enable toggle, status, view selector,
+  Open button per feature; persisted in NSUserDefaults). `kind: web` opens
+  the URL in an in-app WKWebView window or the browser, `kind: ccusage`
+  renders a native usage report window, `kind: tool` launches the tool.
+- Runtime: the launcher reads the manifest from its own bundle, starts each
+  service in its staged directory, and appends per-enhancement logs to
+  `~/Library/Application Support/CodexDesktop-Rebuild/enhancements/<id>.log`.
+  Enhancement failures never block Codex launch.
 
-## Usage and resource controls
+Bundled in the current build:
 
-Custom usage controls and transcript token badges are intentionally excluded;
-the app leaves upstream account and usage surfaces unchanged.
+- `opencodex` (service, port 10100) — local OpenAI-compatible gateway
+  dashboard, run by the staged bun runtime.
+- `ccusage` (tool) — native CLI usage/cost analyzer scoped to this app's
+  CodexHome: `node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app ccusage`
+- `codex-chatgpt-web` (tool) — ChatGPT Web (incl. Pro) as native Codex models
+  via a local Responses bridge; its launcher app handles sign-in and setup:
+  `node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app codex-chatgpt-web`
+- `codexpp` (tool) — Codex++ external launcher/manager (provider switching,
+  themes, UI enhancements). Note: Codex++ targets the official app's CDP and
+  `~/.codex` data; point its app path at this bundle for best results.
 
-`patch-resource-saver.js` preserves upstream lifecycle protections while
-reducing detached inactive-browser defaults from 32 pages / 30 minutes to
-8 pages / 10 minutes.
+Current `enhancements/manifest.json` targets `mac-x64`; the bundler fails
+closed for other platforms until they are added.
 
 ## Rebuild workflow
 
-For a newly installed official Intel Codex base, the supported upgrade path is
-one command:
+Directly from the installed official app (fastest):
 
 ```sh
-npm run upgrade:x64
+node scripts/build-side-by-side-mac.js --runtime /Applications/ChatGPT.app
 ```
 
-This snapshots the last-good source, imports the installed upstream, performs a
-clean-source audit, applies the canonical feature manifest, runs every test and
-the patched audit, reapplies the manifest to prove byte-for-byte idempotency,
-then builds the runtime and side-by-side app. A failure restores the last-good
-source and leaves a JSON report under `out/.reapply-runs/`.
-
-Useful narrower commands:
+Or through the standard pipeline (sync → build → side-by-side):
 
 ```sh
-npm run reapply:x64             # reapply and verify the current source
-npm run reapply -- --plan       # print the ordered feature/test plan
-npm run audit:clean             # audit a freshly synced upstream
-npm run audit:patched           # audit a customized source
+npm run sync:installed:x64    # snapshot the installed official app
+npm run build:mac-x64         # standard runtime + DMG
+npm run build:side-by-side:x64
 ```
 
-The manifest intentionally supports only `mac-x64` until every binary patcher
-has a platform-neutral target resolver. Unsupported platforms fail instead of
-silently producing a partly customized build.
+Skip the DMG with `node scripts/build-side-by-side-mac.js --skip-dmg`.
+The build fails closed on missing sources, arch mismatches, or failed
+enhancement verification.
 
-The outer launcher atomically installs its fingerprinted private runtime under
-`~/Library/Application Support/CodexDesktop-Rebuild/Codex.app`. The isolated
-profile and Codex home survive runtime upgrades.
+The release artifacts land in `out/`: the wrapper app
+(`out/side-by-side-mac-x64/Codex.app`) and the DMG
+(`out/Codex-side-by-side-mac-x64-<version>.dmg`). Install the wrapper by
+dragging it to Applications, or use `npm run install:side-by-side` after a
+build.

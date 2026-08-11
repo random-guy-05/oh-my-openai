@@ -46,6 +46,8 @@ const args = process.argv.slice(2);
 const FORCE = args.includes("--force");
 const CHECK_ONLY = args.includes("--check-only");
 const SKIP_MAC = args.includes("--skip-mac");
+const SKIP_MAC_ARM64 = args.includes("--skip-mac-arm64");
+const SKIP_MAC_X64 = args.includes("--skip-mac-x64");
 const SKIP_WIN = args.includes("--skip-win");
 const INSTALLED_X64 = args.includes("--installed-x64");
 const INSTALLED_APP_INDEX = args.indexOf("--installed-app");
@@ -445,13 +447,15 @@ async function main() {
   const results = {};
 
   // Detect versions
-  if (!SKIP_MAC) {
+  if (!SKIP_MAC && !SKIP_MAC_ARM64) {
     try {
       const arm64Info = await getAppcastVersion(APPCAST_ARM64);
       console.log(`\n   mac-arm64: ${arm64Info.version} (build ${arm64Info.build})`);
       results["mac-arm64"] = arm64Info;
     } catch (e) { console.error(`   [x] mac-arm64 check: ${e.message}`); }
+  }
 
+  if (!SKIP_MAC && !SKIP_MAC_X64) {
     try {
       const x64Info = await getAppcastVersion(APPCAST_X64);
       console.log(`   mac-x64:   ${x64Info.version} (build ${x64Info.build})`);
@@ -473,12 +477,12 @@ async function main() {
   }
 
   // Download and extract
-  if (!SKIP_MAC && results["mac-arm64"]) {
+  if (!SKIP_MAC && !SKIP_MAC_ARM64 && results["mac-arm64"]) {
     try {
       results["mac-arm64"] = await syncMac("arm64", APPCAST_ARM64, path.join(SRC_DIR, "mac-arm64"));
     } catch (e) { console.error(`   [x] mac-arm64: ${e.message}`); }
   }
-  if (!SKIP_MAC && results["mac-x64"]) {
+  if (!SKIP_MAC && !SKIP_MAC_X64 && results["mac-x64"]) {
     try {
       results["mac-x64"] = await syncMac("x64", APPCAST_X64, path.join(SRC_DIR, "mac-x64"));
     } catch (e) { console.error(`   [x] mac-x64: ${e.message}`); }

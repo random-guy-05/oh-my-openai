@@ -1,4 +1,45 @@
-# Codex Intel 26.721.41059 — July 30, 2026
+# Codex Intel 26.803.41515 — August 10, 2026
+
+## What's new
+
+- **Full reset — no more patches**: the entire patch pipeline (chat presets,
+  custom-providers UI, resource-saver, feature gates, reapply/audit/test
+  machinery) was removed. The runtime is now the **stock** official Intel
+  app, packaged with the side-by-side launcher.
+- **Enhancements layer**: the launcher starts bundled enhancement services
+  before Codex and stops them cleanly on quit, including raw SIGTERM/SIGINT/
+  SIGHUP (AppKit never delivers `applicationWillTerminate:` for those).
+- **Enhancement bundler**: `scripts/bundle-enhancements.js` stages npm packages
+  declared in `enhancements/manifest.json` into the wrapper during the
+  side-by-side build, verifies the start binary (exists, executable, arch),
+  and writes an effective manifest with `resolvedVersion` + sha256. Fail-closed
+  at build time; best-effort at runtime.
+- **First enhancement — opencodex**: a local OpenAI-compatible gateway
+  dashboard (port 10100) served from the staged bun runtime, with per-service
+  logs under `CodexDesktop-Rebuild/enhancements/`.
+- **More enhancements**: native `ccusage` (usage/cost analyzer scoped to the
+  app's CodexHome), `codex-chatgpt-web` (ChatGPT Web as native Codex models),
+  and `codexpp` (Codex++ launcher/manager). The bundler now supports
+  `github:` sources (repo tarballs and pinned release assets) and `tool`-type
+  enhancements; `scripts/enhancement-tool.js` runs tools with the app's
+  isolated CODEX_HOME.
+- **Native command center**: a menu bar item lists every enhancement
+  (dashboard in-app/browser, usage report, launcher, manager) and
+  **Enhancements Settings…** provides one native window per feature — enable
+  toggle, status, view selector, and Open button (persisted in
+  NSUserDefaults).
+
+## Install
+
+1. Prefer `Codex-side-by-side-mac-x64-26.803.41515.dmg` for the isolated,
+   rollback-safe custom profile.
+2. Or use `Codex-mac-x64-26.803.41515.dmg` for the standard install.
+3. Drag `Codex.app` into Applications. If Gatekeeper blocks it, Control-click
+   the app and choose Open.
+
+---
+
+# Codex Intel 26.727.40816 — August 10, 2026 (superseded)
 
 ## What's new
 
