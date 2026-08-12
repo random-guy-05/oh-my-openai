@@ -398,19 +398,19 @@ async function main() {
     replacePlistString(path.join(contents, "Info.plist"), "CFBundleShortVersionString", version);
     replacePlistString(path.join(contents, "Info.plist"), "CFBundleVersion", customBuild);
 
-    console.log("   [launcher] compiling Intel native launcher");
+    console.log("   [launcher] compiling Intel native launcher (ObjC + SwiftUI)");
     run("/usr/bin/xcrun", [
-      "clang",
-      "-arch", "x86_64",
-      "-fobjc-arc",
-      "-Wall",
-      "-Wextra",
-      "-Wpedantic",
-      "-Werror",
-      "-mmacosx-version-min=13.0",
+      "swiftc",
+      "-target", "x86_64-apple-macos13.0",
+      "-parse-as-library",
+      "-Xcc", "-fobjc-arc",
+      "-Xcc", "-Wall",
+      "-Xcc", "-Wextra",
+      "-Xcc", "-Werror",
       "-framework", "Cocoa",
       "-framework", "WebKit",
       path.join(PROJECT_ROOT, "launcher", "CodexLauncher.m"),
+      path.join(PROJECT_ROOT, "launcher", "EnhancementHub.swift"),
       "-o", launcherExecutable,
     ]);
     fs.chmodSync(launcherExecutable, 0o755);
