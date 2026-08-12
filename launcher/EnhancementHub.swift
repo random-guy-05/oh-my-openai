@@ -2,10 +2,15 @@
 // Compiled into the launcher (mixed ObjC+Swift) and exposed to ObjC via
 // @_cdecl entry points. Shares the process, bundle, and UserDefaults domain
 // with the launcher.
+//
+// Design: System-Settings-grade macOS panel — ultra-thin material, flat
+// restrained icon tiles, disciplined row rhythm, trailing-aligned controls,
+// subtle badges, intentional motion.
 
 import AppKit
 import Foundation
 import SwiftUI
+import WebKit
 
 // MARK: - Model
 
@@ -16,6 +21,7 @@ struct Enhancement: Identifiable, Decodable {
   let description: String?
   let config: Config?
   let toolCommand: [String]?
+  let startCommand: [String]?
   let ui: UI?
 
   struct Config: Decodable {
@@ -194,9 +200,9 @@ final class WebWindow: NSObject, NSWindowDelegate {
     window.title = title
     window.isReleasedWhenClosed = false
     window.center()
-    let webView = WKWebViewShim()
-    webView.load(url: url)
-    window.contentView = webView.view
+    let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+    window.contentView = webView
+    webView.load(URLRequest(url: url))
     windows[title] = window
     window.delegate = self
     window.makeKeyAndOrderFront(nil)
@@ -238,12 +244,12 @@ final class HubWindow: NSObject, NSWindowDelegate {
     NSApp.activate(ignoringOtherApps: true)
   }
 
-  func windowWillClose(_ notification: Notification) {
-    // Reopenable via the menu; keep the controller alive.
-  }
+  func windowWillClose(_ notification: Notification) {}
 }
 
 // MARK: - Views
+
+private let kRowInset = EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
 
 struct HubView: View {
   let enhancements: [Enhancement]
@@ -254,7 +260,9 @@ struct HubView: View {
 
   var body: some View {
     ZStack {
-      Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
+      Color.clear
+        .background(.ultraThinMaterial)
+        .ignoresSafeArea()
       VStack(spacing: 0) {
         header
         List {
@@ -284,43 +292,51 @@ struct HubView: View {
   private var header: some View {
     HStack(spacing: 14) {
       ZStack {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-          .fill(LinearGradient(colors: [.teal, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-          .frame(width: 52, height: 52)
-          .shadow(color: .teal.opacity(0.35), radius: 8, y: 3)
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(LinearGradient(colors: [Color.teal.opacity(0.86), Color.teal],
+                               startPoint: .top, endPoint: .bottom))
+          .frame(width: 44, height: 44)
+          .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
         Image(systemName: "sparkles")
-          .font(.system(size: 24, weight: .semibold))
+          .font(.system(size: 21, weight: .semibold))
           .foregroundStyle(.white)
       }
       VStack(alignment: .leading, spacing: 2) {
         Text("Enhancements")
-          .font(.system(size: 22, weight: .bold))
+          .font(.title2.bold())
         Text("Bundled with Oh My OpenAI · Codex side-by-side")
-          .font(.system(size: 12))
+          .font(.system(size: 11.5))
           .foregroundStyle(.secondary)
       }
       Spacer()
     }
-    .padding(.horizontal, 22)
+    .padding(.horizontal, 20)
     .padding(.top, 18)
-    .padding(.bottom, 12)
+    .padding(.bottom, 10)
   }
 
   private var footer: some View {
-    HStack {
-      Text("Settings apply immediately · tools run with the app's isolated CodexHome")
-        .font(.system(size: 10))
-        .foregroundStyle(.tertiary)
-      Spacer()
+    VStack(spacing: 0) {
+      Rectangle()
+        .fill(.quaternary)
+        .frame(height: 0.5)
+      HStack {
+        Text("Settings apply immediately · tools run with the app's isolated CodexHome")
+          .font(.system(size: 10.5))
+          .foregroundStyle(.secondary)
+        Spacer()
+      }
+      .padding(.horizontal, 20)
+      .padding(.vertical, 8)
     }
-    .padding(.horizontal, 22)
-    .padding(.vertical, 8)
   }
 }
 
 struct EnhancementRow: View {
   let enhancement: Enhancement
   @ObservedObject var state: HubState
+  @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 28
+  @State private var isHovered = false
 
   private var isOn: Binding<Bool> {
     Binding(
@@ -342,95 +358,90 @@ struct EnhancementRow: View {
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            .truncationMode(.tail)
         }
         Spacer(minLength: 8)
         Toggle("", isOn: isOn)
           .toggleStyle(.switch)
           .labelsHidden()
           .controlSize(.small)
+          .padding(.trailing, 2)
       }
       if state.isEnabled(enhancement.id) {
         controlsRow
           .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
-    .padding(.vertical, 4)
+    .padding(.vertical, 2)
+    .listRowInsets(kRowInset)
+    .listRowBackground(Color(nsColor: .controlBackgroundColor))
+    .background(isHovered ? Color.accentColor.opacity(0.06) : Color.clear)
     .animation(.easeInOut(duration: 0.18), value: state.isEnabled(enhancement.id))
+    .onHover { hovering in
+      withAnimation(.easeInOut(duration: 0.12)) { isHovered = hovering }
+    }
   }
 
   private var iconTile: some View {
     ZStack {
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .fill(enhancement.tint.gradient)
-        .frame(width: 34, height: 34)
+      RoundedRectangle(cornerRadius: 7, style: .continuous)
+        .fill(LinearGradient(colors: [enhancement.tint.opacity(0.86), enhancement.tint],
+                             startPoint: .top, endPoint: .bottom))
+        .frame(width: iconSize, height: iconSize)
+        .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
       Image(systemName: enhancement.symbolName)
-        .font(.system(size: 16, weight: .semibold))
+        .font(.system(size: 14, weight: .semibold))
         .foregroundStyle(.white)
     }
-    .shadow(color: enhancement.tint.opacity(0.3), radius: 5, y: 2)
   }
 
   private var typeBadge: some View {
     Text(enhancement.isService ? "SERVICE" : "TOOL")
-      .font(.system(size: 9, weight: .bold))
+      .font(.system(size: 8.5, weight: .bold))
+      .kerning(0.4)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)
-      .background(
-        Capsule().fill(enhancement.isService
-          ? Color.green.opacity(0.16)
-          : Color.blue.opacity(0.16)))
-      .foregroundStyle(enhancement.isService ? .green : .blue)
+      .background(Capsule().fill(Color.secondary.opacity(0.12)))
+      .foregroundStyle(.secondary)
   }
 
   private var controlsRow: some View {
     HStack(spacing: 10) {
       if enhancement.viewOptions.count > 1 {
         Picker("View", selection: viewSelection) {
-          ForEach(Array(enhancement.viewOptions.enumerated()), id: \.element) { _, view in
-            Text(enhancement.viewLabels[enhancement.viewOptions.firstIndex(of: view)!]).tag(view)
+          ForEach(enhancement.viewOptions, id: \.self) { view in
+            Text(enhancement.viewLabels[enhancement.viewOptions.firstIndex(of: view) ?? 0])
+              .tag(view)
           }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(width: 230)
+        .controlSize(.small)
+        .frame(minWidth: 180, maxWidth: 220)
       } else {
         Text(enhancement.viewLabels.first ?? "")
           .font(.system(size: 11, weight: .medium))
           .foregroundStyle(.secondary)
       }
       Spacer()
-      Button(action: { HubActions.open(enhancement, view: state.view(for: enhancement.id, options: enhancement.viewOptions)) }) {
-        Label(enhancement.openLabel, systemImage: "arrow.up.right.square")
-          .font(.system(size: 12, weight: .medium))
+      Button {
+        HubActions.open(enhancement, view: state.view(for: enhancement.id, options: enhancement.viewOptions))
+      } label: {
+        Label(enhancement.openLabel, systemImage: "arrow.up.right")
+          .font(.system(size: 11.5, weight: .medium))
       }
       .buttonStyle(.bordered)
       .controlSize(.small)
       .tint(enhancement.tint)
     }
-    .padding(.leading, 46)
+    .padding(.leading, 16 + 12 + iconSize) // aligned with row text
+    .padding(.trailing, 2)
   }
 
   private var viewSelection: Binding<String> {
     Binding(
       get: { state.view(for: enhancement.id, options: enhancement.viewOptions) },
       set: { state.setView(enhancement.id, $0) })
-  }
-}
-
-// MARK: - WKWebView shim (SwiftUI)
-
-import WebKit
-
-final class WKWebViewShim: NSObject {
-  let view: WKWebView
-
-  override init() {
-    view = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-    super.init()
-  }
-
-  func load(url: URL) {
-    view.load(URLRequest(url: url))
   }
 }
 
@@ -470,4 +481,3 @@ public func ShowWebWindow(label: UnsafePointer<CChar>?, url: UnsafePointer<CChar
     WebWindow.shared.show(title: title, url: url)
   }
 }
-
