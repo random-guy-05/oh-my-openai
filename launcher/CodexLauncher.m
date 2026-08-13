@@ -402,13 +402,60 @@ static void RebuildEnhancementMenu(void) {
   gEnhancementStatusItem.menu = menu;
 }
 
+// Codex spark mark drawn as a menu-bar template image: monochrome, adapts to
+// light/dark menu bars, no asset files needed.
+static NSImage *SparkTemplateImage(void) {
+  const CGFloat size = 18.0;
+  const CGFloat center = size / 2.0;
+  const CGFloat length = 7.2;   // leaf tip distance from center
+  const CGFloat halfWidth = 2.4; // leaf half-width at its widest
+  NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(size, size)];
+  [image lockFocus];
+  NSBezierPath *spark = [[NSBezierPath alloc] init];
+  for (NSInteger index = 0; index < 4; index++) {
+    CGFloat angle = index * 90.0 * M_PI / 180.0;
+    CGFloat cosA = cos(angle), sinA = sin(angle);
+    CGFloat perpX = -sinA, perpY = cosA;
+    NSPoint tip = NSMakePoint(center + cosA * length, center + sinA * length);
+    NSPoint base1 = NSMakePoint(center + perpX * halfWidth * 0.9,
+                                center + perpY * halfWidth * 0.9);
+    NSPoint base2 = NSMakePoint(center - perpX * halfWidth * 0.9,
+                                center - perpY * halfWidth * 0.9);
+    NSPoint control1 = NSMakePoint(center + cosA * length * 0.45 + perpX * halfWidth,
+                                   center + sinA * length * 0.45 + perpY * halfWidth);
+    NSPoint control2 = NSMakePoint(center + cosA * length * 0.45 - perpX * halfWidth,
+                                   center + sinA * length * 0.45 - perpY * halfWidth);
+    NSPoint nearTip1 = NSMakePoint(tip.x - cosA * 1.6, tip.y - sinA * 1.6);
+    [spark moveToPoint:base1];
+    [spark curveToPoint:tip controlPoint1:control1 controlPoint2:nearTip1];
+    [spark curveToPoint:base2 controlPoint1:nearTip1 controlPoint2:control2];
+    [spark closePath];
+  }
+  [spark fill];
+  [image unlockFocus];
+  image.template = YES;
+  return image;
+}
+
 static void InstallEnhancementStatusItem(void) {
   gEnhancementStatusItem = [[NSStatusBar systemStatusBar]
     statusItemWithLength:NSVariableStatusItemLength];
-  gEnhancementStatusItem.button.image =
-    [NSImage imageWithSystemSymbolName:@"square.grid.2x2.fill"
-              accessibilityDescription:@"Oh My OpenAI"];
+  NSImage *spark = SparkTemplateImage();
+  if (spark) {
+    gEnhancementStatusItem.button.image = spark;
+  } else {
+    gEnhancementStatusItem.button.title = @"✦";
+  }
+  gEnhancementStatusItem.button.toolTip = @"Oh My OpenAI";
+  gEnhancementStatusItem.visible = YES;
   RebuildEnhancementMenu();
+  // Re-assert the menu after the status bar has registered the item, so the
+  // item can never end up attached but empty.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+    gEnhancementStatusItem.button.toolTip = @"Oh My OpenAI";
+    RebuildEnhancementMenu();
+  });
 }
 
 static void ShowEnhancementSettings(void) {
