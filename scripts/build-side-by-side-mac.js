@@ -410,6 +410,7 @@ async function main() {
       "-framework", "Cocoa",
       "-framework", "WebKit",
       path.join(PROJECT_ROOT, "launcher", "CodexLauncher.m"),
+      path.join(PROJECT_ROOT, "launcher", "EnhancementManager.swift"),
       path.join(PROJECT_ROOT, "launcher", "EnhancementHub.swift"),
       "-o", launcherExecutable,
     ]);
