@@ -3,14 +3,63 @@
 // @_cdecl entry points. Shares the process, bundle, and UserDefaults domain
 // with the launcher.
 //
-// Design: System-Settings-grade macOS panel — ultra-thin material, flat
-// restrained icon tiles, disciplined row rhythm, trailing-aligned controls,
-// subtle badges, intentional motion.
+// Design: themed to match the actual Codex app — light surfaces (#FFFFFF /
+// #F5F7F6), the multicolor spark brand mark (red #FF4F52 / orange #F49E36 /
+// green #00C24B), action blue #0093F7, text #181A1C / #6D6E6F, hairline
+// borders #E2E4E0, 10/8/6 radii. Dark-mode variants follow the system.
 
 import AppKit
 import Foundation
 import SwiftUI
 import WebKit
+
+// MARK: - Codex theme
+// Tokens extracted from the actual app's renderer (app.asar): dark-first
+// surfaces (#202020 / #303030 / #353535), warm light surfaces (#F5F3EE /
+// #F7F5F1 / #EBE8E2), text #171717 / #6B6B6B, action blue #0285FF, and the
+// app's model accent family (blue #339CFF, green #40C977, orange #FF8549,
+// pink #FF8CC1, purple #AD7BF9, red #FF6764).
+
+enum CodexTheme {
+  static let red = Color(red: 1.00, green: 0.40, blue: 0.39)      // #FF6764
+  static let orange = Color(red: 1.00, green: 0.52, blue: 0.29)   // #FF8549
+  static let green = Color(red: 0.25, green: 0.79, blue: 0.47)    // #40C977
+  static let blue = Color(red: 0.01, green: 0.52, blue: 1.00)     // #0285FF
+  static let softBlue = Color(red: 0.20, green: 0.61, blue: 1.00) // #339CFF
+  static let purple = Color(red: 0.68, green: 0.48, blue: 0.98)   // #AD7BF9
+  static let pink = Color(red: 1.00, green: 0.55, blue: 0.76)     // #FF8CC1
+  static let sparkGradient = LinearGradient(
+    colors: [red, orange, green],
+    startPoint: .topLeading, endPoint: .bottomTrailing)
+
+  static func dynamic(light: NSColor, dark: NSColor) -> Color {
+    Color(nsColor: NSColor(name: nil) { appearance in
+      appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+    })
+  }
+
+  // Surfaces (dark-first, warm light mode)
+  static let background = dynamic(light: NSColor(red: 0.961, green: 0.953, blue: 0.933, alpha: 1), // #F5F3EE
+                                  dark: NSColor(red: 0.125, green: 0.125, blue: 0.125, alpha: 1)) // #202020
+  static let sidebar = dynamic(light: NSColor(red: 0.925, green: 0.910, blue: 0.871, alpha: 1),  // #EBE8E2-ish
+                               dark: NSColor(red: 0.176, green: 0.176, blue: 0.176, alpha: 1))   // #2D2D2D
+  static let card = dynamic(light: NSColor(red: 0.969, green: 0.961, blue: 0.945, alpha: 1),     // #F7F5F1
+                            dark: NSColor(red: 0.188, green: 0.188, blue: 0.188, alpha: 1))      // #303030
+  static let cardHover = dynamic(light: NSColor(red: 0.925, green: 0.910, blue: 0.871, alpha: 1), // #EBE8E2
+                                 dark: NSColor(red: 0.208, green: 0.208, blue: 0.208, alpha: 1)) // #353535
+
+  // Text
+  static let textPrimary = dynamic(light: NSColor(red: 0.09, green: 0.09, blue: 0.09, alpha: 1),  // #171717
+                                   dark: NSColor(white: 0.94, alpha: 1))
+  static let textSecondary = dynamic(light: NSColor(red: 0.42, green: 0.42, blue: 0.42, alpha: 1), // #6B6B6B
+                                     dark: NSColor(white: 0.62, alpha: 1))
+  static let textTertiary = dynamic(light: NSColor(red: 0.42, green: 0.42, blue: 0.42, alpha: 1),
+                                    dark: NSColor(white: 0.52, alpha: 1))
+
+  // Hairlines
+  static let border = dynamic(light: NSColor(red: 0.898, green: 0.882, blue: 0.855, alpha: 1), // warm hairline
+                              dark: NSColor(white: 1.0, alpha: 0.10))
+}
 
 // MARK: - Model
 
@@ -52,11 +101,11 @@ struct Enhancement: Identifiable, Decodable {
 
   var tint: Color {
     switch id {
-    case "opencodex": return .teal
-    case "ccusage": return .orange
-    case "codex-chatgpt-web": return .indigo
-    case "codexpp": return .pink
-    default: return .blue
+    case "opencodex": return CodexTheme.softBlue    // #339CFF — app blue
+    case "ccusage": return CodexTheme.orange        // #FF8549 — app orange
+    case "codex-chatgpt-web": return CodexTheme.purple // #AD7BF9 — app purple
+    case "codexpp": return CodexTheme.pink          // #FF8CC1 — app pink
+    default: return CodexTheme.blue
     }
   }
 
@@ -221,6 +270,8 @@ final class HubWindow: NSObject, NSWindowDelegate {
   static let shared = HubWindow()
   private var window: NSWindow?
 
+  var currentWindow: NSWindow? { window }
+
   func show(enhancements: [Enhancement]) {
     if let window {
       window.makeKeyAndOrderFront(nil)
@@ -241,15 +292,21 @@ final class HubWindow: NSObject, NSWindowDelegate {
     self.window = window
     window.delegate = self
     window.makeKeyAndOrderFront(nil)
+    window.orderFrontRegardless()
     NSApp.activate(ignoringOtherApps: true)
+    let marker = "/tmp/hub-marker.txt"
+    if let text = try? String(contentsOfFile: marker, encoding: .utf8) {
+      let frame = window.frame
+      let screen = window.screen?.frame ?? .zero
+      let info = "ordered-front+regardless frame=\(frame) visible=\(window.isVisible) screen=\(screen) alpha=\(window.alphaValue)\n"
+      try? (text + info).write(toFile: marker, atomically: true, encoding: .utf8)
+    }
   }
 
   func windowWillClose(_ notification: Notification) {}
 }
 
 // MARK: - Views
-
-private let kRowInset = EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
 
 struct HubView: View {
   let enhancements: [Enhancement]
@@ -260,9 +317,7 @@ struct HubView: View {
 
   var body: some View {
     ZStack {
-      Color.clear
-        .background(.ultraThinMaterial)
-        .ignoresSafeArea()
+      CodexTheme.background.ignoresSafeArea()
       VStack(spacing: 0) {
         header
         List {
@@ -283,30 +338,35 @@ struct HubView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        .environment(\.colorScheme, colorScheme)
         footer
       }
     }
     .frame(minWidth: 560, minHeight: 460)
+    .preferredColorScheme(nil)
   }
+
+  @Environment(\.colorScheme) private var colorScheme
 
   private var header: some View {
     HStack(spacing: 14) {
+      // The Codex spark — red/orange/green brand mark
       ZStack {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(LinearGradient(colors: [Color.teal.opacity(0.86), Color.teal],
-                               startPoint: .top, endPoint: .bottom))
-          .frame(width: 44, height: 44)
-          .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+          .fill(CodexTheme.sparkGradient)
+          .frame(width: 46, height: 46)
+          .shadow(color: Color.black.opacity(0.12), radius: 3, y: 1)
         Image(systemName: "sparkles")
-          .font(.system(size: 21, weight: .semibold))
+          .font(.system(size: 22, weight: .semibold))
           .foregroundStyle(.white)
       }
       VStack(alignment: .leading, spacing: 2) {
         Text("Enhancements")
           .font(.title2.bold())
+          .foregroundStyle(CodexTheme.textPrimary)
         Text("Bundled with Oh My OpenAI · Codex side-by-side")
           .font(.system(size: 11.5))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(CodexTheme.textSecondary)
       }
       Spacer()
     }
@@ -318,12 +378,12 @@ struct HubView: View {
   private var footer: some View {
     VStack(spacing: 0) {
       Rectangle()
-        .fill(.quaternary)
+        .fill(CodexTheme.border)
         .frame(height: 0.5)
       HStack {
         Text("Settings apply immediately · tools run with the app's isolated CodexHome")
           .font(.system(size: 10.5))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(CodexTheme.textSecondary)
         Spacer()
       }
       .padding(.horizontal, 20)
@@ -337,6 +397,7 @@ struct EnhancementRow: View {
   @ObservedObject var state: HubState
   @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 28
   @State private var isHovered = false
+  @Environment(\.colorScheme) private var colorScheme
 
   private var isOn: Binding<Bool> {
     Binding(
@@ -352,11 +413,12 @@ struct EnhancementRow: View {
           HStack(spacing: 8) {
             Text(enhancement.label)
               .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(CodexTheme.textPrimary)
             typeBadge
           }
           Text(enhancement.detail)
             .font(.system(size: 11))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(CodexTheme.textSecondary)
             .lineLimit(1)
             .truncationMode(.tail)
         }
@@ -372,10 +434,18 @@ struct EnhancementRow: View {
           .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
-    .padding(.vertical, 2)
-    .listRowInsets(kRowInset)
-    .listRowBackground(Color(nsColor: .controlBackgroundColor))
-    .background(isHovered ? Color.accentColor.opacity(0.06) : Color.clear)
+    .padding(12)
+    .background(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(isHovered ? CodexTheme.cardHover : CodexTheme.card)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .stroke(CodexTheme.border, lineWidth: 1)
+    )
+    .listRowBackground(Color.clear)
+    .listRowSeparator(.hidden)
+    .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
     .animation(.easeInOut(duration: 0.18), value: state.isEnabled(enhancement.id))
     .onHover { hovering in
       withAnimation(.easeInOut(duration: 0.12)) { isHovered = hovering }
@@ -385,10 +455,10 @@ struct EnhancementRow: View {
   private var iconTile: some View {
     ZStack {
       RoundedRectangle(cornerRadius: 7, style: .continuous)
-        .fill(LinearGradient(colors: [enhancement.tint.opacity(0.86), enhancement.tint],
+        .fill(LinearGradient(colors: [enhancement.tint.opacity(0.88), enhancement.tint],
                              startPoint: .top, endPoint: .bottom))
         .frame(width: iconSize, height: iconSize)
-        .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+        .shadow(color: Color.black.opacity(0.10), radius: 2, y: 1)
       Image(systemName: enhancement.symbolName)
         .font(.system(size: 14, weight: .semibold))
         .foregroundStyle(.white)
@@ -401,8 +471,8 @@ struct EnhancementRow: View {
       .kerning(0.4)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)
-      .background(Capsule().fill(Color.secondary.opacity(0.12)))
-      .foregroundStyle(.secondary)
+      .background(Capsule().fill(CodexTheme.sidebar))
+      .foregroundStyle(CodexTheme.textSecondary)
   }
 
   private var controlsRow: some View {
@@ -421,7 +491,7 @@ struct EnhancementRow: View {
       } else {
         Text(enhancement.viewLabels.first ?? "")
           .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(CodexTheme.textSecondary)
       }
       Spacer()
       Button {
@@ -432,7 +502,7 @@ struct EnhancementRow: View {
       }
       .buttonStyle(.bordered)
       .controlSize(.small)
-      .tint(enhancement.tint)
+      .tint(CodexTheme.blue)
     }
     .padding(.leading, 16 + 12 + iconSize) // aligned with row text
     .padding(.trailing, 2)
@@ -466,7 +536,12 @@ func loadEnhancements() -> [Enhancement] {
 
 @_cdecl("ShowEnhancementHub")
 public func ShowEnhancementHub() {
+  try? "called\n".write(toFile: "/tmp/hub-marker.txt", atomically: true, encoding: .utf8)
   DispatchQueue.main.async {
+    let marker = "/tmp/hub-marker.txt"
+    if let text = try? String(contentsOfFile: marker, encoding: .utf8) {
+      try? (text + "async-ran\n").write(toFile: marker, atomically: true, encoding: .utf8)
+    }
     HubWindow.shared.show(enhancements: loadEnhancements())
   }
 }
@@ -479,5 +554,24 @@ public func ShowWebWindow(label: UnsafePointer<CChar>?, url: UnsafePointer<CChar
         let url = URL(string: urlString) else { return }
   DispatchQueue.main.async {
     WebWindow.shared.show(title: title, url: url)
+  }
+}
+
+// Render the hub window's own view hierarchy to a PNG (no Screen Recording
+// permission needed — a process can capture its own views).
+@_cdecl("CaptureHubWindow")
+public func CaptureHubWindow() {
+  DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+    guard let window = HubWindow.shared.currentWindow,
+          let view = window.contentView,
+          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+      try? "no-window".write(toFile: "/tmp/hub-capture.log", atomically: true, encoding: .utf8)
+      return
+    }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    if let png = rep.representation(using: .png, properties: [:]) {
+      try? png.write(to: URL(fileURLWithPath: "/tmp/hub-window-real.png"))
+      try? "saved \(png.count) bytes".write(toFile: "/tmp/hub-capture.log", atomically: true, encoding: .utf8)
+    }
   }
 }

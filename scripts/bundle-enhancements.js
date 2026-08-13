@@ -97,13 +97,24 @@ function machOArchitectures(binaryPath) {
 }
 
 async function downloadFile(url, destination) {
-  const response = await fetch(url, { redirect: "follow" });
-  if (!response.ok) {
-    throw new Error(`Download failed (${response.status}) for ${url}`);
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { redirect: "follow" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      fs.writeFileSync(destination, buffer);
+      return buffer.length;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 3000 * attempt));
+      }
+    }
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  fs.writeFileSync(destination, buffer);
-  return buffer.length;
+  throw new Error(`Download failed after 3 attempts (${url}): ${lastError && lastError.message}`);
 }
 
 function extractTarGz(archive, destDir) {

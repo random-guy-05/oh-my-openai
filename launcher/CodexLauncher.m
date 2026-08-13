@@ -109,9 +109,11 @@ static BOOL RunTool(NSString *launchPath, NSArray<NSString *> *arguments,
 // SwiftUI command center (launcher/EnhancementHub.swift, linked via swiftc).
 extern void ShowEnhancementHub(void);
 extern void ShowWebWindow(const char *label, const char *url);
+extern void CaptureHubWindow(void);
 
 static CodexLauncherDelegate *gAppDelegate = nil;
 static BOOL gShowSettingsOnLaunch = NO;
+static BOOL gCaptureHubOnLaunch = NO;
 
 static NSStatusItem *gEnhancementStatusItem = nil;
 static NSWindow *gUsageWindow = nil;
@@ -1088,6 +1090,7 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
   // Native command center for bundled enhancements (menu bar + settings).
   InstallEnhancementStatusItem();
   if (gShowSettingsOnLaunch) [self showSettingsAction:nil];
+  if (gCaptureHubOnLaunch) CaptureHubWindow();
 
   // GURL is normally delivered before didFinishLaunching. One short run-loop
   // grace period also covers LaunchServices versions that enqueue it immediately
@@ -1183,6 +1186,11 @@ int main(int argc, const char *argv[]) {
       if (!argument) continue;
       if ([argument isEqualToString:@"--show-settings"]) {
         gShowSettingsOnLaunch = YES;
+        continue;
+      }
+      if ([argument isEqualToString:@"--capture-hub"]) {
+        gShowSettingsOnLaunch = YES;
+        gCaptureHubOnLaunch = YES;
         continue;
       }
       if ([argument hasPrefix:@"-psn_"]) continue;
