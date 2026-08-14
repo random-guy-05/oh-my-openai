@@ -337,6 +337,123 @@ async function main() {
     fs.copyFileSync(ORIGINAL_CODEX_ASSET_CATALOG,
       path.join(uniqueRuntimeResources, "Assets.car"));
 
+    const runtimeAsar = path.join(uniqueRuntimeResources, "app.asar");
+    if (fs.existsSync(runtimeAsar)) {
+      console.log("   [asar] integrating ✦ Enhancements into native tray menu");
+      const extractAsarDir = path.join(temporaryDirectory, "_extracted_asar");
+      run("/usr/bin/npx", ["--yes", "asar", "extract", runtimeAsar, extractAsarDir]);
+
+      const viteBuildDir = path.join(extractAsarDir, ".vite", "build");
+      if (fs.existsSync(viteBuildDir)) {
+        const files = fs.readdirSync(viteBuildDir);
+        for (const file of files) {
+          if (file.startsWith("main-") && file.endsWith(".js")) {
+            const mainJsPath = path.join(viteBuildDir, file);
+            let mainCode = fs.readFileSync(mainJsPath, "utf8");
+
+            const helperFn = `
+function getEnhancementsTrayMenu() {
+  const fs = require('fs');
+  const path = require('path');
+  const { shell, BrowserWindow, app } = require('electron');
+  const possiblePaths = [
+    path.join(process.resourcesPath, 'enhancements', 'manifest.json'),
+    path.join(process.resourcesPath, '..', 'Resources', 'enhancements', 'manifest.json'),
+    path.join(app.getAppPath(), '..', 'enhancements', 'manifest.json'),
+    path.join(app.getAppPath(), 'enhancements', 'manifest.json'),
+    '/Users/admin/oh-my-openai/enhancements/manifest.json'
+  ];
+  let manifest = null;
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p)) {
+        manifest = JSON.parse(fs.readFileSync(p, 'utf8'));
+        break;
+      }
+    } catch {}
+  }
+  const subItems = [];
+  if (manifest && Array.isArray(manifest.enhancements)) {
+    for (const enh of manifest.enhancements) {
+      const ui = enh.ui || {};
+      const label = ui.label || enh.id;
+      if (ui.kind === 'web' && ui.url) {
+        const url = ui.url;
+        subItems.push({
+          label: label,
+          submenu: [
+            {
+              label: 'In-app window',
+              click: () => {
+                const win = new BrowserWindow({
+                  width: 1040,
+                  height: 760,
+                  title: label,
+                  webPreferences: { nodeIntegration: false, contextIsolation: true }
+                });
+                win.loadURL(url);
+              }
+            },
+            {
+              label: 'Browser',
+              click: () => {
+                shell.openExternal(url);
+              }
+            }
+          ]
+        });
+      } else {
+        const openLabel = ui.openLabel || label;
+        subItems.push({
+          label: openLabel,
+          click: () => {
+            if (enh.toolCommand && enh.toolCommand.length > 0) {
+              const { spawn } = require('child_process');
+              const cmd = enh.toolCommand[0];
+              const args = enh.toolCommand.slice(1);
+              const dir = path.join(process.resourcesPath, 'enhancements', enh.id);
+              const bin = fs.existsSync(path.join(dir, cmd)) ? path.join(dir, cmd) : cmd;
+              const env = { ...process.env, CODEX_HOME: process.env.CODEX_HOME || '' };
+              spawn(bin, args, { cwd: dir, env, stdio: 'inherit', detached: true }).unref();
+            }
+          }
+        });
+      }
+    }
+  }
+  subItems.push({ type: 'separator' });
+  subItems.push({
+    label: 'Enhancements Settings…',
+    click: () => {
+      shell.openExternal('codex-rebuild://settings');
+    }
+  });
+  return {
+    label: '✦ Enhancements',
+    submenu: subItems
+  };
+}
+`;
+            const targetPattern = "return[...h,...h.length>0?[{type:`separator`}]:[]";
+            if (mainCode.includes(targetPattern)) {
+              mainCode = helperFn + "\n" + mainCode.replace(
+                targetPattern,
+                "return[...h,...h.length>0?[{type:`separator`}]:[],getEnhancementsTrayMenu(),{type:`separator`}"
+              );
+              fs.writeFileSync(mainJsPath, mainCode, "utf8");
+              console.log(`   [asar] successfully patched ${file}`);
+            }
+          }
+        }
+      }
+
+      run("/usr/bin/npx", ["--yes", "asar", "pack", extractAsarDir, runtimeAsar]);
+      fs.rmSync(extractAsarDir, { recursive: true, force: true });
+    }
+
+    console.log("   [runtime-enhancements] bundling into private runtime");
+    await bundleEnhancements(uniqueRuntimeApp, { planOnly: false, platform: "mac-x64" });
+
     const contentHash = runtimeContentHash(uniqueRuntimeApp, uniqueRuntimeInfo);
     replacePlistString(uniqueRuntimeInfo, "CodexRebuildContentSHA256", contentHash);
 
