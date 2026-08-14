@@ -438,8 +438,8 @@ function getEnhancementsTrayMenu(elModule) {
                 const { exec } = require('child_process');
                 const supportDir = path.join(require('os').homedir(), 'Library/Application Support/CodexDesktop-Rebuild');
                 const bridgeDir = process.resourcesPath ? path.join(process.resourcesPath, 'enhancements', 'codex-chatgpt-web') : '';
-                const script = `tell application "Terminal" to do script "cd '${bridgeDir}' && export CODEX_HOME='${supportDir}/CodexHome' && export CODEX_ELECTRON_USER_DATA_PATH='${supportDir}/Profile' && node_modules/bun/bin/bun.exe run --cwd source src/cli.ts doctor"`;
-                exec(`osascript -e '${script.replace(/'/g, "\\'")}'`);
+                const script = 'tell application "Terminal" to do script "cd \\"' + bridgeDir + '\\" && export CODEX_HOME=\\"' + supportDir + '/CodexHome\\" && export CODEX_ELECTRON_USER_DATA_PATH=\\"' + supportDir + '/Profile\\" && node_modules/bun/bin/bun.exe run --cwd source src/cli.ts doctor"';
+                exec('osascript -e ' + JSON.stringify(script));
               } catch {}
             }
           });
