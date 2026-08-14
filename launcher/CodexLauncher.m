@@ -423,13 +423,11 @@ static void RebuildEnhancementMenu(void) {
   gEnhancementStatusItem.menu = menu;
 }
 
-// Codex spark mark drawn as a menu-bar template image: monochrome, adapts to
-// light/dark menu bars, no asset files needed.
 static NSImage *SparkTemplateImage(void) {
   const CGFloat size = 18.0;
   const CGFloat center = size / 2.0;
-  const CGFloat length = 7.2;   // leaf tip distance from center
-  const CGFloat halfWidth = 2.4; // leaf half-width at its widest
+  const CGFloat length = 7.2;
+  const CGFloat halfWidth = 2.4;
   NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(size, size)];
   [image lockFocus];
   NSBezierPath *spark = [[NSBezierPath alloc] init];
@@ -458,23 +456,35 @@ static NSImage *SparkTemplateImage(void) {
   return image;
 }
 
+static NSImage *ChatGPTTemplateImage(void) {
+  NSString *resourcePath = [[NSBundle mainBundle] pathForResource:@"chatgptTemplate" ofType:@"png"];
+  if (resourcePath) {
+    NSImage *image = [[NSImage alloc] initWithContentsOfFile:resourcePath];
+    if (image) {
+      image.template = YES;
+      return image;
+    }
+  }
+  return SparkTemplateImage();
+}
+
 static void InstallEnhancementStatusItem(void) {
   gEnhancementStatusItem = [[NSStatusBar systemStatusBar]
     statusItemWithLength:NSVariableStatusItemLength];
-  NSImage *spark = SparkTemplateImage();
-  if (spark) {
-    gEnhancementStatusItem.button.image = spark;
+  NSImage *icon = ChatGPTTemplateImage();
+  if (icon) {
+    gEnhancementStatusItem.button.image = icon;
   } else {
     gEnhancementStatusItem.button.title = @"✦";
   }
-  gEnhancementStatusItem.button.toolTip = @"Oh My OpenAI";
+  gEnhancementStatusItem.button.toolTip = @"Codex Enhancements";
   gEnhancementStatusItem.visible = YES;
   RebuildEnhancementMenu();
   // Re-assert the menu after the status bar has registered the item, so the
   // item can never end up attached but empty.
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                  dispatch_get_main_queue(), ^{
-    gEnhancementStatusItem.button.toolTip = @"Oh My OpenAI";
+    gEnhancementStatusItem.button.toolTip = @"Codex Enhancements";
     RebuildEnhancementMenu();
   });
 }

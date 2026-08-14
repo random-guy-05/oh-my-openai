@@ -395,6 +395,12 @@ async function main() {
     fs.copyFileSync(path.join(PROJECT_ROOT, "launcher", "Info.plist"), path.join(contents, "Info.plist"));
     fs.copyFileSync(ORIGINAL_CODEX_ICON, wrapperIcon);
     fs.copyFileSync(ORIGINAL_CODEX_ASSET_CATALOG, wrapperAssets);
+    if (fs.existsSync(path.join(PROJECT_ROOT, "resources", "chatgptTemplate.png"))) {
+      fs.copyFileSync(path.join(PROJECT_ROOT, "resources", "chatgptTemplate.png"), path.join(contents, "Resources", "chatgptTemplate.png"));
+    }
+    if (fs.existsSync(path.join(PROJECT_ROOT, "resources", "chatgptTemplate@2x.png"))) {
+      fs.copyFileSync(path.join(PROJECT_ROOT, "resources", "chatgptTemplate@2x.png"), path.join(contents, "Resources", "chatgptTemplate@2x.png"));
+    }
     replacePlistString(path.join(contents, "Info.plist"), "CFBundleShortVersionString", version);
     replacePlistString(path.join(contents, "Info.plist"), "CFBundleVersion", customBuild);
 
