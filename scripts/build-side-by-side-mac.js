@@ -498,8 +498,16 @@ function getEnhancementsTrayMenu(elModule) {
                 targetPattern,
                 "return[...h,...h.length>0?[{type:`separator`}]:[],getEnhancementsTrayMenu(l),{type:`separator`}"
               );
+              mainCode = mainCode.replace(
+                "updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu",
+                "updatePersistentTrayMenu(){(process.platform===`linux`||process.platform===`darwin`)&&this.tray.setContextMenu"
+              );
+              mainCode = mainCode.replace(
+                "if(process.platform===`darwin`){this.tray.on(`mouse-down`",
+                "if(process.platform===`darwin`){this.updatePersistentTrayMenu();this.tray.on(`mouse-down`"
+              );
               fs.writeFileSync(mainJsPath, mainCode, "utf8");
-              console.log(`   [asar] successfully patched ${file}`);
+              console.log(`   [asar] successfully patched ${file} (tray + enhancements)`);
             }
           }
         }
