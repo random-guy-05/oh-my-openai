@@ -1,632 +1,264 @@
-// EnhancementHub.swift — SwiftUI Command Center for Oh My OpenAI enhancements.
-// Features a macOS-native NavigationSplitView layout, live service monitors,
-// tool runners, usage reports, streaming logs, and in-app web views.
+// EnhancementHub.swift — SwiftUI command center for bundled enhancements.
+// Compiled into the launcher (mixed ObjC+Swift) and exposed to ObjC via
+// @_cdecl entry points. Shares the process, bundle, and UserDefaults domain
+// with the launcher.
+//
+// Design: themed to match the actual Codex app — light surfaces (#FFFFFF /
+// #F5F7F6), the multicolor spark brand mark (red #FF4F52 / orange #F49E36 /
+// green #00C24B), action blue #0093F7, text #181A1C / #6D6E6F, hairline
+// borders #E2E4E0, 10/8/6 radii. Dark-mode variants follow the system.
 
 import AppKit
 import Foundation
 import SwiftUI
 import WebKit
 
-// MARK: - Codex Theme Tokens
+// MARK: - Codex theme
+// Tokens extracted from the actual app's renderer (app.asar): dark-first
+// surfaces (#202020 / #303030 / #353535), warm light surfaces (#F5F3EE /
+// #F7F5F1 / #EBE8E2), text #171717 / #6B6B6B, action blue #0285FF, and the
+// app's model accent family (blue #339CFF, green #40C977, orange #FF8549,
+// pink #FF8CC1, purple #AD7BF9, red #FF6764).
 
-public enum CodexTheme {
-  public static let blue = Color(red: 0.01, green: 0.52, blue: 1.00)       // #0285FF
-  public static let softBlue = Color(red: 0.20, green: 0.61, blue: 1.00)   // #339CFF
-  public static let green = Color(red: 0.25, green: 0.79, blue: 0.47)      // #40C977
-  public static let orange = Color(red: 1.00, green: 0.52, blue: 0.29)     // #FF8549
-  public static let purple = Color(red: 0.68, green: 0.48, blue: 0.98)     // #AD7BF9
-  public static let pink = Color(red: 1.00, green: 0.55, blue: 0.76)       // #FF8CC1
-  public static let red = Color(red: 1.00, green: 0.40, blue: 0.39)        // #FF6764
-
-  public static let sparkGradient = LinearGradient(
+enum CodexTheme {
+  static let red = Color(red: 1.00, green: 0.40, blue: 0.39)      // #FF6764
+  static let orange = Color(red: 1.00, green: 0.52, blue: 0.29)   // #FF8549
+  static let green = Color(red: 0.25, green: 0.79, blue: 0.47)    // #40C977
+  static let blue = Color(red: 0.01, green: 0.52, blue: 1.00)     // #0285FF
+  static let softBlue = Color(red: 0.20, green: 0.61, blue: 1.00) // #339CFF
+  static let purple = Color(red: 0.68, green: 0.48, blue: 0.98)   // #AD7BF9
+  static let pink = Color(red: 1.00, green: 0.55, blue: 0.76)     // #FF8CC1
+  static let sparkGradient = LinearGradient(
     colors: [red, orange, green],
     startPoint: .topLeading, endPoint: .bottomTrailing)
 
-  public static func dynamic(light: NSColor, dark: NSColor) -> Color {
+  static func dynamic(light: NSColor, dark: NSColor) -> Color {
     Color(nsColor: NSColor(name: nil) { appearance in
       appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
     })
   }
 
-  public static let background = dynamic(
-    light: NSColor(red: 0.965, green: 0.960, blue: 0.945, alpha: 1),
-    dark: NSColor(red: 0.125, green: 0.125, blue: 0.125, alpha: 1))
+  // Surfaces (dark-first, warm light mode)
+  static let background = dynamic(light: NSColor(red: 0.961, green: 0.953, blue: 0.933, alpha: 1), // #F5F3EE
+                                  dark: NSColor(red: 0.125, green: 0.125, blue: 0.125, alpha: 1)) // #202020
+  static let sidebar = dynamic(light: NSColor(red: 0.925, green: 0.910, blue: 0.871, alpha: 1),  // #EBE8E2-ish
+                               dark: NSColor(red: 0.176, green: 0.176, blue: 0.176, alpha: 1))   // #2D2D2D
+  static let card = dynamic(light: NSColor(red: 0.969, green: 0.961, blue: 0.945, alpha: 1),     // #F7F5F1
+                            dark: NSColor(red: 0.188, green: 0.188, blue: 0.188, alpha: 1))      // #303030
+  static let cardHover = dynamic(light: NSColor(red: 0.925, green: 0.910, blue: 0.871, alpha: 1), // #EBE8E2
+                                 dark: NSColor(red: 0.208, green: 0.208, blue: 0.208, alpha: 1)) // #353535
 
-  public static let sidebar = dynamic(
-    light: NSColor(red: 0.935, green: 0.925, blue: 0.895, alpha: 1),
-    dark: NSColor(red: 0.160, green: 0.160, blue: 0.160, alpha: 1))
+  // Text
+  static let textPrimary = dynamic(light: NSColor(red: 0.09, green: 0.09, blue: 0.09, alpha: 1),  // #171717
+                                   dark: NSColor(white: 0.94, alpha: 1))
+  static let textSecondary = dynamic(light: NSColor(red: 0.42, green: 0.42, blue: 0.42, alpha: 1), // #6B6B6B
+                                     dark: NSColor(white: 0.62, alpha: 1))
+  static let textTertiary = dynamic(light: NSColor(red: 0.42, green: 0.42, blue: 0.42, alpha: 1),
+                                    dark: NSColor(white: 0.52, alpha: 1))
 
-  public static let card = dynamic(
-    light: NSColor(red: 0.990, green: 0.985, blue: 0.970, alpha: 1),
-    dark: NSColor(red: 0.185, green: 0.185, blue: 0.185, alpha: 1))
-
-  public static let cardHover = dynamic(
-    light: NSColor(red: 0.940, green: 0.930, blue: 0.900, alpha: 1),
-    dark: NSColor(red: 0.220, green: 0.220, blue: 0.220, alpha: 1))
-
-  public static let textPrimary = dynamic(
-    light: NSColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1),
-    dark: NSColor(white: 0.95, alpha: 1))
-
-  public static let textSecondary = dynamic(
-    light: NSColor(red: 0.45, green: 0.45, blue: 0.45, alpha: 1),
-    dark: NSColor(white: 0.65, alpha: 1))
-
-  public static let border = dynamic(
-    light: NSColor(red: 0.88, green: 0.86, blue: 0.83, alpha: 1),
-    dark: NSColor(white: 1.0, alpha: 0.10))
+  // Hairlines
+  static let border = dynamic(light: NSColor(red: 0.898, green: 0.882, blue: 0.855, alpha: 1), // warm hairline
+                              dark: NSColor(white: 1.0, alpha: 0.10))
 }
 
-// MARK: - Navigation Items
+// MARK: - Model
 
-enum HubSection: String, CaseIterable, Identifiable {
-  case overview = "Overview"
-  case services = "Services"
-  case tools = "Tools"
-  case usage = "Usage Analytics"
-  case logs = "Live Logs"
+struct Enhancement: Identifiable, Decodable {
+  let id: String
+  let type: String
+  let resolvedVersion: String?
+  let description: String?
+  let config: Config?
+  let toolCommand: [String]?
+  let startCommand: [String]?
+  let ui: UI?
 
-  var id: String { rawValue }
-
-  var icon: String {
-    switch self {
-    case .overview: return "square.grid.2x2"
-    case .services: return "network"
-    case .tools: return "wrench.and.screwdriver"
-    case .usage: return "chart.bar.xaxis"
-    case .logs: return "terminal"
-    }
-  }
-}
-
-// MARK: - Main Command Center View
-
-public struct HubView: View {
-  @ObservedObject private var manager = EnhancementManager.shared
-  @State private var selectedSection: HubSection? = .overview
-
-  public init() {}
-
-  public var body: some View {
-    NavigationSplitView {
-      sidebar
-    } detail: {
-      detailView
-    }
-    .frame(minWidth: 780, idealWidth: 860, minHeight: 520, idealHeight: 580)
-    .background(CodexTheme.background)
+  struct Config: Decodable {
+    let port: Int?
   }
 
-  private var sidebar: some View {
-    List(HubSection.allCases, selection: $selectedSection) { section in
-      NavigationLink(value: section) {
-        Label {
-          Text(section.rawValue)
-            .font(.system(size: 13, weight: .medium))
-        } icon: {
-          Image(systemName: section.icon)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(selectedSection == section ? CodexTheme.blue : CodexTheme.textSecondary)
-        }
+  struct UI: Decodable {
+    let label: String?
+    let kind: String?
+    let openLabel: String?
+    let url: String?
+  }
+
+  var label: String { ui?.label ?? id }
+  var isService: Bool { type == "service" }
+  var kind: String { ui?.kind ?? "tool" }
+  var openLabel: String { ui?.openLabel ?? "Open" }
+
+  var symbolName: String {
+    switch id {
+    case "opencodex": return "globe"
+    case "ccusage": return "chart.bar.xaxis"
+    case "codex-chatgpt-web": return "bubble.left.and.bubble.right.fill"
+    case "codexpp": return "wand.and.stars"
+    default: return "sparkles"
+    }
+  }
+
+  var tint: Color {
+    switch id {
+    case "opencodex": return CodexTheme.softBlue    // #339CFF — app blue
+    case "ccusage": return CodexTheme.orange        // #FF8549 — app orange
+    case "codex-chatgpt-web": return CodexTheme.purple // #AD7BF9 — app purple
+    case "codexpp": return CodexTheme.pink          // #FF8CC1 — app pink
+    default: return CodexTheme.blue
+    }
+  }
+
+  var viewOptions: [String] {
+    switch kind {
+    case "web": return ["window", "browser"]
+    case "ccusage": return ["report"]
+    default: return ["launch"]
+    }
+  }
+
+  var viewLabels: [String] {
+    viewOptions.map { view in
+      switch view {
+      case "window": return "In-app window"
+      case "browser": return "Browser"
+      case "report": return "Native report"
+      default: return "Launch"
       }
     }
-    .listStyle(.sidebar)
-    .navigationTitle("Command Center")
-    .safeAreaInset(edge: .bottom) {
-      sidebarFooter
-    }
   }
 
-  private var sidebarFooter: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Divider().overlay(CodexTheme.border)
-      HStack(spacing: 8) {
-        Circle()
-          .fill(CodexTheme.green)
-          .frame(width: 8, height: 8)
-        Text("Codex Rebuild Active")
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(CodexTheme.textSecondary)
-      }
-      .padding(.horizontal, 14)
-      .padding(.bottom, 8)
+  var detail: String {
+    var text = description ?? ""
+    if let version = resolvedVersion, !text.contains(version) {
+      text = "v\(version) · \(text)"
     }
-  }
-
-  @ViewBuilder
-  private var detailView: some View {
-    switch selectedSection ?? .overview {
-    case .overview:
-      OverviewView()
-    case .services:
-      ServicesView()
-    case .tools:
-      ToolsView()
-    case .usage:
-      UsageReportView()
-    case .logs:
-      LogsConsoleView()
+    if let port = config?.port {
+      text = "\(text) · localhost:\(port)"
     }
+    return text
   }
 }
 
-// MARK: - Overview Section
+// MARK: - Persistence (shared with the launcher)
 
-struct OverviewView: View {
-  @ObservedObject private var manager = EnhancementManager.shared
+private let kEnabledKey = "OMOEEnhancementsEnabled"
+private let kViewKey = "OMOEEnhancementsView"
 
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        header
-        quickStatsGrid
-        enhancementsSection
-      }
-      .padding(24)
-    }
+final class HubState: ObservableObject {
+  @Published var enabled: [String: Bool] = HubState.loadEnabled()
+  @Published var views: [String: String] = HubState.loadViews()
+
+  private static func loadEnabled() -> [String: Bool] {
+    UserDefaults.standard.dictionary(forKey: kEnabledKey) as? [String: Bool] ?? [:]
   }
 
-  private var header: some View {
-    HStack(spacing: 16) {
-      ZStack {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-          .fill(CodexTheme.sparkGradient)
-          .frame(width: 52, height: 52)
-          .shadow(color: Color.black.opacity(0.12), radius: 4, y: 2)
-        Image(systemName: "sparkles")
-          .font(.system(size: 24, weight: .bold))
-          .foregroundColor(.white)
-      }
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Oh My OpenAI")
-          .font(.title2.bold())
-          .foregroundStyle(CodexTheme.textPrimary)
-        Text("Stock Codex Runtime · Bundled Enhancement Layer")
-          .font(.system(size: 12))
-          .foregroundStyle(CodexTheme.textSecondary)
-      }
-      Spacer()
-    }
+  private static func loadViews() -> [String: String] {
+    UserDefaults.standard.dictionary(forKey: kViewKey) as? [String: String] ?? [:]
   }
 
-  private var quickStatsGrid: some View {
-    HStack(spacing: 12) {
-      StatCard(
-        title: "Active Services",
-        value: "\(manager.enhancements.filter { $0.isService && manager.isServiceRunning($0.id) }.count) / \(manager.enhancements.filter(\.isService).count)",
-        icon: "network",
-        color: CodexTheme.blue
-      )
-      StatCard(
-        title: "Available Tools",
-        value: "\(manager.enhancements.filter { !$0.isService }.count)",
-        icon: "wrench.and.screwdriver",
-        color: CodexTheme.purple
-      )
-      StatCard(
-        title: "Environment",
-        value: "Isolated",
-        icon: "lock.shield",
-        color: CodexTheme.green
-      )
-    }
+  func isEnabled(_ id: String) -> Bool {
+    enabled[id] ?? true
   }
 
-  private var enhancementsSection: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("ENHANCEMENT MODULES")
-        .font(.system(size: 11, weight: .bold))
-        .foregroundStyle(CodexTheme.textSecondary)
+  func setEnabled(_ id: String, _ value: Bool) {
+    enabled[id] = value
+    UserDefaults.standard.set(enabled, forKey: kEnabledKey)
+  }
 
-      ForEach(manager.enhancements) { item in
-        EnhancementCard(enhancement: item)
-      }
-    }
+  func view(for id: String, options: [String]) -> String {
+    let stored = views[id]
+    if let stored, options.contains(stored) { return stored }
+    return options.first ?? "launch"
+  }
+
+  func setView(_ id: String, _ view: String) {
+    views[id] = view
+    UserDefaults.standard.set(views, forKey: kViewKey)
   }
 }
 
-// MARK: - Stat Card
+// MARK: - Actions
 
-struct StatCard: View {
-  let title: String
-  let value: String
-  let icon: String
-  let color: Color
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Image(systemName: icon)
-          .foregroundColor(color)
-        Spacer()
-      }
-      Text(value)
-        .font(.system(size: 18, weight: .bold))
-        .foregroundStyle(CodexTheme.textPrimary)
-      Text(title)
-        .font(.system(size: 11))
-        .foregroundStyle(CodexTheme.textSecondary)
+enum HubActions {
+  static func open(_ enhancement: Enhancement, view: String) {
+    guard let urlString = enhancement.ui?.url, let url = URL(string: urlString) else {
+      launchTool(enhancement)
+      return
     }
-    .padding(14)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(CodexTheme.card)
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(CodexTheme.border, lineWidth: 1))
-    )
-  }
-}
-
-// MARK: - Enhancement Card
-
-struct EnhancementCard: View {
-  let enhancement: Enhancement
-  @ObservedObject private var manager = EnhancementManager.shared
-  @State private var isHovered = false
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(spacing: 12) {
-        ZStack {
-          RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(enhancement.tint.opacity(0.15))
-            .frame(width: 34, height: 34)
-          Image(systemName: enhancement.symbolName)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundColor(enhancement.tint)
-        }
-
-        VStack(alignment: .leading, spacing: 2) {
-          HStack(spacing: 8) {
-            Text(enhancement.label)
-              .font(.system(size: 13, weight: .semibold))
-              .foregroundStyle(CodexTheme.textPrimary)
-
-            if enhancement.isService {
-              let isRunning = manager.isServiceRunning(enhancement.id)
-              HStack(spacing: 4) {
-                Circle()
-                  .fill(isRunning ? CodexTheme.green : Color.gray)
-                  .frame(width: 6, height: 6)
-                Text(isRunning ? "ACTIVE" : "STOPPED")
-                  .font(.system(size: 9, weight: .bold))
-                  .foregroundColor(isRunning ? CodexTheme.green : Color.gray)
-              }
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(Capsule().fill(isRunning ? CodexTheme.green.opacity(0.12) : Color.gray.opacity(0.12)))
-            } else {
-              Text("TOOL")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(CodexTheme.textSecondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(CodexTheme.sidebar))
-            }
-          }
-
-          if let desc = enhancement.description {
-            Text(desc)
-              .font(.system(size: 11))
-              .foregroundStyle(CodexTheme.textSecondary)
-              .lineLimit(1)
-          }
-        }
-
-        Spacer()
-
-        Toggle("", isOn: Binding(
-          get: { manager.isEnabled(enhancement.id) },
-          set: { manager.setEnabled(enhancement.id, $0) }
-        ))
-        .toggleStyle(.switch)
-        .labelsHidden()
-        .controlSize(.small)
-      }
-
-      if manager.isEnabled(enhancement.id) {
-        Divider().overlay(CodexTheme.border)
-        HStack {
-          if enhancement.viewOptions.count > 1 {
-            Picker("View", selection: Binding(
-              get: { manager.selectedView(for: enhancement) },
-              set: { manager.setSelectedView(for: enhancement.id, view: $0) }
-            )) {
-              ForEach(enhancement.viewOptions, id: \.self) { opt in
-                Text(enhancement.viewLabels[enhancement.viewOptions.firstIndex(of: opt) ?? 0]).tag(opt)
-              }
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(maxWidth: 220)
-          }
-
-          Spacer()
-
-          if enhancement.isService {
-            Button("Restart") {
-              manager.restartService(id: enhancement.id)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-          }
-
-          Button {
-            manager.openAction(for: enhancement)
-          } label: {
-            Label(enhancement.openLabel, systemImage: "arrow.up.right")
-              .font(.system(size: 11.5, weight: .medium))
-          }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.small)
-          .tint(enhancement.tint)
-        }
-      }
-    }
-    .padding(14)
-    .background(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(isHovered ? CodexTheme.cardHover : CodexTheme.card)
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(CodexTheme.border, lineWidth: 1))
-    )
-    .onHover { hovering in
-      withAnimation(.easeInOut(duration: 0.12)) { isHovered = hovering }
-    }
-  }
-}
-
-// MARK: - Services Section
-
-struct ServicesView: View {
-  @ObservedObject private var manager = EnhancementManager.shared
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        Text("Managed Services")
-          .font(.title3.bold())
-          .foregroundStyle(CodexTheme.textPrimary)
-
-        Text("Persistent background services initialized before Codex and scoped cleanly to the rebuild profile.")
-          .font(.system(size: 12))
-          .foregroundStyle(CodexTheme.textSecondary)
-
-        ForEach(manager.enhancements.filter(\.isService)) { service in
-          VStack(alignment: .leading, spacing: 14) {
-            HStack {
-              VStack(alignment: .leading, spacing: 2) {
-                Text(service.label)
-                  .font(.system(size: 14, weight: .semibold))
-                  .foregroundStyle(CodexTheme.textPrimary)
-                if let port = service.port {
-                  Text("Listening on 127.0.0.1:\(port)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(CodexTheme.textSecondary)
-                }
-              }
-              Spacer()
-              let running = manager.isServiceRunning(service.id)
-              Text(running ? "HEALTHY" : "OFFLINE")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(running ? CodexTheme.green : Color.red)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(running ? CodexTheme.green.opacity(0.12) : Color.red.opacity(0.12)))
-            }
-
-            HStack(spacing: 10) {
-              Button(manager.isServiceRunning(service.id) ? "Stop Service" : "Start Service") {
-                if manager.isServiceRunning(service.id) {
-                  manager.stopService(id: service.id)
-                } else {
-                  manager.startService(service)
-                }
-              }
-              .buttonStyle(.bordered)
-              .controlSize(.small)
-
-              Button("Restart") {
-                manager.restartService(id: service.id)
-              }
-              .buttonStyle(.bordered)
-              .controlSize(.small)
-
-              Spacer()
-
-              Button(service.openLabel) {
-                manager.openAction(for: service)
-              }
-              .buttonStyle(.borderedProminent)
-              .controlSize(.small)
-              .tint(CodexTheme.blue)
-            }
-          }
-          .padding(16)
-          .background(
-            RoundedRectangle(cornerRadius: 10)
-              .fill(CodexTheme.card)
-              .overlay(RoundedRectangle(cornerRadius: 10).stroke(CodexTheme.border, lineWidth: 1))
-          )
-        }
-      }
-      .padding(24)
-    }
-  }
-}
-
-// MARK: - Tools Section
-
-struct ToolsView: View {
-  @ObservedObject private var manager = EnhancementManager.shared
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        Text("On-Demand Tools")
-          .font(.title3.bold())
-          .foregroundStyle(CodexTheme.textPrimary)
-
-        Text("Executables and CLI analyzers invoked on demand with the isolated CodexHome environment.")
-          .font(.system(size: 12))
-          .foregroundStyle(CodexTheme.textSecondary)
-
-        ForEach(manager.enhancements.filter { !$0.isService }) { tool in
-          EnhancementCard(enhancement: tool)
-        }
-      }
-      .padding(24)
-    }
-  }
-}
-
-// MARK: - Usage Report Section
-
-struct UsageReportView: View {
-  @ObservedObject private var manager = EnhancementManager.shared
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Codex Usage & Cost Analysis")
-            .font(.title3.bold())
-            .foregroundStyle(CodexTheme.textPrimary)
-          Text("Powered by native ccusage scoped to isolated CodexHome")
-            .font(.system(size: 11))
-            .foregroundStyle(CodexTheme.textSecondary)
-        }
-        Spacer()
-
-        Button {
-          if let tool = manager.enhancements.first(where: { $0.id == "ccusage" }) {
-            manager.executeTool(tool)
-          }
-        } label: {
-          Label(manager.isToolRunning["ccusage"] == true ? "Analyzing…" : "Run Analysis", systemImage: "arrow.clockwise")
-            .font(.system(size: 11.5, weight: .medium))
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .disabled(manager.isToolRunning["ccusage"] == true)
-      }
-
-      ZStack {
-        RoundedRectangle(cornerRadius: 8)
-          .fill(CodexTheme.card)
-          .overlay(RoundedRectangle(cornerRadius: 8).stroke(CodexTheme.border, lineWidth: 1))
-
-        ScrollView {
-          Text(manager.toolOutputs["ccusage"] ?? "Click 'Run Analysis' to fetch current token usage and session breakdown.")
-            .font(.system(size: 11.5, design: .monospaced))
-            .foregroundStyle(CodexTheme.textPrimary)
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-      }
-    }
-    .padding(24)
-    .onAppear {
-      if manager.toolOutputs["ccusage"] == nil,
-         let tool = manager.enhancements.first(where: { $0.id == "ccusage" }) {
-        manager.executeTool(tool)
-      }
-    }
-  }
-}
-
-// MARK: - Logs Console Section
-
-struct LogsConsoleView: View {
-  @ObservedObject private var manager = EnhancementManager.shared
-  @State private var selectedLog = "opencodex.log"
-  @State private var logContent = ""
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        Text("Live Service Logs")
-          .font(.title3.bold())
-          .foregroundStyle(CodexTheme.textPrimary)
-
-        Spacer()
-
-        Button("Reveal Logs in Finder") {
-          NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: manager.logsDirectoryURL.path)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-
-        Button("Refresh") {
-          loadLogContent()
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-      }
-
-      ZStack {
-        RoundedRectangle(cornerRadius: 8)
-          .fill(CodexTheme.card)
-          .overlay(RoundedRectangle(cornerRadius: 8).stroke(CodexTheme.border, lineWidth: 1))
-
-        ScrollView {
-          Text(logContent.isEmpty ? "No log output recorded yet." : logContent)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundStyle(CodexTheme.textPrimary)
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-      }
-    }
-    .padding(24)
-    .onAppear {
-      loadLogContent()
-    }
-  }
-
-  private func loadLogContent() {
-    let path = manager.logsDirectoryURL.appendingPathComponent(selectedLog).path
-    if let str = try? String(contentsOfFile: path, encoding: .utf8) {
-      self.logContent = str
+    if view == "browser" {
+      NSWorkspace.shared.open(url)
+    } else if view == "window" {
+      WebWindow.shared.show(title: enhancement.label, url: url)
     } else {
-      self.logContent = "Log file not found at \(path)"
+      launchTool(enhancement)
     }
+  }
+
+  static func launchTool(_ enhancement: Enhancement) {
+    guard let toolCommand = enhancement.toolCommand, let first = toolCommand.first else { return }
+    let supportDir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
+    let enhDir = Bundle.main.bundleURL
+      .appendingPathComponent("Contents/Resources/enhancements/\(enhancement.id)").path
+
+    let binary: String
+    if first.hasPrefix("/") {
+      binary = first
+    } else {
+      let joined = (enhDir as NSString).appendingPathComponent(first)
+      if FileManager.default.isExecutableFile(atPath: joined) {
+        binary = joined
+      } else {
+        let pathDirs = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/local/bin"
+        guard let found = pathDirs.split(separator: ":").map({ String($0) }).first(where: {
+          FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent(first))
+        }) else { return }
+        binary = (found as NSString).appendingPathComponent(first)
+      }
+    }
+
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: binary)
+    task.arguments = Array(toolCommand.dropFirst())
+    task.currentDirectoryURL = URL(fileURLWithPath: enhDir, isDirectory: true)
+    var environment = ProcessInfo.processInfo.environment
+    environment["CODEX_HOME"] = supportDir.appendingPathComponent("CodexHome").path
+    environment["CODEX_ELECTRON_USER_DATA_PATH"] = supportDir.appendingPathComponent("Profile").path
+    task.environment = environment
+    try? task.run()
   }
 }
 
-// MARK: - In-App Web Viewer Window
+// MARK: - Windows
 
-public final class EnhancementWebSheet: NSObject, NSWindowDelegate {
-  public static let shared = EnhancementWebSheet()
+final class WebWindow: NSObject, NSWindowDelegate {
+  static let shared = WebWindow()
   private var windows: [String: NSWindow] = [:]
 
-  public func show(title: String, url: URL) {
+  func show(title: String, url: URL) {
     if let existing = windows[title] {
       existing.makeKeyAndOrderFront(nil)
       NSApp.activate(ignoringOtherApps: true)
       return
     }
-
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
-      backing: .buffered,
-      defer: false
-    )
+      backing: .buffered, defer: false)
     window.title = title
-    window.center()
     window.isReleasedWhenClosed = false
-
+    window.center()
     let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
     window.contentView = webView
     webView.load(URLRequest(url: url))
-
     windows[title] = window
     window.delegate = self
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
 
-  public func windowWillClose(_ notification: Notification) {
+  func windowWillClose(_ notification: Notification) {
     guard let window = notification.object as? NSWindow else { return }
     if let key = windows.first(where: { $0.value == window })?.key {
       windows.removeValue(forKey: key)
@@ -634,56 +266,312 @@ public final class EnhancementWebSheet: NSObject, NSWindowDelegate {
   }
 }
 
-// MARK: - Hub Window Manager
-
-public final class HubWindow: NSObject, NSWindowDelegate {
-  public static let shared = HubWindow()
+final class HubWindow: NSObject, NSWindowDelegate {
+  static let shared = HubWindow()
   private var window: NSWindow?
 
-  public func show() {
-    if let window = window {
+  var currentWindow: NSWindow? { window }
+
+  func show(enhancements: [Enhancement]) {
+    if let window {
       window.makeKeyAndOrderFront(nil)
       NSApp.activate(ignoringOtherApps: true)
       return
     }
-
-    let hosting = NSHostingController(rootView: HubView())
+    let hosting = NSHostingController(rootView: HubView(enhancements: enhancements))
     let window = NSWindow(contentViewController: hosting)
-    window.title = "Oh My OpenAI · Enhancements Command Center"
-    window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+    window.title = "Enhancements"
+    window.styleMask = [.titled, .closable, .miniaturizable]
     window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
     window.isReleasedWhenClosed = false
-    window.setContentSize(NSSize(width: 860, height: 580))
-    window.minSize = NSSize(width: 720, height: 480)
+    window.setContentSize(NSSize(width: 640, height: 540))
+    window.minSize = NSSize(width: 560, height: 460)
     window.center()
     window.isMovableByWindowBackground = true
-
     self.window = window
     window.delegate = self
     window.makeKeyAndOrderFront(nil)
+    window.orderFrontRegardless()
     NSApp.activate(ignoringOtherApps: true)
+    let marker = "/tmp/hub-marker.txt"
+    if let text = try? String(contentsOfFile: marker, encoding: .utf8) {
+      let frame = window.frame
+      let screen = window.screen?.frame ?? .zero
+      let info = "ordered-front+regardless frame=\(frame) visible=\(window.isVisible) screen=\(screen) alpha=\(window.alphaValue)\n"
+      try? (text + info).write(toFile: marker, atomically: true, encoding: .utf8)
+    }
   }
 
-  public func windowWillClose(_ notification: Notification) {
-    self.window = nil
+  func windowWillClose(_ notification: Notification) {}
+}
+
+// MARK: - Views
+
+struct HubView: View {
+  let enhancements: [Enhancement]
+  @StateObject private var state = HubState()
+
+  private var services: [Enhancement] { enhancements.filter(\.isService) }
+  private var tools: [Enhancement] { enhancements.filter { !$0.isService } }
+
+  var body: some View {
+    ZStack {
+      CodexTheme.background.ignoresSafeArea()
+      VStack(spacing: 0) {
+        header
+        List {
+          if !services.isEmpty {
+            Section {
+              ForEach(services) { EnhancementRow(enhancement: $0, state: state) }
+            } header: {
+              Text("SERVICES")
+            }
+          }
+          if !tools.isEmpty {
+            Section {
+              ForEach(tools) { EnhancementRow(enhancement: $0, state: state) }
+            } header: {
+              Text("TOOLS")
+            }
+          }
+        }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+        .environment(\.colorScheme, colorScheme)
+        footer
+      }
+    }
+    .frame(minWidth: 560, minHeight: 460)
+    .preferredColorScheme(nil)
+  }
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  private var header: some View {
+    HStack(spacing: 14) {
+      // The Codex spark — red/orange/green brand mark
+      ZStack {
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+          .fill(CodexTheme.sparkGradient)
+          .frame(width: 46, height: 46)
+          .shadow(color: Color.black.opacity(0.12), radius: 3, y: 1)
+        Image(systemName: "sparkles")
+          .font(.system(size: 22, weight: .semibold))
+          .foregroundStyle(.white)
+      }
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Enhancements")
+          .font(.title2.bold())
+          .foregroundStyle(CodexTheme.textPrimary)
+        Text("Bundled with Oh My OpenAI · Codex side-by-side")
+          .font(.system(size: 11.5))
+          .foregroundStyle(CodexTheme.textSecondary)
+      }
+      Spacer()
+    }
+    .padding(.horizontal, 20)
+    .padding(.top, 18)
+    .padding(.bottom, 10)
+  }
+
+  private var footer: some View {
+    VStack(spacing: 0) {
+      Rectangle()
+        .fill(CodexTheme.border)
+        .frame(height: 0.5)
+      HStack {
+        Text("Settings apply immediately · tools run with the app's isolated CodexHome")
+          .font(.system(size: 10.5))
+          .foregroundStyle(CodexTheme.textSecondary)
+        Spacer()
+      }
+      .padding(.horizontal, 20)
+      .padding(.vertical, 8)
+    }
   }
 }
 
-// MARK: - C Entry Points
+struct EnhancementRow: View {
+  let enhancement: Enhancement
+  @ObservedObject var state: HubState
+  @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 28
+  @State private var isHovered = false
+  @Environment(\.colorScheme) private var colorScheme
+
+  private var isOn: Binding<Bool> {
+    Binding(
+      get: { state.isEnabled(enhancement.id) },
+      set: { state.setEnabled(enhancement.id, $0) })
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 12) {
+        iconTile
+        VStack(alignment: .leading, spacing: 3) {
+          HStack(spacing: 8) {
+            Text(enhancement.label)
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(CodexTheme.textPrimary)
+            typeBadge
+          }
+          Text(enhancement.detail)
+            .font(.system(size: 11))
+            .foregroundStyle(CodexTheme.textSecondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        Spacer(minLength: 8)
+        Toggle("", isOn: isOn)
+          .toggleStyle(.switch)
+          .labelsHidden()
+          .controlSize(.small)
+          .padding(.trailing, 2)
+      }
+      if state.isEnabled(enhancement.id) {
+        controlsRow
+          .transition(.opacity.combined(with: .move(edge: .top)))
+      }
+    }
+    .padding(12)
+    .background(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(isHovered ? CodexTheme.cardHover : CodexTheme.card)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .stroke(CodexTheme.border, lineWidth: 1)
+    )
+    .listRowBackground(Color.clear)
+    .listRowSeparator(.hidden)
+    .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+    .animation(.easeInOut(duration: 0.18), value: state.isEnabled(enhancement.id))
+    .onHover { hovering in
+      withAnimation(.easeInOut(duration: 0.12)) { isHovered = hovering }
+    }
+  }
+
+  private var iconTile: some View {
+    ZStack {
+      RoundedRectangle(cornerRadius: 7, style: .continuous)
+        .fill(LinearGradient(colors: [enhancement.tint.opacity(0.88), enhancement.tint],
+                             startPoint: .top, endPoint: .bottom))
+        .frame(width: iconSize, height: iconSize)
+        .shadow(color: Color.black.opacity(0.10), radius: 2, y: 1)
+      Image(systemName: enhancement.symbolName)
+        .font(.system(size: 14, weight: .semibold))
+        .foregroundStyle(.white)
+    }
+  }
+
+  private var typeBadge: some View {
+    Text(enhancement.isService ? "SERVICE" : "TOOL")
+      .font(.system(size: 8.5, weight: .bold))
+      .kerning(0.4)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(Capsule().fill(CodexTheme.sidebar))
+      .foregroundStyle(CodexTheme.textSecondary)
+  }
+
+  private var controlsRow: some View {
+    HStack(spacing: 10) {
+      if enhancement.viewOptions.count > 1 {
+        Picker("View", selection: viewSelection) {
+          ForEach(enhancement.viewOptions, id: \.self) { view in
+            Text(enhancement.viewLabels[enhancement.viewOptions.firstIndex(of: view) ?? 0])
+              .tag(view)
+          }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .frame(minWidth: 180, maxWidth: 220)
+      } else {
+        Text(enhancement.viewLabels.first ?? "")
+          .font(.system(size: 11, weight: .medium))
+          .foregroundStyle(CodexTheme.textSecondary)
+      }
+      Spacer()
+      Button {
+        HubActions.open(enhancement, view: state.view(for: enhancement.id, options: enhancement.viewOptions))
+      } label: {
+        Label(enhancement.openLabel, systemImage: "arrow.up.right")
+          .font(.system(size: 11.5, weight: .medium))
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .tint(CodexTheme.blue)
+    }
+    .padding(.leading, 16 + 12 + iconSize) // aligned with row text
+    .padding(.trailing, 2)
+  }
+
+  private var viewSelection: Binding<String> {
+    Binding(
+      get: { state.view(for: enhancement.id, options: enhancement.viewOptions) },
+      set: { state.setView(enhancement.id, $0) })
+  }
+}
+
+// MARK: - Manifest loading
+
+func loadEnhancements() -> [Enhancement] {
+  let manifestURL = Bundle.main.bundleURL
+    .appendingPathComponent("Contents/Resources/enhancements/manifest.json")
+  guard let data = try? Data(contentsOf: manifestURL),
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let items = json["enhancements"] as? [[String: Any]] else {
+    return []
+  }
+  let decoder = JSONDecoder()
+  return items.compactMap { dict -> Enhancement? in
+    guard let encoded = try? JSONSerialization.data(withJSONObject: dict) else { return nil }
+    return try? decoder.decode(Enhancement.self, from: encoded)
+  }
+}
+
+// MARK: - ObjC entry points
 
 @_cdecl("ShowEnhancementHub")
 public func ShowEnhancementHub() {
+  try? "called\n".write(toFile: "/tmp/hub-marker.txt", atomically: true, encoding: .utf8)
   DispatchQueue.main.async {
-    HubWindow.shared.show()
+    let marker = "/tmp/hub-marker.txt"
+    if let text = try? String(contentsOfFile: marker, encoding: .utf8) {
+      try? (text + "async-ran\n").write(toFile: marker, atomically: true, encoding: .utf8)
+    }
+    HubWindow.shared.show(enhancements: loadEnhancements())
   }
 }
 
 @_cdecl("ShowWebWindow")
 public func ShowWebWindow(label: UnsafePointer<CChar>?, url: UnsafePointer<CChar>?) {
-  guard let label = label, let url = url else { return }
-  let title = String(cString: label)
-  guard let targetURL = URL(string: String(cString: url)) else { return }
+  guard let labelPtr = label, let urlPtr = url else { return }
+  let title = String(cString: labelPtr)
+  guard let urlString = String(cString: urlPtr) as String?,
+        let url = URL(string: urlString) else { return }
   DispatchQueue.main.async {
-    EnhancementWebSheet.shared.show(title: title, url: targetURL)
+    WebWindow.shared.show(title: title, url: url)
+  }
+}
+
+// Render the hub window's own view hierarchy to a PNG (no Screen Recording
+// permission needed — a process can capture its own views).
+@_cdecl("CaptureHubWindow")
+public func CaptureHubWindow() {
+  DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+    guard let window = HubWindow.shared.currentWindow,
+          let view = window.contentView,
+          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+      try? "no-window".write(toFile: "/tmp/hub-capture.log", atomically: true, encoding: .utf8)
+      return
+    }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    if let png = rep.representation(using: .png, properties: [:]) {
+      try? png.write(to: URL(fileURLWithPath: "/tmp/hub-window-real.png"))
+      try? "saved \(png.count) bytes".write(toFile: "/tmp/hub-capture.log", atomically: true, encoding: .utf8)
+    }
   }
 }

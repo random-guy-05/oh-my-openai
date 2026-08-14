@@ -21,23 +21,12 @@ static NSString *const kCodexHomeName = @"CodexHome";
 static NSString *const kRuntimeBundleIdentifier = @"io.haleclipse.codexdesktop.runtime";
 static NSString *const kLauncherURLScheme = @"codex-rebuild";
 
-// Carbon four-character codes for GURL event dispatch.
+// These are the Carbon kInternetEventClass, kAEGetURL, and keyDirectObject
+// four-character codes. Keeping the values local avoids linking Carbon solely
+// for constants while still using NSAppleEventManager's native GURL path.
 static const AEEventClass kCodexInternetEventClass = (AEEventClass)0x4755524cU;
 static const AEEventID kCodexGetURLEvent = (AEEventID)0x4755524cU;
 static const AEKeyword kCodexDirectObject = (AEKeyword)0x2d2d2d2dU;
-
-// Swift EnhancementManager bridge entry points
-extern void EnhancementManagerStartAll(void);
-extern void EnhancementManagerStopAll(void);
-extern void EnhancementManagerOpen(const char *cId, const char *cView);
-extern void EnhancementManagerRestartService(const char *cId);
-extern void ShowEnhancementHub(void);
-extern void ShowWebWindow(const char *label, const char *url);
-
-@class CodexLauncherDelegate;
-static CodexLauncherDelegate *gAppDelegate = nil;
-static BOOL gShowSettingsOnLaunch = NO;
-static NSStatusItem *gStatusItem = nil;
 
 static void ClaimLauncherURLScheme(void) {
   [[NSWorkspace sharedWorkspace]
@@ -72,158 +61,9 @@ static void SanitizeEnvironment(void) {
   }
 }
 
-static void HandleTerminationSignal(int sig) {
-  (void)sig;
-  EnhancementManagerStopAll();
-  _exit(0);
-}
-
-// ─── Native OpenAI / ChatGPT Template Image ─────────────────────
-
-static NSImage *ChatGPTTemplateImage(void) {
-  const CGFloat size = 18.0;
-  const CGFloat center = size / 2.0;
-  NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(size, size)];
-  [image lockFocus];
-
-  NSBezierPath *path = [[NSBezierPath alloc] init];
-  path.lineWidth = 1.35;
-  path.lineCapStyle = NSLineCapStyleRound;
-  path.lineJoinStyle = NSLineJoinStyleRound;
-
-  // 6-fold radial swirl of ChatGPT logo
-  for (NSInteger i = 0; i < 6; i++) {
-    CGFloat angle = i * (M_PI / 3.0);
-    CGFloat cosA = cos(angle), sinA = sin(angle);
-    CGFloat r1 = 2.2, r2 = 6.2, r3 = 7.0;
-
-    NSPoint p0 = NSMakePoint(center + cos(angle - 0.4) * r1, center + sin(angle - 0.4) * r1);
-    NSPoint p1 = NSMakePoint(center + cosA * r2, center + sinA * r2);
-    NSPoint p2 = NSMakePoint(center + cos(angle + 0.6) * r3, center + sin(angle + 0.6) * r3);
-    NSPoint p3 = NSMakePoint(center + cos(angle + 0.9) * 3.8, center + sin(angle + 0.9) * 3.8);
-
-    [path moveToPoint:p0];
-    [path curveToPoint:p2 controlPoint1:p1 controlPoint2:p2];
-    [path lineToPoint:p3];
-  }
-
-  [[NSColor blackColor] setStroke];
-  [path stroke];
-
-  [image unlockFocus];
-  image.template = YES;
-  return image;
-}
-
-// ─── Status Bar & Submenu Construction ──────────────────────────
-
-static NSMenuItem *CreateActionItem(NSString *title, SEL action, NSString *symbol, id repObj) {
-  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:@""];
-  item.target = gAppDelegate;
-  if (symbol) {
-    item.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:title];
-  }
-  item.representedObject = repObj;
-  return item;
-}
-
-static void RebuildStatusMenu(void) {
-  NSMenu *menu = [[NSMenu alloc] init];
-  menu.autoenablesItems = NO;
-
-  // 1. Header with App Title
-  NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:@"Codex Desktop" action:nil keyEquivalent:@""];
-  header.enabled = NO;
-  header.attributedTitle = [[NSAttributedString alloc]
-    initWithString:@"Codex Desktop (Oh My OpenAI)"
-        attributes:@{
-          NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold],
-          NSForegroundColorAttributeName: [NSColor labelColor]
-        }];
-  [menu addItem:header];
-  [menu addItem:[NSMenuItem separatorItem]];
-
-  // 2. Enhancements Parent Submenu
-  NSMenuItem *enhancementsParent = [[NSMenuItem alloc] initWithTitle:@"✦ Enhancements" action:nil keyEquivalent:@""];
-  enhancementsParent.image = [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:@"Enhancements"];
-  NSMenu *enhSubmenu = [[NSMenu alloc] init];
-
-  // 2a. OpenCodex Gateway
-  NSMenuItem *openCodexItem = [[NSMenuItem alloc] initWithTitle:@"OpenCodex Gateway (:10100)" action:nil keyEquivalent:@""];
-  openCodexItem.image = [NSImage imageWithSystemSymbolName:@"network" accessibilityDescription:@"OpenCodex"];
-  NSMenu *openCodexMenu = [[NSMenu alloc] init];
-  [openCodexMenu addItem:CreateActionItem(@"Open Dashboard (In-App)", @selector(openEnhancementAction:), @"macwindow", @[@"opencodex", @"window"])];
-  [openCodexMenu addItem:CreateActionItem(@"Open in Browser", @selector(openEnhancementAction:), @"safari", @[@"opencodex", @"browser"])];
-  [openCodexMenu addItem:[NSMenuItem separatorItem]];
-  [openCodexMenu addItem:CreateActionItem(@"Restart Service", @selector(restartEnhancementAction:), @"arrow.clockwise", @"opencodex")];
-  openCodexItem.submenu = openCodexMenu;
-  [enhSubmenu addItem:openCodexItem];
-
-  // 2b. Usage Analyzer (ccusage)
-  NSMenuItem *usageItem = [[NSMenuItem alloc] initWithTitle:@"Usage Analyzer (ccusage)" action:nil keyEquivalent:@""];
-  usageItem.image = [NSImage imageWithSystemSymbolName:@"chart.bar.xaxis" accessibilityDescription:@"ccusage"];
-  NSMenu *usageMenu = [[NSMenu alloc] init];
-  [usageMenu addItem:CreateActionItem(@"Show Usage in Command Center", @selector(openEnhancementAction:), @"chart.pie", @[@"ccusage", @"report"])];
-  [usageMenu addItem:CreateActionItem(@"Run in Terminal", @selector(openEnhancementAction:), @"terminal", @[@"ccusage", @"terminal"])];
-  usageItem.submenu = usageMenu;
-  [enhSubmenu addItem:usageItem];
-
-  // 2c. ChatGPT Web Bridge
-  NSMenuItem *webBridgeItem = [[NSMenuItem alloc] initWithTitle:@"ChatGPT Web Bridge" action:nil keyEquivalent:@""];
-  webBridgeItem.image = [NSImage imageWithSystemSymbolName:@"bubble.left.and.bubble.right.fill" accessibilityDescription:@"Web Bridge"];
-  NSMenu *bridgeMenu = [[NSMenu alloc] init];
-  [bridgeMenu addItem:CreateActionItem(@"Launch Bridge Setup", @selector(openEnhancementAction:), @"play.circle", @[@"codex-chatgpt-web", @"launch"])];
-  webBridgeItem.submenu = bridgeMenu;
-  [enhSubmenu addItem:webBridgeItem];
-
-  // 2d. Codex++ Manager
-  NSMenuItem *codexppItem = [[NSMenuItem alloc] initWithTitle:@"Codex++ Manager" action:nil keyEquivalent:@""];
-  codexppItem.image = [NSImage imageWithSystemSymbolName:@"wand.and.stars" accessibilityDescription:@"Codex++"];
-  NSMenu *codexppMenu = [[NSMenu alloc] init];
-  [codexppMenu addItem:CreateActionItem(@"Open Manager", @selector(openEnhancementAction:), @"slider.horizontal.3", @[@"codexpp", @"launch"])];
-  codexppItem.submenu = codexppMenu;
-  [enhSubmenu addItem:codexppItem];
-
-  enhancementsParent.submenu = enhSubmenu;
-  [menu addItem:enhancementsParent];
-
-  // 3. Command Center & Settings
-  [menu addItem:[NSMenuItem separatorItem]];
-  NSMenuItem *cmdCenter = CreateActionItem(@"Command Center & Settings…", @selector(showSettingsAction:), @"gearshape.2", nil);
-  cmdCenter.keyEquivalent = @",";
-  [menu addItem:cmdCenter];
-
-  // 4. Folder Quick Access
-  NSMenuItem *foldersParent = [[NSMenuItem alloc] initWithTitle:@"Data & Logs" action:nil keyEquivalent:@""];
-  foldersParent.image = [NSImage imageWithSystemSymbolName:@"folder" accessibilityDescription:@"Folders"];
-  NSMenu *foldersSubmenu = [[NSMenu alloc] init];
-  [foldersSubmenu addItem:CreateActionItem(@"Reveal Isolated CodexHome", @selector(openCodexHomeAction:), @"house", nil)];
-  [foldersSubmenu addItem:CreateActionItem(@"Reveal Enhancement Logs", @selector(openLogsAction:), @"doc.text", nil)];
-  foldersParent.submenu = foldersSubmenu;
-  [menu addItem:foldersParent];
-
-  // 5. Termination
-  [menu addItem:[NSMenuItem separatorItem]];
-  NSMenuItem *quit = CreateActionItem(@"Quit Codex & Enhancements", @selector(terminate:), @"power", nil);
-  quit.keyEquivalent = @"q";
-  [menu addItem:quit];
-
-  gStatusItem.menu = menu;
-}
-
-static void InstallEnhancementStatusItem(void) {
-  gStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-  NSImage *icon = ChatGPTTemplateImage();
-  gStatusItem.button.image = icon;
-  gStatusItem.button.toolTip = @"Codex Desktop (Oh My OpenAI)";
-  gStatusItem.visible = YES;
-  RebuildStatusMenu();
-}
-
-// ─── Runtime Launcher Core ─────────────────────────────────────
-
 static NSString *ConciseToolOutput(NSData *data) {
   if (data.length == 0) return @"No diagnostic output was provided.";
+
   NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
   if (!output) output = @"The diagnostic output was not valid UTF-8.";
   output = [output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -234,10 +74,12 @@ static NSString *ConciseToolOutput(NSData *data) {
   return output;
 }
 
-static BOOL RunTool(NSString *launchPath, NSArray<NSString *> *arguments, NSString **diagnostic) {
+static BOOL RunTool(NSString *launchPath, NSArray<NSString *> *arguments,
+                    NSString **diagnostic) {
   NSTask *task = [[NSTask alloc] init];
   task.launchPath = launchPath;
   task.arguments = arguments;
+
   NSPipe *pipe = [NSPipe pipe];
   task.standardOutput = pipe;
   task.standardError = pipe;
@@ -245,98 +87,1028 @@ static BOOL RunTool(NSString *launchPath, NSArray<NSString *> *arguments, NSStri
   @try {
     [task launch];
   } @catch (NSException *exception) {
-    if (diagnostic) *diagnostic = exception.reason ?: @"Helper could not start.";
+    if (diagnostic) {
+      *diagnostic = exception.reason ? exception.reason :
+        @"The helper process could not be started.";
+    }
     return NO;
   }
 
   NSData *output = [pipe.fileHandleForReading readDataToEndOfFile];
   [task waitUntilExit];
   if (task.terminationStatus == 0) return YES;
+
   if (diagnostic) *diagnostic = ConciseToolOutput(output);
   return NO;
 }
 
+// ─── Enhancement UI (menu bar + settings) ───────────────────────
+
+@class CodexLauncherDelegate;
+
+// SwiftUI command center (launcher/EnhancementHub.swift, linked via swiftc).
+extern void ShowEnhancementHub(void);
+extern void ShowWebWindow(const char *label, const char *url);
+extern void CaptureHubWindow(void);
+
+static CodexLauncherDelegate *gAppDelegate = nil;
+static BOOL gShowSettingsOnLaunch = NO;
+static BOOL gCaptureHubOnLaunch = NO;
+
+static NSStatusItem *gEnhancementStatusItem = nil;
+static NSWindow *gUsageWindow = nil;
+static NSTextView *gUsageTextView = nil;
+static NSArray<NSDictionary *> *gLoadedEnhancements = nil;
+
+static NSString *const kEnabledDefaultsKey = @"OMOEEnhancementsEnabled";
+static NSString *const kViewDefaultsKey = @"OMOEEnhancementsView";
+
+static NSArray<NSDictionary *> *LoadEnhancementManifest(void) {
+  if (gLoadedEnhancements) return gLoadedEnhancements;
+  NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
+    URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
+  NSData *data = [NSData dataWithContentsOfURL:manifestURL];
+  NSDictionary *manifest = data
+    ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]
+    : nil;
+  gLoadedEnhancements = [manifest[@"enhancements"] isKindOfClass:[NSArray class]]
+    ? manifest[@"enhancements"]
+    : @[];
+  return gLoadedEnhancements;
+}
+
+static NSDictionary *EnhancementDefaults(void) {
+  NSDictionary *stored = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kEnabledDefaultsKey];
+  return stored ? stored : @{};
+}
+
+static BOOL EnhancementEnabled(NSString *identifier) {
+  NSNumber *value = EnhancementDefaults()[identifier];
+  return value ? value.boolValue : YES;
+}
+
+static void SetEnhancementEnabled(NSString *identifier, BOOL enabled) {
+  NSMutableDictionary *stored = [EnhancementDefaults() mutableCopy];
+  if (!stored) stored = [NSMutableDictionary dictionary];
+  stored[identifier] = @(enabled);
+  [[NSUserDefaults standardUserDefaults] setObject:stored forKey:kEnabledDefaultsKey];
+}
+
+static NSString *EnhancementView(NSString *identifier) {
+  return [[NSUserDefaults standardUserDefaults] dictionaryForKey:kViewDefaultsKey][identifier];
+}
+
+static void SetEnhancementView(NSString *identifier, NSString *view) {
+  NSMutableDictionary *stored = [NSMutableDictionary dictionary];
+  [stored addEntriesFromDictionary:
+    [[NSUserDefaults standardUserDefaults] dictionaryForKey:kViewDefaultsKey]];
+  stored[identifier] = view;
+  [[NSUserDefaults standardUserDefaults] setObject:stored forKey:kViewDefaultsKey];
+}
+
+static NSArray<NSString *> *EnhancementViewOptions(NSDictionary *enhancement) {
+  NSString *kind = enhancement[@"ui"][@"kind"];
+  if ([kind isEqualToString:@"web"]) return @[@"window", @"browser"];
+  if ([kind isEqualToString:@"ccusage"]) return @[@"report"];
+  return @[@"launch"];
+}
+
+static NSString *EnhancementViewLabel(NSString *view) {
+  if ([view isEqualToString:@"window"]) return @"In-app window";
+  if ([view isEqualToString:@"browser"]) return @"Browser";
+  if ([view isEqualToString:@"report"]) return @"Native report";
+  return @"Launch";
+}
+
+static NSString *ResolveEnhancementBinary(NSString *enhDir, NSString *command) {
+  if ([command hasPrefix:@"/"]) return command;
+  NSString *joined = [enhDir stringByAppendingPathComponent:command];
+  if ([[NSFileManager defaultManager] isExecutableFileAtPath:joined]) return joined;
+  NSString *path = [NSProcessInfo.processInfo.environment objectForKey:@"PATH"];
+  if (!path) path = @"/usr/bin:/bin:/usr/local/bin";
+  for (NSString *dir in [path componentsSeparatedByString:@":"]) {
+    NSString *candidate = [dir stringByAppendingPathComponent:command];
+    if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) return candidate;
+  }
+  return nil;
+}
+
+static NSString *EnhancementDirectory(NSDictionary *enhancement) {
+  return [[NSBundle.mainBundle.bundleURL
+    URLByAppendingPathComponent:
+      [@"Contents/Resources/enhancements" stringByAppendingPathComponent:enhancement[@"id"]]]
+    path];
+}
+
+static NSTask *LaunchToolEnhancement(NSDictionary *enhancement,
+                                     void (^outputHandler)(NSString *text)) {
+  NSArray<NSString *> *toolCommand = enhancement[@"toolCommand"];
+  if (![toolCommand isKindOfClass:[NSArray class]] || toolCommand.count == 0) return nil;
+  NSString *enhDir = EnhancementDirectory(enhancement);
+  NSString *binary = ResolveEnhancementBinary(enhDir, toolCommand[0]);
+  if (!binary) {
+    NSLog(@"[CodexLauncher] tool %@ binary not found: %@", enhancement[@"id"], toolCommand[0]);
+    return nil;
+  }
+
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSTask *task = [[NSTask alloc] init];
+  task.launchPath = binary;
+  task.arguments = [toolCommand subarrayWithRange:NSMakeRange(1, toolCommand.count - 1)];
+  task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
+  NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+  environment[@"CODEX_HOME"] = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+  environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
+    [supportPath stringByAppendingPathComponent:@"Profile"];
+  task.environment = environment;
+
+  if (outputHandler) {
+    NSPipe *pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    NSFileHandle *handle = pipe.fileHandleForReading;
+    [handle setReadabilityHandler:^(NSFileHandle *fileHandle) {
+      NSData *data = [fileHandle availableData];
+      if (data.length == 0) return;
+      NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+      if (text.length > 0) outputHandler(text);
+    }];
+    [task setTerminationHandler:^(NSTask *terminatedTask) {
+      (void)terminatedTask;
+      [handle setReadabilityHandler:nil];
+    }];
+  } else {
+    task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+    task.standardError = [NSFileHandle fileHandleWithNullDevice];
+  }
+
+  @try {
+    [task launch];
+  } @catch (NSException *exception) {
+    NSLog(@"[CodexLauncher] failed to launch tool %@: %@", enhancement[@"id"], exception.reason);
+    return nil;
+  }
+  NSLog(@"[CodexLauncher] tool %@ launched (pid %d)", enhancement[@"id"], task.processIdentifier);
+  return task;
+}
+
+static void ShowWebEnhancement(NSDictionary *enhancement) {
+  NSString *urlString = enhancement[@"ui"][@"url"];
+  NSString *label = enhancement[@"ui"][@"label"];
+  if (!urlString || !label) return;
+  ShowWebWindow(label.UTF8String, urlString.UTF8String);
+}
+
+static void ShowUsageReportForEnhancement(NSDictionary *enhancement) {
+  if (!gUsageWindow) {
+    gUsageWindow = [[NSWindow alloc]
+      initWithContentRect:NSMakeRect(0, 0, 940, 620)
+                styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
+    gUsageWindow.title = @"Usage report (ccusage)";
+    gUsageWindow.releasedWhenClosed = NO;
+    NSScrollView *scrollView = [[NSScrollView alloc]
+      initWithFrame:NSMakeRect(0, 0, 940, 620)];
+    [scrollView setHasVerticalScroller:YES];
+    [scrollView setAutoresizingMask:
+      (NSViewWidthSizable | NSViewHeightSizable)];
+    gUsageTextView = [[NSTextView alloc] initWithFrame:
+      NSMakeRect(0, 0, 920, 600)];
+    gUsageTextView.editable = NO;
+    gUsageTextView.font = [NSFont monospacedSystemFontOfSize:12
+                                                       weight:NSFontWeightRegular];
+    gUsageTextView.autoresizingMask = NSViewWidthSizable;
+    gUsageTextView.textContainerInset = NSMakeSize(12, 12);
+    scrollView.documentView = gUsageTextView;
+    gUsageWindow.contentView = scrollView;
+  }
+  gUsageTextView.string = @"Collecting usage report…\n";
+  [gUsageWindow makeKeyAndOrderFront:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+
+  LaunchToolEnhancement(enhancement, ^(NSString *text) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (gUsageTextView) {
+        [gUsageTextView.textStorage appendAttributedString:
+          [[NSAttributedString alloc] initWithString:text]];
+        [gUsageTextView scrollToEndOfDocument:nil];
+      }
+    });
+  });
+}
+
+static void OpenEnhancement(NSString *identifier, NSString *view) {
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if (![enhancement[@"id"] isEqualToString:identifier]) continue;
+    NSString *kind = enhancement[@"ui"][@"kind"];
+    if ([kind isEqualToString:@"web"]) {
+      if ([view isEqualToString:@"browser"]) {
+        NSURL *url = [NSURL URLWithString:enhancement[@"ui"][@"url"]];
+        if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+      } else {
+        ShowWebEnhancement(enhancement);
+      }
+    } else if ([kind isEqualToString:@"ccusage"]) {
+      ShowUsageReportForEnhancement(enhancement);
+    } else {
+      LaunchToolEnhancement(enhancement, nil);
+    }
+    return;
+  }
+}
+
+static NSString *EnhancementSymbol(NSString *identifier) {
+  if ([identifier isEqualToString:@"opencodex"]) return @"globe";
+  if ([identifier isEqualToString:@"ccusage"]) return @"chart.bar.xaxis";
+  if ([identifier isEqualToString:@"codex-chatgpt-web"]) return @"bubble.left.and.bubble.right.fill";
+  if ([identifier isEqualToString:@"codexpp"]) return @"wand.and.stars";
+  return @"sparkles";
+}
+
+static NSMenuItem *MenuItemWithSymbol(NSString *title, SEL action, NSString *symbol) {
+  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                action:action
+                                         keyEquivalent:@""];
+  item.target = gAppDelegate;
+  if (symbol) {
+    item.image = [NSImage imageWithSystemSymbolName:symbol
+                           accessibilityDescription:title];
+  }
+  return item;
+}
+
+static void RebuildEnhancementMenu(void) {
+  NSMenu *menu = [[NSMenu alloc] init];
+
+  NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:@"Oh My OpenAI"
+                                                  action:nil
+                                           keyEquivalent:@""];
+  header.enabled = NO;
+  header.attributedTitle = [[NSAttributedString alloc]
+    initWithString:@"Oh My OpenAI"
+        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13
+                                                             weight:NSFontWeightSemibold]}];
+  [menu addItem:header];
+  [menu addItem:[NSMenuItem separatorItem]];
+
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    NSDictionary *ui = enhancement[@"ui"];
+    if (!ui) continue;
+    if (!EnhancementEnabled(enhancement[@"id"])) continue;
+    NSString *identifier = enhancement[@"id"];
+    NSString *kind = ui[@"kind"];
+    NSImage *symbol = [NSImage imageWithSystemSymbolName:EnhancementSymbol(identifier)
+                                accessibilityDescription:ui[@"label"]];
+    if ([kind isEqualToString:@"web"]) {
+      NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:ui[@"label"]
+                                                    action:nil
+                                             keyEquivalent:@""];
+      item.image = symbol;
+      NSMenu *submenu = [[NSMenu alloc] init];
+      for (NSString *view in EnhancementViewOptions(enhancement)) {
+        NSMenuItem *option = MenuItemWithSymbol(EnhancementViewLabel(view),
+                                                @selector(openEnhancementAction:),
+                                                @"chevron.right");
+        option.representedObject = @[identifier, view];
+        [submenu addItem:option];
+      }
+      item.submenu = submenu;
+      [menu addItem:item];
+    } else {
+      NSString *title = ui[@"openLabel"];
+      if (!title) title = ui[@"label"];
+      NSMenuItem *item = MenuItemWithSymbol(title,
+                                            @selector(openEnhancementAction:),
+                                            EnhancementSymbol(identifier));
+      NSString *view = EnhancementViewOptions(enhancement).firstObject;
+      item.representedObject = @[identifier, view];
+      [menu addItem:item];
+    }
+  }
+
+  [menu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem *settings = MenuItemWithSymbol(@"Enhancements Settings…",
+                                            @selector(showSettingsAction:),
+                                            @"gearshape");
+  settings.keyEquivalent = @",";
+  [menu addItem:settings];
+  NSMenuItem *quit = MenuItemWithSymbol(@"Quit Codex",
+                                        @selector(terminate:),
+                                        @"power");
+  quit.keyEquivalent = @"q";
+  [menu addItem:quit];
+  gEnhancementStatusItem.menu = menu;
+}
+
+// Codex spark mark drawn as a menu-bar template image: monochrome, adapts to
+// light/dark menu bars, no asset files needed.
+static NSImage *SparkTemplateImage(void) {
+  const CGFloat size = 18.0;
+  const CGFloat center = size / 2.0;
+  const CGFloat length = 7.2;   // leaf tip distance from center
+  const CGFloat halfWidth = 2.4; // leaf half-width at its widest
+  NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(size, size)];
+  [image lockFocus];
+  NSBezierPath *spark = [[NSBezierPath alloc] init];
+  for (NSInteger index = 0; index < 4; index++) {
+    CGFloat angle = index * 90.0 * M_PI / 180.0;
+    CGFloat cosA = cos(angle), sinA = sin(angle);
+    CGFloat perpX = -sinA, perpY = cosA;
+    NSPoint tip = NSMakePoint(center + cosA * length, center + sinA * length);
+    NSPoint base1 = NSMakePoint(center + perpX * halfWidth * 0.9,
+                                center + perpY * halfWidth * 0.9);
+    NSPoint base2 = NSMakePoint(center - perpX * halfWidth * 0.9,
+                                center - perpY * halfWidth * 0.9);
+    NSPoint control1 = NSMakePoint(center + cosA * length * 0.45 + perpX * halfWidth,
+                                   center + sinA * length * 0.45 + perpY * halfWidth);
+    NSPoint control2 = NSMakePoint(center + cosA * length * 0.45 - perpX * halfWidth,
+                                   center + sinA * length * 0.45 - perpY * halfWidth);
+    NSPoint nearTip1 = NSMakePoint(tip.x - cosA * 1.6, tip.y - sinA * 1.6);
+    [spark moveToPoint:base1];
+    [spark curveToPoint:tip controlPoint1:control1 controlPoint2:nearTip1];
+    [spark curveToPoint:base2 controlPoint1:nearTip1 controlPoint2:control2];
+    [spark closePath];
+  }
+  [spark fill];
+  [image unlockFocus];
+  image.template = YES;
+  return image;
+}
+
+static void InstallEnhancementStatusItem(void) {
+  gEnhancementStatusItem = [[NSStatusBar systemStatusBar]
+    statusItemWithLength:NSVariableStatusItemLength];
+  NSImage *spark = SparkTemplateImage();
+  if (spark) {
+    gEnhancementStatusItem.button.image = spark;
+  } else {
+    gEnhancementStatusItem.button.title = @"✦";
+  }
+  gEnhancementStatusItem.button.toolTip = @"Oh My OpenAI";
+  gEnhancementStatusItem.visible = YES;
+  RebuildEnhancementMenu();
+  // Re-assert the menu after the status bar has registered the item, so the
+  // item can never end up attached but empty.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+    gEnhancementStatusItem.button.toolTip = @"Oh My OpenAI";
+    RebuildEnhancementMenu();
+  });
+}
+
+static void ShowEnhancementSettings(void) {
+  // The SwiftUI command center (launcher/EnhancementHub.swift) owns the
+  // settings window; it shares this process, bundle, and defaults domain.
+  ShowEnhancementHub();
+}
+
+// ─── Enhancement lifecycle ──────────────────────────────────────
+
+static BOOL gEnhancementsStarted = NO;
+static NSMutableArray<NSTask *> *gEnhancementTasks = nil;
+
+// Async-signal-safe PID tracking so a raw SIGTERM/SIGINT/SIGHUP (AppKit only
+// delivers applicationWillTerminate: on ordinary quit paths) still stops every
+// enhancement instead of orphaning it.
+static pid_t gEnhancementPids[32];
+static int gEnhancementPidCount = 0;
+
+static void HandleTerminationSignal(int signalNumber) {
+  for (int index = 0; index < gEnhancementPidCount; index++) {
+    kill(gEnhancementPids[index], SIGTERM);
+  }
+  _exit(128 + signalNumber);
+}
+
+// Forward declaration (defined later in this file)
+static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
+
+static BOOL StartEnhancements(void) {
+  if (gEnhancementsStarted) return YES;
+  gEnhancementsStarted = YES;
+
+  NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
+    URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:manifestURL.path]) {
+    NSLog(@"[CodexLauncher] no enhancements manifest; skipping");
+    return YES;
+  }
+
+  NSData *manifestData = [NSData dataWithContentsOfURL:manifestURL];
+  NSDictionary *manifest;
+  @try {
+    manifest = [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil];
+  } @catch (NSException *e) {
+    NSLog(@"[CodexLauncher] failed to parse enhancements manifest: %@", e.reason);
+    return YES;
+  }
+  if (!manifest) {
+    NSLog(@"[CodexLauncher] enhancements manifest is empty or invalid");
+    return YES;
+  }
+
+  NSNumber *version = manifest[@"version"];
+  if (!version || [version integerValue] != 1) {
+    NSLog(@"[CodexLauncher] unsupported manifest version %@; expected 1", version);
+    return YES;
+  }
+
+  NSArray<NSDictionary *> *enhancements = manifest[@"enhancements"];
+  if (![enhancements isKindOfClass:[NSArray class]]) {
+    NSLog(@"[CodexLauncher] enhancements is not an array");
+    return YES;
+  }
+
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSString *enhancementsLogDir = [supportPath stringByAppendingPathComponent:@"enhancements"];
+  CreatePrivateDirectory(enhancementsLogDir, nil);
+
+  for (NSDictionary *enhancement in enhancements) {
+    NSString *id = enhancement[@"id"];
+    NSArray<NSString *> *startCommand = enhancement[@"startCommand"];
+    if (!id || ![id isKindOfClass:[NSString class]] || !startCommand ||
+        ![startCommand isKindOfClass:[NSArray class]] || startCommand.count == 0) {
+      NSLog(@"[CodexLauncher] skipping malformed enhancement entry");
+      continue;
+    }
+    if (!EnhancementEnabled(id)) {
+      NSLog(@"[CodexLauncher] enhancement %@ disabled in settings; skipping", id);
+      continue;
+    }
+
+    NSString *enhDir = [[[NSBundle.mainBundle.bundleURL
+      URLByAppendingPathComponent:@"Contents/Resources/enhancements"]
+      URLByAppendingPathComponent:id] path];
+    NSString *binaryPath = [enhDir stringByAppendingPathComponent:startCommand[0]];
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:binaryPath]) {
+      NSLog(@"[CodexLauncher] enhancement %@ binary not executable at %@", id, startCommand[0]);
+      continue;
+    }
+
+    NSString *logPath = [enhancementsLogDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.log", id]];
+    if (![[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil]) {
+      NSLog(@"[CodexLauncher] cannot create log file for enhancement %@", id);
+      continue;
+    }
+    NSFileHandle *logHandle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    if (!logHandle) {
+      NSLog(@"[CodexLauncher] cannot open log file for enhancement %@", id);
+      continue;
+    }
+    [logHandle seekToEndOfFile];
+
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = binaryPath;
+    task.arguments = [startCommand subarrayWithRange:NSMakeRange(1, startCommand.count - 1)];
+    task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
+    task.standardOutput = logHandle;
+    task.standardError = logHandle;
+
+    @try {
+      [task launch];
+      if (!gEnhancementTasks) gEnhancementTasks = [[NSMutableArray alloc] init];
+      [gEnhancementTasks addObject:task];
+      if (gEnhancementPidCount < 32) {
+        gEnhancementPids[gEnhancementPidCount++] = task.processIdentifier;
+      }
+      NSLog(@"[CodexLauncher] enhancement %@ started (pid %d)", id, task.processIdentifier);
+    } @catch (NSException *e) {
+      NSLog(@"[CodexLauncher] failed to start enhancement %@: %@", id, e.reason);
+    }
+  }
+  return YES;
+}
+
+static void StopEnhancements(void) {
+  if (!gEnhancementTasks) return;
+  for (NSTask *task in gEnhancementTasks) {
+    if (!task.isRunning) continue;
+    [task terminate];
+    NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] + 3.0;
+    while (task.isRunning && [NSDate timeIntervalSinceReferenceDate] < deadline) {
+      usleep(50000); // 50ms
+    }
+    if (task.isRunning) {
+      kill(task.processIdentifier, SIGKILL);
+      NSLog(@"[CodexLauncher] force-killed enhancement pid %d", task.processIdentifier);
+    }
+  }
+  NSLog(@"[CodexLauncher] stopped %lu enhancements", (unsigned long)gEnhancementTasks.count);
+  [gEnhancementTasks removeAllObjects];
+}
+
+static NSDictionary *RuntimeInfo(NSURL *runtimeURL) {
+  NSURL *infoURL = [runtimeURL URLByAppendingPathComponent:@"Contents/Info.plist"];
+  return [NSDictionary dictionaryWithContentsOfURL:infoURL];
+}
+
 static NSURL *RuntimeExecutableURL(NSURL *runtimeURL) {
-  NSDictionary *info = [NSDictionary dictionaryWithContentsOfURL:
-    [runtimeURL URLByAppendingPathComponent:@"Contents/Info.plist"]];
-  NSString *executableName = info[@"CFBundleExecutable"] ?: @"Codex";
+  NSString *executableName = RuntimeInfo(runtimeURL)[@"CFBundleExecutable"];
+  if (executableName.length == 0) executableName = @"ChatGPT";
   return [runtimeURL URLByAppendingPathComponent:
     [@"Contents/MacOS" stringByAppendingPathComponent:executableName]];
 }
 
-static BOOL EnsurePrivateRuntimeInstalled(NSURL *payloadURL, NSURL *runtimeURL, NSString **failure) {
-  NSFileManager *fm = [NSFileManager defaultManager];
-  if ([fm fileExistsAtPath:runtimeURL.path]) return YES;
-
-  NSString *parentPath = runtimeURL.URLByDeletingLastPathComponent.path;
-  [fm createDirectoryAtPath:parentPath withIntermediateDirectories:YES attributes:nil error:nil];
-
-  NSString *tempPath = [parentPath stringByAppendingPathComponent:
-    [NSString stringWithFormat:@"Codex-Install-%d.tmp", getpid()]];
-  [fm removeItemAtPath:tempPath error:nil];
-
-  NSString *diagnostic = nil;
-  if (!RunTool(@"/usr/bin/ditto", @[payloadURL.path, tempPath], &diagnostic)) {
-    if (failure) *failure = [NSString stringWithFormat:@"Failed to copy runtime:\n%@", diagnostic];
+static BOOL RuntimeExists(NSURL *runtimeURL) {
+  BOOL isDirectory = NO;
+  NSString *runtimePath = runtimeURL.path;
+  if (![NSFileManager.defaultManager fileExistsAtPath:runtimePath isDirectory:&isDirectory] ||
+      !isDirectory) {
     return NO;
   }
 
-  if (rename(tempPath.fileSystemRepresentation, runtimeURL.fileSystemRepresentation) != 0) {
-    if (failure) *failure = [NSString stringWithFormat:@"Failed to finalize runtime installation (%s).", strerror(errno)];
-    [fm removeItemAtPath:tempPath error:nil];
+  NSString *executablePath = RuntimeExecutableURL(runtimeURL).path;
+  return [NSFileManager.defaultManager isExecutableFileAtPath:executablePath];
+}
+
+static BOOL RuntimeIsRunning(void) {
+  NSArray<NSRunningApplication *> *applications =
+    [NSRunningApplication runningApplicationsWithBundleIdentifier:kRuntimeBundleIdentifier];
+  for (NSRunningApplication *application in applications) {
+    if (![application isTerminated]) return YES;
+  }
+  return NO;
+}
+
+static BOOL RuntimeMatchesPayload(NSURL *runtimeURL, NSURL *payloadURL) {
+  NSDictionary *runtimeInfo = RuntimeInfo(runtimeURL);
+  NSDictionary *payloadInfo = RuntimeInfo(payloadURL);
+  if (!runtimeInfo || !payloadInfo) return NO;
+
+  // Bundle version is the update boundary. The identity and display version checks
+  // also prevent an old colliding ChatGPT runtime from being treated as current.
+  NSArray<NSString *> *keys = @[
+    @"CFBundleIdentifier",
+    @"CFBundleVersion",
+    @"CFBundleShortVersionString",
+    @"CodexRebuildContentSHA256",
+  ];
+  for (NSString *key in keys) {
+    id payloadValue = payloadInfo[key];
+    id runtimeValue = runtimeInfo[key];
+    if (payloadValue && ![payloadValue isEqual:runtimeValue]) return NO;
+  }
+  return payloadInfo[@"CFBundleVersion"] != nil;
+}
+
+static BOOL ReplaceRuntime(NSURL *payloadURL, NSURL *runtimeURL,
+                           NSURL *supportURL, NSString **failure) {
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  NSString *token = NSUUID.UUID.UUIDString;
+  NSURL *stagingURL = [supportURL URLByAppendingPathComponent:
+    [NSString stringWithFormat:@".Codex.installing-%@", token]];
+  NSURL *backupURL = [supportURL URLByAppendingPathComponent:
+    [NSString stringWithFormat:@".Codex.backup-%@", token]];
+
+  [fileManager removeItemAtURL:stagingURL error:nil];
+  [fileManager removeItemAtURL:backupURL error:nil];
+
+  NSString *diagnostic = nil;
+  BOOL copied = RunTool(@"/usr/bin/ditto",
+                        @[@"--rsrc", @"--extattr", @"--acl", @"--noqtn",
+                          payloadURL.path, stagingURL.path],
+                        &diagnostic);
+  if (!copied) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The Codex runtime could not be installed.\n\n%@", diagnostic];
+    [fileManager removeItemAtURL:stagingURL error:nil];
+    return NO;
+  }
+
+  if (!RuntimeExists(stagingURL)) {
+    if (failure) *failure = @"The copied Codex runtime is incomplete.";
+    [fileManager removeItemAtURL:stagingURL error:nil];
+    return NO;
+  }
+
+  BOOL valid = RunTool(@"/usr/bin/codesign",
+                       @[@"--verify", @"--deep", @"--strict", @"--verbose=2",
+                         stagingURL.path],
+                       &diagnostic);
+  if (!valid) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The Codex runtime failed its integrity check.\n\n%@", diagnostic];
+    [fileManager removeItemAtURL:stagingURL error:nil];
+    return NO;
+  }
+
+  BOOL hadRuntime = [fileManager fileExistsAtPath:runtimeURL.path];
+  if (hadRuntime && rename(runtimeURL.fileSystemRepresentation,
+                           backupURL.fileSystemRepresentation) != 0) {
+    int savedError = errno;
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The existing Codex runtime could not be prepared for an update.\n\n%s",
+      strerror(savedError)];
+    [fileManager removeItemAtURL:stagingURL error:nil];
+    return NO;
+  }
+
+  if (rename(stagingURL.fileSystemRepresentation,
+             runtimeURL.fileSystemRepresentation) != 0) {
+    int installError = errno;
+    int rollbackError = 0;
+    if (hadRuntime && rename(backupURL.fileSystemRepresentation,
+                             runtimeURL.fileSystemRepresentation) != 0) {
+      rollbackError = errno;
+    }
+
+    if (failure) {
+      if (rollbackError != 0) {
+        *failure = [NSString stringWithFormat:
+          @"The Codex runtime update failed and the previous runtime could not be restored.\n\nInstall: %s\nRestore: %s",
+          strerror(installError), strerror(rollbackError)];
+      } else {
+        *failure = [NSString stringWithFormat:
+          @"The Codex runtime update failed. The previous runtime was restored.\n\n%s",
+          strerror(installError)];
+      }
+    }
+    [fileManager removeItemAtURL:stagingURL error:nil];
+    return NO;
+  }
+
+  if (hadRuntime) [fileManager removeItemAtURL:backupURL error:nil];
+  return YES;
+}
+
+static NSURL *EnsureRuntime(NSURL *runtimeURL, NSURL *legacyRuntimeURL,
+                            NSURL *payloadURL, NSURL *supportURL,
+                            NSString **failure) {
+  NSString *lockPath = [[supportURL path] stringByAppendingPathComponent:
+    @".runtime-install.lock"];
+  int lockFD = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR, 0600);
+  if (lockFD < 0) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The Codex runtime install lock could not be opened.\n\n%s", strerror(errno)];
+    return nil;
+  }
+  if (flock(lockFD, LOCK_EX) != 0) {
+    int savedError = errno;
+    close(lockFD);
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The Codex runtime install lock could not be acquired.\n\n%s", strerror(savedError)];
+    return nil;
+  }
+
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  BOOL runtimePathExists = [fileManager fileExistsAtPath:runtimeURL.path];
+  BOOL legacyPathExists = [fileManager fileExistsAtPath:legacyRuntimeURL.path];
+  if (!runtimePathExists && legacyPathExists) {
+    if (RuntimeIsRunning()) {
+      // A live process must keep its original bundle path until it exits. The
+      // next cold launch performs the atomic rename before updating resources.
+      runtimeURL = legacyRuntimeURL;
+    } else if (rename(legacyRuntimeURL.fileSystemRepresentation,
+                      runtimeURL.fileSystemRepresentation) != 0) {
+      int savedError = errno;
+      flock(lockFD, LOCK_UN);
+      close(lockFD);
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The installed Codex app could not be renamed from Codex Runtime.app to Codex.app.\n\n%s",
+        strerror(savedError)];
+      return nil;
+    }
+  } else if (runtimePathExists && legacyPathExists && !RuntimeIsRunning()) {
+    // A completed migration can leave an obsolete copy after an interrupted
+    // update. It contains no profile data, so remove it once no runtime is live.
+    [fileManager removeItemAtURL:legacyRuntimeURL error:nil];
+  }
+
+  BOOL payloadIsDirectory = NO;
+  BOOL hasPayload = [fileManager fileExistsAtPath:payloadURL.path
+                                      isDirectory:&payloadIsDirectory] && payloadIsDirectory;
+  BOOL hasRuntime = RuntimeExists(runtimeURL);
+  BOOL matchesPayload = hasRuntime && hasPayload && RuntimeMatchesPayload(runtimeURL, payloadURL);
+  BOOL passesIntegrityCheck = !matchesPayload || RunTool(@"/usr/bin/codesign",
+    @[@"--verify", @"--strict", runtimeURL.path], NULL);
+  BOOL needsInstall = !hasRuntime || (hasPayload && (!matchesPayload || !passesIntegrityCheck));
+  BOOL result = YES;
+
+  if (needsInstall) {
+    if (hasRuntime && RuntimeIsRunning()) {
+      // Never replace resources under a live Electron process. The embedded
+      // payload remains available and is installed after Codex has quit.
+      result = YES;
+    } else if (!hasPayload) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The Codex runtime is missing and this launcher has no bundled runtime.\n\nExpected: %@",
+        runtimeURL.path];
+      result = NO;
+    } else if (!RuntimeInfo(payloadURL)[@"CFBundleVersion"]) {
+      if (failure) *failure = @"The bundled Codex runtime has invalid version metadata.";
+      result = NO;
+    } else {
+      result = ReplaceRuntime(payloadURL, runtimeURL, supportURL, failure);
+    }
+  }
+
+  flock(lockFD, LOCK_UN);
+  close(lockFD);
+  return result ? runtimeURL : nil;
+}
+
+static BOOL CreatePrivateDirectory(NSString *path, NSString **failure) {
+  NSError *error = nil;
+  if (![NSFileManager.defaultManager createDirectoryAtPath:path
+                                withIntermediateDirectories:YES
+                                                 attributes:@{NSFilePosixPermissions: @0700}
+                                                      error:&error]) {
+    if (failure) *failure = error.localizedDescription;
+    return NO;
+  }
+  if (chmod(path.fileSystemRepresentation, 0700) != 0) {
+    if (failure) *failure = [NSString stringWithUTF8String:strerror(errno)];
+    return NO;
+  }
+  return YES;
+}
+
+static BOOL LinkSharedCodexPath(NSString *sourcePath,
+                                NSString *destinationPath,
+                                BOOL expectDirectory,
+                                NSString **failure) {
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  BOOL sourceIsDirectory = NO;
+  BOOL sourceExists = [fileManager fileExistsAtPath:sourcePath
+                                        isDirectory:&sourceIsDirectory];
+  if (!sourceExists) {
+    if (expectDirectory) {
+      NSError *createError = nil;
+      if (![fileManager createDirectoryAtPath:sourcePath
+                  withIntermediateDirectories:YES
+                                   attributes:@{NSFilePosixPermissions: @0700}
+                                        error:&createError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+          @"The shared Codex path %@ could not be created.\n\n%@",
+          sourcePath, createError.localizedDescription];
+        return NO;
+      }
+      sourceIsDirectory = YES;
+    } else {
+      return YES;
+    }
+  }
+  if (sourceIsDirectory != expectDirectory) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The shared Codex path %@ has the wrong type.", sourcePath];
+    return NO;
+  }
+
+  NSError *destError = nil;
+  NSDictionary<NSURLResourceKey, id> *destValues =
+    [[NSURL fileURLWithPath:destinationPath]
+      resourceValuesForKeys:@[NSURLIsSymbolicLinkKey, NSURLIsDirectoryKey]
+                      error:&destError];
+  NSNumber *isSymlink = destValues[NSURLIsSymbolicLinkKey];
+  if (isSymlink.boolValue) {
+    NSString *resolved = destinationPath.stringByResolvingSymlinksInPath;
+    if ([resolved isEqualToString:sourcePath.stringByResolvingSymlinksInPath]) {
+      return YES;
+    }
+    NSError *removeError = nil;
+    if (![fileManager removeItemAtPath:destinationPath error:&removeError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The stale Codex symlink %@ could not be replaced.\n\n%@",
+        destinationPath, removeError.localizedDescription];
+      return NO;
+    }
+  } else if ([fileManager fileExistsAtPath:destinationPath]) {
+    // Merge any desktop-only session files into the shared CLI home once,
+    // then replace the private copy with a symlink so both stay in sync.
+    if (expectDirectory) {
+      NSDirectoryEnumerator *enumerator =
+        [fileManager enumeratorAtPath:destinationPath];
+      for (NSString *relative in enumerator) {
+        NSString *fromPath = [destinationPath stringByAppendingPathComponent:relative];
+        NSString *toPath = [sourcePath stringByAppendingPathComponent:relative];
+        BOOL fromIsDirectory = NO;
+        if (![fileManager fileExistsAtPath:fromPath isDirectory:&fromIsDirectory] ||
+            fromIsDirectory) {
+          continue;
+        }
+        if ([fileManager fileExistsAtPath:toPath]) continue;
+        NSString *toParent = toPath.stringByDeletingLastPathComponent;
+        NSError *parentError = nil;
+        if (![fileManager createDirectoryAtPath:toParent
+                    withIntermediateDirectories:YES
+                                     attributes:nil
+                                          error:&parentError]) {
+          if (failure) *failure = [NSString stringWithFormat:
+            @"Could not prepare shared Codex session path.\n\n%@",
+            parentError.localizedDescription];
+          return NO;
+        }
+        NSError *copyError = nil;
+        if (![fileManager copyItemAtPath:fromPath toPath:toPath error:&copyError]) {
+          if (failure) *failure = [NSString stringWithFormat:
+            @"Could not merge desktop session into ~/.codex.\n\n%@",
+            copyError.localizedDescription];
+          return NO;
+        }
+      }
+    }
+    NSString *backupPath = [destinationPath stringByAppendingString:@".pre-cli-sync"];
+    if ([fileManager fileExistsAtPath:backupPath]) {
+      NSError *removeBackupError = nil;
+      if (![fileManager removeItemAtPath:backupPath error:&removeBackupError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+          @"Could not clear the previous Codex sync backup.\n\n%@",
+          removeBackupError.localizedDescription];
+        return NO;
+      }
+    }
+    NSError *moveError = nil;
+    if (![fileManager moveItemAtPath:destinationPath
+                              toPath:backupPath
+                               error:&moveError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"Could not back up the private Codex path before CLI sync.\n\n%@",
+        moveError.localizedDescription];
+      return NO;
+    }
+  }
+
+  NSError *linkError = nil;
+  if (![fileManager createSymbolicLinkAtPath:destinationPath
+                         withDestinationPath:sourcePath
+                                       error:&linkError]) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"Could not link %@ to the Codex CLI home.\n\n%@",
+      destinationPath.lastPathComponent, linkError.localizedDescription];
+    return NO;
+  }
+  return YES;
+}
+
+static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  NSString *sourceHome = [NSHomeDirectory() stringByAppendingPathComponent:@".codex"];
+
+  // Carry the existing account and user configuration into the isolated home
+  // once. Runtime databases stay private so the desktop app and CLI can keep
+  // independent SQLite writers, while conversation rollouts are shared below.
+  for (NSString *name in @[@"auth.json", @"config.toml"]) {
+    NSString *sourcePath = [sourceHome stringByAppendingPathComponent:name];
+    NSString *destinationPath = [codexHomePath stringByAppendingPathComponent:name];
+    if ([fileManager fileExistsAtPath:destinationPath]) continue;
+
+    BOOL isDirectory = NO;
+    if (![fileManager fileExistsAtPath:sourcePath isDirectory:&isDirectory] || isDirectory) {
+      continue;
+    }
+
+    NSError *readError = nil;
+    NSData *contents = [NSData dataWithContentsOfFile:sourcePath
+                                              options:0
+                                                error:&readError];
+    if (!contents) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The existing Codex %@ could not be read.\n\n%@",
+        name, readError.localizedDescription];
+      return NO;
+    }
+
+    NSError *writeError = nil;
+    if (![contents writeToFile:destinationPath
+                       options:NSDataWritingAtomic
+                         error:&writeError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The private Codex %@ could not be created.\n\n%@",
+        name, writeError.localizedDescription];
+      return NO;
+    }
+    if (chmod(destinationPath.fileSystemRepresentation, 0600) != 0) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The private Codex %@ permissions could not be secured.\n\n%s",
+        name, strerror(errno)];
+      return NO;
+    }
+  }
+
+  // Keep desktop Codex threads and `codex` CLI sessions on the same rollout
+  // files under ~/.codex without sharing mutable SQLite databases.
+  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"sessions"],
+                           [codexHomePath stringByAppendingPathComponent:@"sessions"],
+                           YES,
+                           failure)) {
+    return NO;
+  }
+  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"archived_sessions"],
+                           [codexHomePath stringByAppendingPathComponent:@"archived_sessions"],
+                           YES,
+                           failure)) {
+    return NO;
+  }
+  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"session_index.jsonl"],
+                           [codexHomePath stringByAppendingPathComponent:@"session_index.jsonl"],
+                           NO,
+                           failure)) {
     return NO;
   }
   return YES;
 }
 
 static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **failure) {
-  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
-  NSString *codexHomePath = [supportPath stringByAppendingPathComponent:kCodexHomeName];
-  NSString *profilePath = [supportPath stringByAppendingPathComponent:@"Profile"];
-  NSURL *supportURL = [NSURL fileURLWithPath:supportPath isDirectory:YES];
-  NSURL *runtimeURL = [supportURL URLByAppendingPathComponent:kRuntimeName isDirectory:YES];
-  NSURL *payloadURL = [[NSBundle mainBundle].resourceURL URLByAppendingPathComponent:kPayloadName isDirectory:YES];
+  @autoreleasepool {
+    NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+    NSString *profilePath = [supportPath stringByAppendingPathComponent:@"Profile"];
+    NSString *codexHomePath = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+    NSURL *supportURL = [NSURL fileURLWithPath:supportPath isDirectory:YES];
+    NSURL *runtimeURL = [supportURL URLByAppendingPathComponent:kRuntimeName isDirectory:YES];
+    NSURL *legacyRuntimeURL = [supportURL URLByAppendingPathComponent:kLegacyRuntimeName
+                                                           isDirectory:YES];
+    NSURL *payloadURL = [NSBundle.mainBundle.bundleURL
+      URLByAppendingPathComponent:[@"Contents/Resources" stringByAppendingPathComponent:kPayloadName]
+      isDirectory:YES];
 
-  if (!EnsurePrivateRuntimeInstalled(payloadURL, runtimeURL, failure)) return NO;
+    NSString *detail = nil;
+    if (!CreatePrivateDirectory(supportPath, &detail)) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The private Codex data directory could not be created.\n\n%@", detail];
+      return NO;
+    }
+    if (!CreatePrivateDirectory(profilePath, &detail)) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The isolated Codex profile could not be created.\n\n%@", detail];
+      return NO;
+    }
+    if (!CreatePrivateDirectory(codexHomePath, &detail)) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The isolated Codex home could not be created.\n\n%@", detail];
+      return NO;
+    }
+    if (!SeedPrivateCodexHome(codexHomePath, &detail)) {
+      if (failure) *failure = detail;
+      return NO;
+    }
+    runtimeURL = EnsureRuntime(runtimeURL, legacyRuntimeURL, payloadURL, supportURL, &detail);
+    if (!runtimeURL) {
+      if (failure) *failure = detail;
+      return NO;
+    }
 
-  NSURL *runtimeExecutableURL = RuntimeExecutableURL(runtimeURL);
-  NSString *runtimePath = runtimeExecutableURL.path;
-  if (![[NSFileManager defaultManager] isExecutableFileAtPath:runtimePath]) {
-    if (failure) *failure = [NSString stringWithFormat:@"Runtime binary not executable: %@", runtimePath];
-    return NO;
+    NSURL *runtimeExecutableURL = RuntimeExecutableURL(runtimeURL);
+    NSString *runtimePath = runtimeExecutableURL.path;
+    if (![NSFileManager.defaultManager isExecutableFileAtPath:runtimePath]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The installed Codex runtime is not executable.\n\n%@", runtimePath];
+      return NO;
+    }
+
+    setenv("CODEX_ELECTRON_USER_DATA_PATH", profilePath.fileSystemRepresentation, 1);
+    setenv("CODEX_HOME", codexHomePath.fileSystemRepresentation, 1);
+
+    NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:
+      runtimePath,
+      [@"--user-data-dir=" stringByAppendingString:profilePath],
+      nil];
+    [arguments addObjectsFromArray:forwardedArguments];
+
+    char **childArgv = calloc(arguments.count + 1, sizeof(char *));
+    if (!childArgv) {
+      if (failure) *failure = @"Codex ran out of memory while preparing to launch.";
+      return NO;
+    }
+
+    BOOL allocationFailed = NO;
+    for (NSUInteger index = 0; index < arguments.count; index++) {
+      childArgv[index] = strdup(arguments[index].UTF8String);
+      if (!childArgv[index]) {
+        allocationFailed = YES;
+        for (NSUInteger cleanup = 0; cleanup < index; cleanup++) free(childArgv[cleanup]);
+        free(childArgv);
+        break;
+      }
+    }
+    if (allocationFailed) {
+      if (failure) *failure = @"Codex ran out of memory while preparing to launch.";
+      return NO;
+    }
+
+    pid_t childPid = 0;
+    int spawnResult = posix_spawn(&childPid, runtimePath.fileSystemRepresentation,
+                                  NULL, NULL, childArgv, environ);
+    for (NSUInteger index = 0; index < arguments.count; index++) free(childArgv[index]);
+    free(childArgv);
+
+    if (spawnResult != 0) {
+      NSString *detail = [NSString stringWithUTF8String:strerror(spawnResult)];
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The Codex runtime failed to launch.\n\n%@", detail];
+      return NO;
+    }
+    return YES;
   }
-
-  setenv("CODEX_ELECTRON_USER_DATA_PATH", profilePath.fileSystemRepresentation, 1);
-  setenv("CODEX_HOME", codexHomePath.fileSystemRepresentation, 1);
-
-  NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:
-    runtimePath,
-    [@"--user-data-dir=" stringByAppendingString:profilePath],
-    nil];
-  [arguments addObjectsFromArray:forwardedArguments];
-
-  char **childArgv = calloc(arguments.count + 1, sizeof(char *));
-  for (NSUInteger i = 0; i < arguments.count; i++) {
-    childArgv[i] = strdup(arguments[i].UTF8String);
-  }
-
-  pid_t childPid = 0;
-  int spawnResult = posix_spawn(&childPid, runtimePath.fileSystemRepresentation, NULL, NULL, childArgv, environ);
-  for (NSUInteger i = 0; i < arguments.count; i++) free(childArgv[i]);
-  free(childArgv);
-
-  if (spawnResult != 0) {
-    if (failure) *failure = [NSString stringWithFormat:@"Failed to spawn runtime: %s", strerror(spawnResult)];
-    return NO;
-  }
-  return YES;
 }
 
-// ─── Application Delegate ──────────────────────────────────────
-
 @interface CodexLauncherDelegate : NSObject <NSApplicationDelegate>
+
 - (instancetype)initWithCommandLineArguments:(NSArray<NSString *> *)arguments;
-- (void)handleGetURLEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent;
+- (void)handleGetURLEvent:(NSAppleEventDescriptor *)event
+           withReplyEvent:(NSAppleEventDescriptor *)replyEvent;
+
 @end
 
 @implementation CodexLauncherDelegate {
@@ -356,42 +1128,62 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
   (void)notification;
+
+  // Migrate machines that ran an older build where the private runtime briefly
+  // owned this scheme. The launcher is the only safe entry point because it
+  // establishes the isolated profile before Electron's singleton lock.
   ClaimLauncherURLScheme();
+
+  // Native command center for bundled enhancements (menu bar + settings).
   InstallEnhancementStatusItem();
-  EnhancementManagerStartAll();
-
   if (gShowSettingsOnLaunch) [self showSettingsAction:nil];
+  if (gCaptureHubOnLaunch) CaptureHubWindow();
 
-  [self performSelector:@selector(performInitialLaunch) withObject:nil afterDelay:0.10];
+  // GURL is normally delivered before didFinishLaunching. One short run-loop
+  // grace period also covers LaunchServices versions that enqueue it immediately
+  // afterward, without adding noticeable latency to an ordinary app launch.
+  [self performSelector:@selector(performInitialLaunch)
+             withObject:nil
+             afterDelay:0.10];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
-  EnhancementManagerStopAll();
+  StopEnhancements();
   [[NSAppleEventManager sharedAppleEventManager]
     removeEventHandlerForEventClass:kCodexInternetEventClass
                           andEventID:kCodexGetURLEvent];
 }
 
-- (BOOL)applicationShouldHandleReopen:(NSApplication *)application hasVisibleWindows:(BOOL)hasVisibleWindows {
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)application
+                     hasVisibleWindows:(BOOL)hasVisibleWindows {
   (void)application;
   (void)hasVisibleWindows;
+
   if (_didPerformInitialLaunch) [self launchWithArguments:@[]];
   return NO;
 }
 
-- (void)handleGetURLEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent {
+- (void)handleGetURLEvent:(NSAppleEventDescriptor *)event
+           withReplyEvent:(NSAppleEventDescriptor *)replyEvent {
   (void)replyEvent;
+
   NSString *urlString = [[event paramDescriptorForKeyword:kCodexDirectObject] stringValue];
   if (urlString.length == 0) return;
 
   NSURLComponents *components = [NSURLComponents componentsWithString:urlString];
-  if ([components.scheme caseInsensitiveCompare:kLauncherURLScheme] != NSOrderedSame) return;
+  NSString *scheme = components.scheme;
+  if (scheme.length == 0 ||
+      [scheme caseInsensitiveCompare:kLauncherURLScheme] != NSOrderedSame) return;
 
   if (!_didPerformInitialLaunch) {
     [_pendingURLs addObject:urlString];
     return;
   }
+
+  // The launcher deliberately stays alive as a hidden LSUIElement. A warm GURL
+  // therefore creates another runtime process with the same isolated profile;
+  // Electron forwards its argv to the already-running Codex instance.
   [self launchWithArguments:@[urlString]];
 }
 
@@ -406,44 +1198,23 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
 }
 
 - (void)launchWithArguments:(NSArray<NSString *> *)arguments {
+  StartEnhancements();
   NSString *failure = nil;
   if (!LaunchRuntime(arguments, &failure)) {
-    ShowLaunchError(failure ?: @"The Codex runtime could not be launched.");
+    ShowLaunchError(failure ? failure : @"The Codex runtime could not be launched.");
   }
 }
 
-// Actions
+// ─── Enhancement menu/settings actions ─────────────────────────
+
 - (void)openEnhancementAction:(NSMenuItem *)sender {
   NSArray<NSString *> *payload = sender.representedObject;
-  if (payload.count == 2) {
-    EnhancementManagerOpen(payload[0].UTF8String, payload[1].UTF8String);
-  }
-}
-
-- (void)restartEnhancementAction:(NSMenuItem *)sender {
-  NSString *identifier = sender.representedObject;
-  if (identifier) {
-    EnhancementManagerRestartService(identifier.UTF8String);
-  }
+  if (payload.count == 2) OpenEnhancement(payload[0], payload[1]);
 }
 
 - (void)showSettingsAction:(id)sender {
   (void)sender;
-  ShowEnhancementHub();
-}
-
-- (void)openCodexHomeAction:(id)sender {
-  (void)sender;
-  NSString *home = [NSHomeDirectory() stringByAppendingPathComponent:
-    [kSupportDirectory stringByAppendingPathComponent:kCodexHomeName]];
-  [[NSWorkspace sharedWorkspace] selectFile:nil inFileViewerRootedAtPath:home];
-}
-
-- (void)openLogsAction:(id)sender {
-  (void)sender;
-  NSString *logs = [NSHomeDirectory() stringByAppendingPathComponent:
-    [kSupportDirectory stringByAppendingPathComponent:@"enhancements"]];
-  [[NSWorkspace sharedWorkspace] selectFile:nil inFileViewerRootedAtPath:logs];
+  ShowEnhancementSettings();
 }
 
 @end
@@ -451,36 +1222,46 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     SanitizeEnvironment();
+
     signal(SIGTERM, HandleTerminationSignal);
     signal(SIGINT, HandleTerminationSignal);
     signal(SIGHUP, HandleTerminationSignal);
 
     NSMutableArray<NSString *> *arguments = [NSMutableArray array];
-    for (int i = 1; i < argc; i++) {
-      NSString *arg = [NSString stringWithUTF8String:argv[i]];
-      if (!arg) continue;
-      if ([arg isEqualToString:@"--show-settings"]) {
+    for (int index = 1; index < argc; index++) {
+      NSString *argument = [NSString stringWithUTF8String:argv[index]];
+      if (!argument) continue;
+      if ([argument isEqualToString:@"--show-settings"]) {
         gShowSettingsOnLaunch = YES;
         continue;
       }
-      if ([arg hasPrefix:@"-psn_"]) continue;
-      [arguments addObject:arg];
+      if ([argument isEqualToString:@"--capture-hub"]) {
+        gShowSettingsOnLaunch = YES;
+        gCaptureHubOnLaunch = YES;
+        continue;
+      }
+      if ([argument hasPrefix:@"-psn_"]) continue;
+      [arguments addObject:argument];
     }
 
-    NSApplication *app = [NSApplication sharedApplication];
-    [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    NSApplication *application = [NSApplication sharedApplication];
+    [application setActivationPolicy:NSApplicationActivationPolicyAccessory];
 
-    CodexLauncherDelegate *delegate = [[CodexLauncherDelegate alloc] initWithCommandLineArguments:arguments];
-    gAppDelegate = delegate;
-    app.delegate = delegate;
+    static CodexLauncherDelegate *launcherDelegate = nil;
+    launcherDelegate = [[CodexLauncherDelegate alloc]
+      initWithCommandLineArguments:arguments];
+    gAppDelegate = launcherDelegate;
+    application.delegate = launcherDelegate;
 
+    // Register before entering NSApplication's run loop so a cold-launch GURL
+    // cannot be consumed by AppKit before the launcher has installed a handler.
     [[NSAppleEventManager sharedAppleEventManager]
-      setEventHandler:delegate
+      setEventHandler:launcherDelegate
            andSelector:@selector(handleGetURLEvent:withReplyEvent:)
          forEventClass:kCodexInternetEventClass
             andEventID:kCodexGetURLEvent];
 
-    [app run];
+    [application run];
     return 0;
   }
 }
