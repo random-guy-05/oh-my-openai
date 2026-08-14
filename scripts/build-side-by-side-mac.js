@@ -340,8 +340,9 @@ async function main() {
     const runtimeAsar = path.join(uniqueRuntimeResources, "app.asar");
     if (fs.existsSync(runtimeAsar)) {
       console.log("   [asar] integrating ✦ Enhancements into native tray menu");
+      const npxBin = fs.existsSync("/usr/local/bin/npx") ? "/usr/local/bin/npx" : "npx";
       const extractAsarDir = path.join(temporaryDirectory, "_extracted_asar");
-      run("/usr/bin/npx", ["--yes", "asar", "extract", runtimeAsar, extractAsarDir]);
+      run(npxBin, ["--yes", "asar", "extract", runtimeAsar, extractAsarDir]);
 
       const viteBuildDir = path.join(extractAsarDir, ".vite", "build");
       if (fs.existsSync(viteBuildDir)) {
@@ -447,7 +448,7 @@ function getEnhancementsTrayMenu() {
         }
       }
 
-      run("/usr/bin/npx", ["--yes", "asar", "pack", extractAsarDir, runtimeAsar]);
+      run(npxBin, ["--yes", "asar", "pack", extractAsarDir, runtimeAsar]);
       fs.rmSync(extractAsarDir, { recursive: true, force: true });
     }
 
