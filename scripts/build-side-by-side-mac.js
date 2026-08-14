@@ -353,93 +353,139 @@ async function main() {
             let mainCode = fs.readFileSync(mainJsPath, "utf8");
 
             const helperFn = `
-function getEnhancementsTrayMenu() {
-  const fs = require('fs');
-  const path = require('path');
-  const { shell, BrowserWindow, app } = require('electron');
-  const possiblePaths = [
-    path.join(process.resourcesPath, 'enhancements', 'manifest.json'),
-    path.join(process.resourcesPath, '..', 'Resources', 'enhancements', 'manifest.json'),
-    path.join(app.getAppPath(), '..', 'enhancements', 'manifest.json'),
-    path.join(app.getAppPath(), 'enhancements', 'manifest.json'),
-    '/Users/admin/oh-my-openai/enhancements/manifest.json'
-  ];
-  let manifest = null;
-  for (const p of possiblePaths) {
-    try {
-      if (fs.existsSync(p)) {
-        manifest = JSON.parse(fs.readFileSync(p, 'utf8'));
-        break;
-      }
-    } catch {}
-  }
-  const subItems = [];
-  if (manifest && Array.isArray(manifest.enhancements)) {
-    for (const enh of manifest.enhancements) {
-      const ui = enh.ui || {};
-      const label = ui.label || enh.id;
-      if (ui.kind === 'web' && ui.url) {
-        const url = ui.url;
-        subItems.push({
-          label: label,
-          submenu: [
-            {
-              label: 'In-app window',
-              click: () => {
-                const win = new BrowserWindow({
-                  width: 1040,
-                  height: 760,
-                  title: label,
-                  webPreferences: { nodeIntegration: false, contextIsolation: true }
-                });
-                win.loadURL(url);
+function getEnhancementsTrayMenu(elModule) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const el = elModule || require('electron');
+    const shell = el.shell || (el.default && el.default.shell);
+    const BrowserWindow = el.BrowserWindow || (el.default && el.default.BrowserWindow);
+
+    let manifest = null;
+    const searchDirs = [
+      process.resourcesPath ? path.join(process.resourcesPath, 'enhancements') : null,
+      process.resourcesPath ? path.join(process.resourcesPath, '..', 'Resources', 'enhancements') : null,
+      '/Users/admin/oh-my-openai/out/side-by-side-mac-x64/Codex.app/Contents/Resources/enhancements',
+      '/Users/admin/oh-my-openai/enhancements'
+    ];
+
+    for (const dir of searchDirs) {
+      if (!dir) continue;
+      try {
+        const manifestFile = path.join(dir, 'manifest.json');
+        if (fs.existsSync(manifestFile)) {
+          manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+          break;
+        }
+      } catch {}
+    }
+
+    const subItems = [];
+    if (manifest && Array.isArray(manifest.enhancements)) {
+      for (const enh of manifest.enhancements) {
+        const ui = enh.ui || {};
+        const label = ui.label || enh.id || 'Enhancement';
+        if (ui.kind === 'web' && ui.url) {
+          const targetUrl = ui.url;
+          subItems.push({
+            label: label,
+            submenu: [
+              {
+                label: 'In-App Window',
+                click: () => {
+                  try {
+                    if (BrowserWindow) {
+                      const win = new BrowserWindow({
+                        width: 1080,
+                        height: 740,
+                        title: label,
+                        titleBarStyle: 'hiddenInset',
+                        webPreferences: { nodeIntegration: false, contextIsolation: true }
+                      });
+                      win.loadURL(targetUrl);
+                    } else if (shell) {
+                      shell.openExternal(targetUrl);
+                    }
+                  } catch {
+                    if (shell) shell.openExternal(targetUrl);
+                  }
+                }
+              },
+              {
+                label: 'Default Browser',
+                click: () => {
+                  try {
+                    if (shell) shell.openExternal(targetUrl);
+                  } catch {}
+                }
               }
-            },
-            {
-              label: 'Browser',
-              click: () => {
-                shell.openExternal(url);
-              }
+            ]
+          });
+        } else {
+          const openLabel = ui.openLabel || label;
+          subItems.push({
+            label: openLabel,
+            click: () => {
+              try {
+                if (enh.toolCommand && enh.toolCommand.length > 0) {
+                  const { spawn } = require('child_process');
+                  const cmd = enh.toolCommand[0];
+                  const args = enh.toolCommand.slice(1);
+                  const enhDir = process.resourcesPath ? path.join(process.resourcesPath, 'enhancements', enh.id) : '';
+                  const bin = enhDir && fs.existsSync(path.join(enhDir, cmd)) ? path.join(enhDir, cmd) : cmd;
+                  const env = Object.assign({}, process.env, {
+                    CODEX_HOME: process.env.CODEX_HOME || '',
+                    CODEX_ELECTRON_USER_DATA_PATH: process.env.CODEX_ELECTRON_USER_DATA_PATH || ''
+                  });
+                  spawn(bin, args, { cwd: enhDir || undefined, env: env, stdio: 'ignore', detached: true }).unref();
+                }
+              } catch {}
             }
-          ]
-        });
-      } else {
-        const openLabel = ui.openLabel || label;
-        subItems.push({
-          label: openLabel,
+          });
+        }
+      }
+    }
+
+    if (subItems.length > 0) {
+      subItems.push({ type: 'separator' });
+    }
+
+    subItems.push({
+      label: 'Enhancements Settings…',
+      click: () => {
+        try {
+          if (shell) shell.openExternal('codex-rebuild://settings');
+        } catch {}
+      }
+    });
+
+    return {
+      label: '✦ Enhancements',
+      submenu: subItems
+    };
+  } catch (err) {
+    return {
+      label: '✦ Enhancements',
+      submenu: [
+        {
+          label: 'Enhancements Settings…',
           click: () => {
-            if (enh.toolCommand && enh.toolCommand.length > 0) {
-              const { spawn } = require('child_process');
-              const cmd = enh.toolCommand[0];
-              const args = enh.toolCommand.slice(1);
-              const dir = path.join(process.resourcesPath, 'enhancements', enh.id);
-              const bin = fs.existsSync(path.join(dir, cmd)) ? path.join(dir, cmd) : cmd;
-              const env = { ...process.env, CODEX_HOME: process.env.CODEX_HOME || '' };
-              spawn(bin, args, { cwd: dir, env, stdio: 'inherit', detached: true }).unref();
-            }
+            try {
+              const { shell } = require('electron');
+              if (shell) shell.openExternal('codex-rebuild://settings');
+            } catch {}
           }
-        });
-      }
-    }
+        }
+      ]
+    };
   }
-  subItems.push({ type: 'separator' });
-  subItems.push({
-    label: 'Enhancements Settings…',
-    click: () => {
-      shell.openExternal('codex-rebuild://settings');
-    }
-  });
-  return {
-    label: '✦ Enhancements',
-    submenu: subItems
-  };
 }
 `;
             const targetPattern = "return[...h,...h.length>0?[{type:`separator`}]:[]";
             if (mainCode.includes(targetPattern)) {
               mainCode = helperFn + "\n" + mainCode.replace(
                 targetPattern,
-                "return[...h,...h.length>0?[{type:`separator`}]:[],getEnhancementsTrayMenu(),{type:`separator`}"
+                "return[...h,...h.length>0?[{type:`separator`}]:[],getEnhancementsTrayMenu(l),{type:`separator`}"
               );
               fs.writeFileSync(mainJsPath, mainCode, "utf8");
               console.log(`   [asar] successfully patched ${file}`);
