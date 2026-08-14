@@ -385,8 +385,8 @@ function getEnhancementsTrayMenu(elModule) {
       for (const enh of manifest.enhancements) {
         const ui = enh.ui || {};
         const label = ui.label || enh.id || 'Enhancement';
-        if (ui.kind === 'web' && ui.url) {
-          const targetUrl = ui.url;
+        if (enh.id === 'opencodex' || (ui.kind === 'web' && ui.url)) {
+          const targetUrl = ui.url || 'http://127.0.0.1:10100';
           subItems.push({
             label: label,
             submenu: [
@@ -396,8 +396,8 @@ function getEnhancementsTrayMenu(elModule) {
                   try {
                     if (BrowserWindow) {
                       const win = new BrowserWindow({
-                        width: 1080,
-                        height: 740,
+                        width: 1100,
+                        height: 750,
                         title: label,
                         titleBarStyle: 'hiddenInset',
                         webPreferences: { nodeIntegration: false, contextIsolation: true }
@@ -421,24 +421,35 @@ function getEnhancementsTrayMenu(elModule) {
               }
             ]
           });
+        } else if (enh.id === 'ccusage') {
+          subItems.push({
+            label: 'Usage Analyzer (ccusage)',
+            click: () => {
+              try {
+                if (shell) shell.openExternal('codex-rebuild://analytics');
+              } catch {}
+            }
+          });
+        } else if (enh.id === 'codex-chatgpt-web') {
+          subItems.push({
+            label: 'ChatGPT Web Bridge (Terminal)',
+            click: () => {
+              try {
+                const { exec } = require('child_process');
+                const supportDir = path.join(require('os').homedir(), 'Library/Application Support/CodexDesktop-Rebuild');
+                const bridgeDir = process.resourcesPath ? path.join(process.resourcesPath, 'enhancements', 'codex-chatgpt-web') : '';
+                const script = `tell application "Terminal" to do script "cd '${bridgeDir}' && export CODEX_HOME='${supportDir}/CodexHome' && export CODEX_ELECTRON_USER_DATA_PATH='${supportDir}/Profile' && node_modules/bun/bin/bun.exe run --cwd source src/cli.ts doctor"`;
+                exec(`osascript -e '${script.replace(/'/g, "\\'")}'`);
+              } catch {}
+            }
+          });
         } else {
           const openLabel = ui.openLabel || label;
           subItems.push({
             label: openLabel,
             click: () => {
               try {
-                if (enh.toolCommand && enh.toolCommand.length > 0) {
-                  const { spawn } = require('child_process');
-                  const cmd = enh.toolCommand[0];
-                  const args = enh.toolCommand.slice(1);
-                  const enhDir = process.resourcesPath ? path.join(process.resourcesPath, 'enhancements', enh.id) : '';
-                  const bin = enhDir && fs.existsSync(path.join(enhDir, cmd)) ? path.join(enhDir, cmd) : cmd;
-                  const env = Object.assign({}, process.env, {
-                    CODEX_HOME: process.env.CODEX_HOME || '',
-                    CODEX_ELECTRON_USER_DATA_PATH: process.env.CODEX_ELECTRON_USER_DATA_PATH || ''
-                  });
-                  spawn(bin, args, { cwd: enhDir || undefined, env: env, stdio: 'ignore', detached: true }).unref();
-                }
+                if (shell) shell.openExternal('codex-rebuild://settings');
               } catch {}
             }
           });

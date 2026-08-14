@@ -108,6 +108,7 @@ static BOOL RunTool(NSString *launchPath, NSArray<NSString *> *arguments,
 
 // SwiftUI command center (launcher/EnhancementHub.swift, linked via swiftc).
 extern void ShowEnhancementHub(void);
+extern void ShowEnhancementAnalytics(void);
 extern void ShowWebWindow(const char *label, const char *url);
 extern void CaptureHubWindow(void);
 
@@ -1208,6 +1209,11 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
   NSString *scheme = components.scheme;
   if (scheme.length == 0 ||
       [scheme caseInsensitiveCompare:kLauncherURLScheme] != NSOrderedSame) return;
+
+  if ([urlString containsString:@"analytics"] || [urlString containsString:@"usage"]) {
+    ShowEnhancementAnalytics();
+    return;
+  }
 
   if ([urlString containsString:@"settings"] || [urlString containsString:@"hub"] || [urlString containsString:@"enhancements"]) {
     [self showSettingsAction:nil];

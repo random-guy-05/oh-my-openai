@@ -1,30 +1,19 @@
-// EnhancementHub.swift — Masterful macOS Command Center & Settings for Codex Enhancements.
-// Native SwiftUI interface with macOS System Settings sidebar + detail pane architecture,
-// vibrant NSVisualEffectView backdrop, live status monitoring, and granular controls.
+// EnhancementHub.swift — High-Contrast macOS Command Center for Codex Enhancements.
+// Native SwiftUI interface with high-contrast palette, live ccusage analytics parser,
+// direct terminal launchers, and zero visual clutter.
 
 import AppKit
 import Foundation
 import SwiftUI
 import WebKit
 
-// MARK: - Design Tokens & Aesthetics
+// MARK: - High-Contrast Design System
 
 enum CodexTheme {
-  static let sparkGradient = LinearGradient(
-    colors: [
-      Color(red: 1.00, green: 0.38, blue: 0.35), // #FF6159
-      Color(red: 1.00, green: 0.58, blue: 0.20), // #FF9433
-      Color(red: 0.22, green: 0.82, blue: 0.48)  // #38D17A
-    ],
-    startPoint: .topLeading,
-    endPoint: .bottomTrailing
-  )
-
-  static let accentBlue = Color(red: 0.04, green: 0.52, blue: 1.00) // #0A84FF
-  static let successGreen = Color(red: 0.20, green: 0.78, blue: 0.45) // #34C759
-  static let warningOrange = Color(red: 1.00, green: 0.62, blue: 0.15) // #FF9F0A
-  static let purpleAccent = Color(red: 0.68, green: 0.48, blue: 0.98) // #AD7BF9
-  static let pinkAccent = Color(red: 1.00, green: 0.55, blue: 0.76)   // #FF8CC1
+  static let accentBlue = Color(red: 0.15, green: 0.50, blue: 1.00)
+  static let successGreen = Color(red: 0.13, green: 0.77, blue: 0.37)
+  static let warningAmber = Color(red: 0.96, green: 0.62, blue: 0.04)
+  static let purple = Color(red: 0.66, green: 0.33, blue: 0.97)
 
   static func dynamic(light: NSColor, dark: NSColor) -> Color {
     Color(nsColor: NSColor(name: nil) { appearance in
@@ -32,62 +21,62 @@ enum CodexTheme {
     })
   }
 
-  // Window & Pane Backgrounds
-  static let sidebarBackground = dynamic(
-    light: NSColor(red: 0.940, green: 0.940, blue: 0.945, alpha: 0.85),
-    dark: NSColor(red: 0.135, green: 0.135, blue: 0.142, alpha: 0.85)
+  // Window & Surfaces
+  static let windowBackground = dynamic(
+    light: NSColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1.0),
+    dark: NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0)
   )
 
-  static let mainBackground = dynamic(
-    light: NSColor(red: 0.965, green: 0.965, blue: 0.972, alpha: 1.0),
-    dark: NSColor(red: 0.110, green: 0.110, blue: 0.118, alpha: 1.0)
+  static let sidebarBackground = dynamic(
+    light: NSColor(red: 0.92, green: 0.92, blue: 0.94, alpha: 0.95),
+    dark: NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 0.95)
   )
 
   static let cardBackground = dynamic(
-    light: NSColor(white: 1.0, alpha: 0.96),
-    dark: NSColor(red: 0.170, green: 0.170, blue: 0.180, alpha: 0.96)
+    light: NSColor(white: 1.0, alpha: 1.0),
+    dark: NSColor(red: 0.15, green: 0.15, blue: 0.17, alpha: 1.0)
   )
 
   static let cardHoverBackground = dynamic(
     light: NSColor(white: 0.98, alpha: 1.0),
-    dark: NSColor(red: 0.205, green: 0.205, blue: 0.218, alpha: 1.0)
+    dark: NSColor(red: 0.18, green: 0.18, blue: 0.21, alpha: 1.0)
   )
 
-  static let rowAltBackground = dynamic(
-    light: NSColor(red: 0.950, green: 0.950, blue: 0.958, alpha: 0.6),
-    dark: NSColor(red: 0.140, green: 0.140, blue: 0.150, alpha: 0.6)
+  static let rowBackground = dynamic(
+    light: NSColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1.0),
+    dark: NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
   )
 
   // Borders & Dividers
   static let border = dynamic(
-    light: NSColor(white: 0.0, alpha: 0.08),
-    dark: NSColor(white: 1.0, alpha: 0.09)
+    light: NSColor(white: 0.0, alpha: 0.12),
+    dark: NSColor(white: 1.0, alpha: 0.14)
   )
 
   static let activeBorder = dynamic(
-    light: NSColor(red: 0.04, green: 0.52, blue: 1.00, alpha: 0.30),
-    dark: NSColor(red: 0.04, green: 0.52, blue: 1.00, alpha: 0.40)
+    light: NSColor(red: 0.15, green: 0.50, blue: 1.00, alpha: 0.5),
+    dark: NSColor(red: 0.25, green: 0.60, blue: 1.00, alpha: 0.6)
   )
 
   static let divider = dynamic(
-    light: NSColor(white: 0.0, alpha: 0.06),
-    dark: NSColor(white: 1.0, alpha: 0.07)
+    light: NSColor(white: 0.0, alpha: 0.08),
+    dark: NSColor(white: 1.0, alpha: 0.10)
   )
 
-  // Typography
+  // High-Contrast Typography
   static let textPrimary = dynamic(
-    light: NSColor(white: 0.08, alpha: 1.0),
-    dark: NSColor(white: 0.96, alpha: 1.0)
+    light: NSColor(white: 0.04, alpha: 1.0),
+    dark: NSColor(white: 0.98, alpha: 1.0)
   )
 
   static let textSecondary = dynamic(
-    light: NSColor(white: 0.42, alpha: 1.0),
-    dark: NSColor(white: 0.64, alpha: 1.0)
+    light: NSColor(white: 0.32, alpha: 1.0),
+    dark: NSColor(white: 0.72, alpha: 1.0)
   )
 
   static let textTertiary = dynamic(
-    light: NSColor(white: 0.62, alpha: 1.0),
-    dark: NSColor(white: 0.45, alpha: 1.0)
+    light: NSColor(white: 0.48, alpha: 1.0),
+    dark: NSColor(white: 0.52, alpha: 1.0)
   )
 }
 
@@ -117,14 +106,12 @@ struct Enhancement: Identifiable, Decodable {
   var label: String { ui?.label ?? id }
   var isService: Bool { type == "service" }
   var kind: String { ui?.kind ?? "tool" }
-  var openLabel: String { ui?.openLabel ?? (kind == "web" ? "Open Web Dashboard" : "Launch Tool") }
 
   var iconSymbol: String {
     switch id {
     case "opencodex": return "network"
-    case "ccusage": return "chart.xyaxis.line"
+    case "ccusage": return "chart.bar.xaxis"
     case "codex-chatgpt-web": return "bubble.left.and.exclamationmark.bubble.right.fill"
-    case "codexpp": return "slider.horizontal.3"
     default: return "sparkles"
     }
   }
@@ -132,9 +119,8 @@ struct Enhancement: Identifiable, Decodable {
   var accentColor: Color {
     switch id {
     case "opencodex": return CodexTheme.accentBlue
-    case "ccusage": return CodexTheme.warningOrange
-    case "codex-chatgpt-web": return CodexTheme.purpleAccent
-    case "codexpp": return CodexTheme.pinkAccent
+    case "ccusage": return CodexTheme.warningAmber
+    case "codex-chatgpt-web": return CodexTheme.purple
     default: return CodexTheme.accentBlue
     }
   }
@@ -142,7 +128,7 @@ struct Enhancement: Identifiable, Decodable {
   var viewOptions: [String] {
     switch kind {
     case "web": return ["window", "browser"]
-    default: return ["launch"]
+    default: return ["action"]
     }
   }
 
@@ -151,7 +137,7 @@ struct Enhancement: Identifiable, Decodable {
       switch view {
       case "window": return "In-App Window"
       case "browser": return "Default Browser"
-      default: return "CLI Tool"
+      default: return "Direct"
       }
     }
   }
@@ -161,25 +147,46 @@ struct Enhancement: Identifiable, Decodable {
   }
 }
 
-// MARK: - Navigation Tabs
+// MARK: - Navigation
 
 enum NavigationSection: String, CaseIterable, Identifiable {
-  case overview = "Overview"
-  case services = "Services & Gateways"
-  case analytics = "Usage & Analytics"
-  case tools = "Power Tools"
-  case system = "Sandbox & Environment"
+  case extensions = "Extensions"
+  case analytics = "Usage Analytics"
+  case environment = "Sandbox & Paths"
 
   var id: String { rawValue }
 
   var iconSymbol: String {
     switch self {
-    case .overview: return "square.grid.2x2.fill"
-    case .services: return "server.rack"
-    case .analytics: return "chart.bar.fill"
-    case .tools: return "wrench.and.screwdriver.fill"
-    case .system: return "gearshape.2.fill"
+    case .extensions: return "square.grid.2x2.fill"
+    case .analytics: return "chart.xyaxis.line"
+    case .environment: return "folder.badge.gearshape"
     }
+  }
+}
+
+// MARK: - Usage Analytics JSON Models
+
+struct UsageData: Decodable {
+  let daily: [DailyUsage]?
+  let totals: UsageTotals?
+
+  struct DailyUsage: Decodable, Identifiable {
+    var id: String { period ?? UUID().uuidString }
+    let period: String?
+    let totalCost: Double?
+    let totalTokens: Int?
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let modelsUsed: [String]?
+  }
+
+  struct UsageTotals: Decodable {
+    let totalCost: Double?
+    let totalTokens: Int?
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let cacheReadTokens: Int?
   }
 }
 
@@ -191,8 +198,9 @@ private let kViewKey = "OMOEEnhancementsView"
 final class HubState: ObservableObject {
   @Published var enabled: [String: Bool] = HubState.loadEnabled()
   @Published var views: [String: String] = HubState.loadViews()
-  @Published var selectedSection: NavigationSection = .overview
-  @Published var searchFilter: String = ""
+  @Published var selectedSection: NavigationSection = .extensions
+  @Published var usageData: UsageData?
+  @Published var isLoadingUsage = false
 
   private static func loadEnabled() -> [String: Bool] {
     UserDefaults.standard.dictionary(forKey: kEnabledKey) as? [String: Bool] ?? [:]
@@ -214,29 +222,88 @@ final class HubState: ObservableObject {
   func view(for id: String, options: [String]) -> String {
     let stored = views[id]
     if let stored, options.contains(stored) { return stored }
-    return options.first ?? "launch"
+    return options.first ?? "window"
   }
 
   func setView(_ id: String, _ view: String) {
     views[id] = view
     UserDefaults.standard.set(views, forKey: kViewKey)
   }
+
+  func loadAnalytics() {
+    isLoadingUsage = true
+    DispatchQueue.global(qos: .userInitiated).async {
+      let data = HubActions.fetchUsageReport()
+      DispatchQueue.main.async {
+        self.usageData = data
+        self.isLoadingUsage = false
+      }
+    }
+  }
 }
 
-// MARK: - Actions
+// MARK: - Action Dispatcher
 
 enum HubActions {
   static func open(_ enhancement: Enhancement, view: String) {
-    guard let urlString = enhancement.ui?.url, let url = URL(string: urlString) else {
-      launchTool(enhancement)
+    if enhancement.id == "opencodex" {
+      let url = URL(string: enhancement.ui?.url ?? "http://127.0.0.1:10100")!
+      if view == "browser" {
+        NSWorkspace.shared.open(url)
+      } else {
+        WebWindow.shared.show(title: "OpenCodex Gateway", url: url)
+      }
       return
     }
-    if view == "browser" {
-      NSWorkspace.shared.open(url)
-    } else if view == "window" {
-      WebWindow.shared.show(title: enhancement.label, url: url)
-    } else {
-      launchTool(enhancement)
+
+    if enhancement.id == "ccusage" {
+      openTerminalForCcusage()
+      return
+    }
+
+    if enhancement.id == "codex-chatgpt-web" {
+      openTerminalForChatGPTWeb()
+      return
+    }
+
+    // Default launcher
+    launchTool(enhancement)
+  }
+
+  static func openTerminalForCcusage() {
+    let supportDir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
+    let ccusageBin = Bundle.main.bundleURL
+      .appendingPathComponent("Contents/Resources/enhancements/ccusage/node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage").path
+
+    let script = """
+    tell application "Terminal"
+      activate
+      do script "export CODEX_HOME='\(supportDir.appendingPathComponent("CodexHome").path)' && export CODEX_ELECTRON_USER_DATA_PATH='\(supportDir.appendingPathComponent("Profile").path)' && '\(ccusageBin)' daily"
+    end tell
+    """
+    if let appleScript = NSAppleScript(source: script) {
+      var error: NSDictionary?
+      appleScript.executeAndReturnError(&error)
+    }
+  }
+
+  static func openTerminalForChatGPTWeb() {
+    let supportDir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
+    let bridgeDir = Bundle.main.bundleURL
+      .appendingPathComponent("Contents/Resources/enhancements/codex-chatgpt-web").path
+    let bunBin = (bridgeDir as NSString).appendingPathComponent("node_modules/bun/bin/bun.exe")
+
+    let script = """
+    tell application "Terminal"
+      activate
+      do script "cd '\(bridgeDir)' && export CODEX_HOME='\(supportDir.appendingPathComponent("CodexHome").path)' && export CODEX_ELECTRON_USER_DATA_PATH='\(supportDir.appendingPathComponent("Profile").path)' && '\(bunBin)' run --cwd source src/cli.ts doctor"
+    end tell
+    """
+    if let appleScript = NSAppleScript(source: script) {
+      var error: NSDictionary?
+      appleScript.executeAndReturnError(&error)
     }
   }
 
@@ -252,26 +319,46 @@ enum HubActions {
       binary = first
     } else {
       let joined = (enhDir as NSString).appendingPathComponent(first)
-      if FileManager.default.isExecutableFile(atPath: joined) {
-        binary = joined
-      } else {
-        let pathDirs = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/local/bin"
-        guard let found = pathDirs.split(separator: ":").map({ String($0) }).first(where: {
-          FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent(first))
-        }) else { return }
-        binary = (found as NSString).appendingPathComponent(first)
-      }
+      binary = FileManager.default.isExecutableFile(atPath: joined) ? joined : first
     }
 
     let task = Process()
     task.executableURL = URL(fileURLWithPath: binary)
     task.arguments = Array(toolCommand.dropFirst())
     task.currentDirectoryURL = URL(fileURLWithPath: enhDir, isDirectory: true)
-    var environment = ProcessInfo.processInfo.environment
-    environment["CODEX_HOME"] = supportDir.appendingPathComponent("CodexHome").path
-    environment["CODEX_ELECTRON_USER_DATA_PATH"] = supportDir.appendingPathComponent("Profile").path
-    task.environment = environment
+    var env = ProcessInfo.processInfo.environment
+    env["CODEX_HOME"] = supportDir.appendingPathComponent("CodexHome").path
+    env["CODEX_ELECTRON_USER_DATA_PATH"] = supportDir.appendingPathComponent("Profile").path
+    task.environment = env
     try? task.run()
+  }
+
+  static func fetchUsageReport() -> UsageData? {
+    let supportDir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
+    let ccusageBin = Bundle.main.bundleURL
+      .appendingPathComponent("Contents/Resources/enhancements/ccusage/node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage").path
+
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: ccusageBin)
+    task.arguments = ["daily", "-j"]
+    var env = ProcessInfo.processInfo.environment
+    env["CODEX_HOME"] = supportDir.appendingPathComponent("CodexHome").path
+    env["CODEX_ELECTRON_USER_DATA_PATH"] = supportDir.appendingPathComponent("Profile").path
+    task.environment = env
+
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = Pipe()
+
+    do {
+      try task.run()
+      task.waitUntilExit()
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      return try? JSONDecoder().decode(UsageData.self, from: data)
+    } catch {
+      return nil
+    }
   }
 
   static func revealPath(_ path: String) {
@@ -292,7 +379,7 @@ final class WebWindow: NSObject, NSWindowDelegate {
       return
     }
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
+      contentRect: NSRect(x: 0, y: 0, width: 1100, height: 750),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered, defer: false)
     window.title = title
@@ -316,26 +403,6 @@ final class WebWindow: NSObject, NSWindowDelegate {
   }
 }
 
-// MARK: - Visual Effect View Representable
-
-struct VisualEffectBlur: NSViewRepresentable {
-  var material: NSVisualEffectView.Material = .sidebar
-  var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
-
-  func makeNSView(context: Context) -> NSVisualEffectView {
-    let view = NSVisualEffectView()
-    view.material = material
-    view.blendingMode = blendingMode
-    view.state = .active
-    return view
-  }
-
-  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-    nsView.material = material
-    nsView.blendingMode = blendingMode
-  }
-}
-
 // MARK: - Hub Window Controller
 
 final class HubWindow: NSObject, NSWindowDelegate {
@@ -344,8 +411,7 @@ final class HubWindow: NSObject, NSWindowDelegate {
 
   var currentWindow: NSWindow? { window }
 
-  func show(enhancements: [Enhancement]) {
-    // Elevate app activation policy so window is focusable and brought to front
+  func show(enhancements: [Enhancement], initialSection: NavigationSection = .extensions) {
     NSApp.setActivationPolicy(.regular)
 
     if let window {
@@ -355,15 +421,15 @@ final class HubWindow: NSObject, NSWindowDelegate {
       return
     }
 
-    let hosting = NSHostingController(rootView: HubRootView(enhancements: enhancements))
+    let hosting = NSHostingController(rootView: HubRootView(enhancements: enhancements, initialSection: initialSection))
     let window = NSWindow(contentViewController: hosting)
     window.title = "Codex Enhancements"
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
     window.isReleasedWhenClosed = false
-    window.setContentSize(NSSize(width: 860, height: 620))
-    window.minSize = NSSize(width: 780, height: 540)
+    window.setContentSize(NSSize(width: 820, height: 560))
+    window.minSize = NSSize(width: 740, height: 480)
     window.center()
     window.isMovableByWindowBackground = true
     self.window = window
@@ -378,193 +444,114 @@ final class HubWindow: NSObject, NSWindowDelegate {
   }
 }
 
-// MARK: - Root Split View Layout
+// MARK: - Root View
 
 struct HubRootView: View {
   let enhancements: [Enhancement]
   @StateObject private var state = HubState()
 
+  init(enhancements: [Enhancement], initialSection: NavigationSection = .extensions) {
+    self.enhancements = enhancements
+  }
+
   var body: some View {
-    ZStack {
-      VisualEffectBlur(material: .sidebar, blendingMode: .behindWindow)
+    HStack(spacing: 0) {
+      // High-contrast clean sidebar
+      SidebarView(enhancements: enhancements, state: state)
+        .frame(width: 210)
+        .background(CodexTheme.sidebarBackground)
+
+      Rectangle()
+        .fill(CodexTheme.divider)
+        .frame(width: 1)
         .ignoresSafeArea()
 
-      HStack(spacing: 0) {
-        // Left Navigation Sidebar
-        SidebarView(enhancements: enhancements, state: state)
-          .frame(width: 230)
-
-        Rectangle()
-          .fill(CodexTheme.divider)
-          .frame(width: 1)
-          .ignoresSafeArea()
-
-        // Right Detail Content Area
-        DetailContentView(enhancements: enhancements, state: state)
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(CodexTheme.mainBackground)
-      }
+      // High-contrast clean detail view
+      DetailContentView(enhancements: enhancements, state: state)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(CodexTheme.windowBackground)
     }
-    .frame(minWidth: 780, minHeight: 540)
+    .frame(minWidth: 740, minHeight: 480)
+    .onAppear {
+      state.loadAnalytics()
+    }
   }
 }
 
-// MARK: - Sidebar View
+// MARK: - Sidebar
 
 struct SidebarView: View {
   let enhancements: [Enhancement]
   @ObservedObject var state: HubState
 
-  private var activeCount: Int {
-    enhancements.filter { state.isEnabled($0.id) }.count
-  }
-
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Header Brand
-      HStack(spacing: 12) {
+      // Header
+      HStack(spacing: 10) {
         ZStack {
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(CodexTheme.sparkGradient)
-            .frame(width: 34, height: 34)
-            .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1.5)
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(CodexTheme.accentBlue)
+            .frame(width: 28, height: 28)
           Image(systemName: "sparkles")
-            .font(.system(size: 16, weight: .bold))
+            .font(.system(size: 14, weight: .bold))
             .foregroundStyle(.white)
         }
 
         VStack(alignment: .leading, spacing: 1) {
           Text("Codex Suite")
-            .font(.system(size: 14, weight: .bold))
+            .font(.system(size: 13, weight: .bold))
             .foregroundStyle(CodexTheme.textPrimary)
-          Text("v26.8 · Side-by-Side")
-            .font(.system(size: 10.5, weight: .medium))
+          Text("Side-by-Side Edition")
+            .font(.system(size: 10, weight: .medium))
             .foregroundStyle(CodexTheme.textTertiary)
         }
       }
-      .padding(.horizontal, 18)
-      .padding(.top, 28)
-      .padding(.bottom, 18)
+      .padding(.horizontal, 16)
+      .padding(.top, 24)
+      .padding(.bottom, 20)
 
-      // Search Bar
-      HStack(spacing: 6) {
-        Image(systemName: "magnifyingglass")
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(CodexTheme.textTertiary)
-        TextField("Filter...", text: $state.searchFilter)
-          .textFieldStyle(.plain)
-          .font(.system(size: 11.5))
-        if !state.searchFilter.isEmpty {
+      // Nav items
+      VStack(spacing: 4) {
+        ForEach(NavigationSection.allCases) { section in
           Button {
-            state.searchFilter = ""
+            state.selectedSection = section
           } label: {
-            Image(systemName: "xmark.circle.fill")
-              .font(.system(size: 10))
-              .foregroundStyle(CodexTheme.textTertiary)
+            HStack(spacing: 10) {
+              Image(systemName: section.iconSymbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(state.selectedSection == section ? .white : CodexTheme.textSecondary)
+                .frame(width: 18)
+
+              Text(section.rawValue)
+                .font(.system(size: 12.5, weight: state.selectedSection == section ? .semibold : .medium))
+                .foregroundStyle(state.selectedSection == section ? .white : CodexTheme.textPrimary)
+
+              Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+              RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(state.selectedSection == section ? CodexTheme.accentBlue : Color.clear)
+            )
           }
           .buttonStyle(.plain)
         }
       }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 6)
-      .background(
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
-          .fill(CodexTheme.cardBackground)
-          .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(CodexTheme.border, lineWidth: 0.5))
-      )
-      .padding(.horizontal, 14)
-      .padding(.bottom, 14)
-
-      // Navigation Items
-      ScrollView(.vertical, showsIndicators: false) {
-        VStack(spacing: 3) {
-          ForEach(NavigationSection.allCases) { section in
-            SidebarNavItem(
-              section: section,
-              isSelected: state.selectedSection == section,
-              badgeText: badgeForSection(section)
-            ) {
-              withAnimation(.easeInOut(duration: 0.12)) {
-                state.selectedSection = section
-              }
-            }
-          }
-        }
-        .padding(.horizontal, 10)
-      }
+      .padding(.horizontal, 10)
 
       Spacer()
 
-      // Footer Live Status
-      HStack(spacing: 8) {
+      // Footer
+      HStack(spacing: 6) {
         Circle()
           .fill(CodexTheme.successGreen)
-          .frame(width: 7, height: 7)
-        Text("\(activeCount) of \(enhancements.count) Enabled")
+          .frame(width: 6, height: 6)
+        Text("\(enhancements.count) Extensions Active")
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(CodexTheme.textSecondary)
-        Spacer()
       }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 14)
-      .background(CodexTheme.rowAltBackground)
-    }
-  }
-
-  private func badgeForSection(_ section: NavigationSection) -> String? {
-    switch section {
-    case .overview: return "\(enhancements.count)"
-    case .services: return "\(enhancements.filter(\.isService).count)"
-    case .analytics: return "1"
-    case .tools: return "\(enhancements.filter { !$0.isService && $0.id != "ccusage" }.count)"
-    case .system: return "OK"
-    }
-  }
-}
-
-struct SidebarNavItem: View {
-  let section: NavigationSection
-  let isSelected: Bool
-  let badgeText: String?
-  let action: () -> Void
-
-  @State private var isHovered = false
-
-  var body: some View {
-    Button(action: action) {
-      HStack(spacing: 10) {
-        Image(systemName: section.iconSymbol)
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(isSelected ? .white : CodexTheme.textSecondary)
-          .frame(width: 20)
-
-        Text(section.rawValue)
-          .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
-          .foregroundStyle(isSelected ? .white : CodexTheme.textPrimary)
-
-        Spacer()
-
-        if let badgeText {
-          Text(badgeText)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(isSelected ? .white.opacity(0.9) : CodexTheme.textTertiary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1.5)
-            .background(
-              Capsule().fill(isSelected ? Color.white.opacity(0.22) : CodexTheme.border)
-            )
-        }
-      }
-      .padding(.horizontal, 10)
-      .padding(.vertical, 8)
-      .background(
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-          .fill(isSelected ? CodexTheme.accentBlue : (isHovered ? CodexTheme.cardHoverBackground : Color.clear))
-      )
-    }
-    .buttonStyle(.plain)
-    .onHover { hovering in
-      isHovered = hovering
+      .padding(14)
     }
   }
 }
@@ -575,125 +562,49 @@ struct DetailContentView: View {
   let enhancements: [Enhancement]
   @ObservedObject var state: HubState
 
-  private var filteredItems: [Enhancement] {
-    let base: [Enhancement]
-    switch state.selectedSection {
-    case .overview:
-      base = enhancements
-    case .services:
-      base = enhancements.filter(\.isService)
-    case .analytics:
-      base = enhancements.filter { $0.id == "ccusage" }
-    case .tools:
-      base = enhancements.filter { !$0.isService && $0.id != "ccusage" }
-    case .system:
-      base = []
-    }
-
-    if state.searchFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return base
-    }
-    let q = state.searchFilter.lowercased()
-    return base.filter { item in
-      item.label.lowercased().contains(q) ||
-      item.summaryText.lowercased().contains(q) ||
-      (item.config?.port != nil && "\(item.config!.port!)".contains(q))
-    }
-  }
-
   var body: some View {
-    VStack(spacing: 0) {
-      // Detail Top Bar
-      HStack(alignment: .center, spacing: 12) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(state.selectedSection.rawValue)
-            .font(.system(size: 18, weight: .bold))
-            .foregroundStyle(CodexTheme.textPrimary)
-          Text(subtitleForSection(state.selectedSection))
-            .font(.system(size: 11.5))
-            .foregroundStyle(CodexTheme.textSecondary)
-        }
-
+    VStack(alignment: .leading, spacing: 0) {
+      // Header
+      HStack {
+        Text(state.selectedSection.rawValue)
+          .font(.system(size: 18, weight: .bold))
+          .foregroundStyle(CodexTheme.textPrimary)
         Spacer()
-
-        if state.selectedSection == .system {
-          Button {
-            let supportDir = FileManager.default.homeDirectoryForCurrentUser
-              .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
-            HubActions.revealPath(supportDir.path)
-          } label: {
-            Label("Reveal Profile", systemImage: "folder.fill")
-              .font(.system(size: 11.5, weight: .medium))
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
       }
-      .padding(.horizontal, 28)
-      .padding(.top, 28)
+      .padding(.horizontal, 24)
+      .padding(.top, 24)
       .padding(.bottom, 16)
 
       Divider()
         .background(CodexTheme.divider)
 
-      // Main Scroll Area
+      // Content
       ScrollView(.vertical, showsIndicators: true) {
-        VStack(alignment: .leading, spacing: 18) {
-          if state.selectedSection == .system {
-            SystemEnvironmentPane()
-          } else if filteredItems.isEmpty {
-            VStack(spacing: 12) {
-              Image(systemName: "tray.fill")
-                .font(.system(size: 32))
-                .foregroundStyle(CodexTheme.textTertiary)
-                .padding(.top, 40)
-              Text("No Items Match Current Filter")
-                .font(.system(size: 13.5, weight: .semibold))
-                .foregroundStyle(CodexTheme.textPrimary)
-              Text("Clear the filter or switch tabs to view more extensions.")
-                .font(.system(size: 11.5))
-                .foregroundStyle(CodexTheme.textSecondary)
+        VStack(alignment: .leading, spacing: 14) {
+          switch state.selectedSection {
+          case .extensions:
+            ForEach(enhancements) { item in
+              ExtensionCard(enhancement: item, state: state)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 40)
-          } else {
-            ForEach(filteredItems) { item in
-              MasterEnhancementCard(enhancement: item, state: state)
-            }
+          case .analytics:
+            AnalyticsDashboardView(state: state)
+          case .environment:
+            EnvironmentView()
           }
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 20)
+        .padding(24)
       }
-    }
-  }
-
-  private func subtitleForSection(_ section: NavigationSection) -> String {
-    switch section {
-    case .overview: return "Manage all local proxies, analytical engines, and workflow bridges."
-    case .services: return "High-performance daemon proxies operating on isolated local ports."
-    case .analytics: return "Token usage monitoring, daily rollouts, and session analytics."
-    case .tools: return "Model prompt enhancers, specialized subagent tools, and utilities."
-    case .system: return "Configuration files, isolated CodexHome storage, and runtime diagnostics."
     }
   }
 }
 
-// MARK: - Master Enhancement Card
+// MARK: - Extension Card
 
-struct MasterEnhancementCard: View {
+struct ExtensionCard: View {
   let enhancement: Enhancement
   @ObservedObject var state: HubState
-  @State private var isHovered = false
 
-  private var isEnabledBinding: Binding<Bool> {
-    Binding(
-      get: { state.isEnabled(enhancement.id) },
-      set: { state.setEnabled(enhancement.id, $0) }
-    )
-  }
-
-  private var viewSelectionBinding: Binding<String> {
+  private var viewBinding: Binding<String> {
     Binding(
       get: { state.view(for: enhancement.id, options: enhancement.viewOptions) },
       set: { state.setView(enhancement.id, $0) }
@@ -701,239 +612,304 @@ struct MasterEnhancementCard: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      // Header Strip
-      HStack(alignment: .top, spacing: 14) {
-        // Icon Container
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .top, spacing: 12) {
+        // Icon
         ZStack {
-          RoundedRectangle(cornerRadius: 11, style: .continuous)
-            .fill(
-              LinearGradient(
-                colors: [enhancement.accentColor.opacity(0.92), enhancement.accentColor],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-              )
-            )
-            .frame(width: 40, height: 40)
-            .shadow(color: enhancement.accentColor.opacity(0.28), radius: 3.5, y: 1.5)
-
+          RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(enhancement.accentColor)
+            .frame(width: 36, height: 36)
           Image(systemName: enhancement.iconSymbol)
-            .font(.system(size: 18, weight: .semibold))
+            .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(.white)
         }
 
-        VStack(alignment: .leading, spacing: 4) {
+        // Info
+        VStack(alignment: .leading, spacing: 3) {
           HStack(spacing: 8) {
             Text(enhancement.label)
-              .font(.system(size: 14.5, weight: .semibold))
+              .font(.system(size: 14, weight: .bold))
               .foregroundStyle(CodexTheme.textPrimary)
 
-            // Category Badge
-            Text(enhancement.isService ? "SERVICE" : "TOOL")
-              .font(.system(size: 8.5, weight: .bold))
-              .foregroundStyle(enhancement.isService ? CodexTheme.accentBlue : CodexTheme.warningOrange)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(
-                Capsule()
-                  .fill((enhancement.isService ? CodexTheme.accentBlue : CodexTheme.warningOrange).opacity(0.12))
-              )
-
-            // Port or Version Indicator
             if let port = enhancement.config?.port {
-              HStack(spacing: 4) {
-                Circle()
-                  .fill(state.isEnabled(enhancement.id) ? CodexTheme.successGreen : CodexTheme.textTertiary)
-                  .frame(width: 5.5, height: 5.5)
-                Text("localhost:\(port)")
-                  .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-              }
-              .padding(.horizontal, 7)
-              .padding(.vertical, 2)
-              .background(
-                Capsule()
-                  .fill(CodexTheme.rowAltBackground)
-                  .overlay(Capsule().stroke(CodexTheme.border, lineWidth: 0.5))
-              )
-              .foregroundStyle(CodexTheme.textSecondary)
-            } else if let version = enhancement.resolvedVersion {
-              Text("v\(version)")
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(CodexTheme.rowAltBackground))
-                .foregroundStyle(CodexTheme.textTertiary)
+              Text(":\(port)")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(CodexTheme.accentBlue)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1.5)
+                .background(Capsule().fill(CodexTheme.accentBlue.opacity(0.12)))
             }
           }
 
           Text(enhancement.summaryText)
-            .font(.system(size: 12))
+            .font(.system(size: 11.5))
             .foregroundStyle(CodexTheme.textSecondary)
-            .lineSpacing(2)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-
-        Spacer(minLength: 16)
-
-        // Native Switch
-        Toggle("", isOn: isEnabledBinding)
-          .toggleStyle(.switch)
-          .labelsHidden()
-          .controlSize(.small)
-      }
-      .padding(16)
-
-      // Interactive Action Deck
-      if state.isEnabled(enhancement.id) {
-        VStack(spacing: 0) {
-          Divider()
-            .background(CodexTheme.divider)
-
-          HStack(spacing: 12) {
-            if enhancement.viewOptions.count > 1 {
-              Picker("Presentation", selection: viewSelectionBinding) {
-                ForEach(enhancement.viewOptions, id: \.self) { opt in
-                  Text(enhancement.viewLabels[enhancement.viewOptions.firstIndex(of: opt) ?? 0])
-                    .tag(opt)
-                }
-              }
-              .pickerStyle(.segmented)
-              .controlSize(.small)
-              .frame(minWidth: 210, maxWidth: 240)
-            } else {
-              HStack(spacing: 5) {
-                Image(systemName: "terminal.fill")
-                  .font(.system(size: 10))
-                  .foregroundStyle(CodexTheme.textTertiary)
-                Text("Command Line Process")
-                  .font(.system(size: 11, weight: .medium))
-                  .foregroundStyle(CodexTheme.textTertiary)
-              }
-            }
-
-            Spacer()
-
-            Button {
-              HubActions.open(enhancement, view: state.view(for: enhancement.id, options: enhancement.viewOptions))
-            } label: {
-              HStack(spacing: 6) {
-                Text(enhancement.openLabel)
-                  .font(.system(size: 11.5, weight: .semibold))
-                Image(systemName: "arrow.up.right")
-                  .font(.system(size: 10, weight: .bold))
-              }
-              .padding(.horizontal, 4)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .tint(enhancement.accentColor)
-          }
-          .padding(.horizontal, 16)
-          .padding(.vertical, 10)
-          .background(CodexTheme.rowAltBackground)
-        }
-        .transition(.opacity.combined(with: .move(edge: .top)))
-      }
-    }
-    .background(
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .fill(isHovered ? CodexTheme.cardHoverBackground : CodexTheme.cardBackground)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .stroke(
-          state.isEnabled(enhancement.id) ? CodexTheme.activeBorder : CodexTheme.border,
-          lineWidth: 1
-        )
-    )
-    .shadow(color: Color.black.opacity(isHovered ? 0.07 : 0.025), radius: isHovered ? 5 : 2, y: isHovered ? 2.5 : 1)
-    .onHover { hovering in
-      withAnimation(.easeInOut(duration: 0.12)) {
-        isHovered = hovering
-      }
-    }
-    .animation(.spring(response: 0.22, dampingFraction: 0.8), value: state.isEnabled(enhancement.id))
-  }
-}
-
-// MARK: - System & Environment Pane
-
-struct SystemEnvironmentPane: View {
-  private let supportDir = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      // Path 1: Profile
-      EnvironmentRow(
-        title: "Isolated Profile Directory",
-        subtitle: "Private cookies, local storage, Electron caches, and GPU caches",
-        path: supportDir.appendingPathComponent("Profile").path
-      )
-
-      // Path 2: CodexHome
-      EnvironmentRow(
-        title: "Codex Home & Rollout Storage",
-        subtitle: "CLI authentication tokens, session index JSONL, and configuration",
-        path: supportDir.appendingPathComponent("CodexHome").path
-      )
-
-      // Path 3: Extensions Directory
-      EnvironmentRow(
-        title: "Installed Enhancements Bundle",
-        subtitle: "Compiled Node packages, Bun runtimes, and local web dashboards",
-        path: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/enhancements").path
-      )
-
-      // Diagnostic Card
-      VStack(alignment: .leading, spacing: 10) {
-        Text("Security & Sandboxing")
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(CodexTheme.textPrimary)
-
-        Text("All extensions execute with isolated environment variables under CODEX_HOME and CODEX_ELECTRON_USER_DATA_PATH. Upstream ChatGPT credentials and official app sessions remain isolated.")
-          .font(.system(size: 11.5))
-          .foregroundStyle(CodexTheme.textSecondary)
-          .lineSpacing(2)
-      }
-      .padding(16)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(CodexTheme.cardBackground)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .stroke(CodexTheme.border, lineWidth: 1)
-      )
-    }
-  }
-}
-
-struct EnvironmentRow: View {
-  let title: String
-  let subtitle: String
-  let path: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(title)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(CodexTheme.textPrimary)
-          Text(subtitle)
-            .font(.system(size: 11))
-            .foregroundStyle(CodexTheme.textSecondary)
+            .lineSpacing(1.5)
         }
 
         Spacer()
 
+        // Toggle
+        Toggle("", isOn: Binding(
+          get: { state.isEnabled(enhancement.id) },
+          set: { state.setEnabled(enhancement.id, $0) }
+        ))
+        .toggleStyle(.switch)
+        .labelsHidden()
+        .controlSize(.small)
+      }
+
+      // Actions Strip
+      if state.isEnabled(enhancement.id) {
+        HStack {
+          if enhancement.viewOptions.count > 1 {
+            Picker("", selection: viewBinding) {
+              ForEach(enhancement.viewOptions, id: \.self) { opt in
+                Text(enhancement.viewLabels[enhancement.viewOptions.firstIndex(of: opt) ?? 0])
+                  .tag(opt)
+              }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .frame(width: 220)
+          }
+
+          Spacer()
+
+          Button {
+            HubActions.open(enhancement, view: state.view(for: enhancement.id, options: enhancement.viewOptions))
+          } label: {
+            HStack(spacing: 4) {
+              Text(enhancement.ui?.openLabel ?? "Launch")
+                .font(.system(size: 11.5, weight: .semibold))
+              Image(systemName: "arrow.up.right")
+                .font(.system(size: 10, weight: .bold))
+            }
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.small)
+          .tint(enhancement.accentColor)
+        }
+        .padding(.top, 4)
+      }
+    }
+    .padding(14)
+    .background(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(CodexTheme.cardBackground)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .stroke(CodexTheme.border, lineWidth: 1)
+    )
+  }
+}
+
+// MARK: - Usage Analytics Dashboard
+
+struct AnalyticsDashboardView: View {
+  @ObservedObject var state: HubState
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      if state.isLoadingUsage {
+        HStack(spacing: 8) {
+          ProgressView()
+            .controlSize(.small)
+          Text("Querying Codex Usage Engine...")
+            .font(.system(size: 12))
+            .foregroundStyle(CodexTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 40)
+      } else if let totals = state.usageData?.totals {
+        // Metric Cards
+        HStack(spacing: 12) {
+          MetricCard(
+            title: "Total Cost",
+            value: String(format: "$%.2f", totals.totalCost ?? 0.0),
+            color: CodexTheme.successGreen
+          )
+          MetricCard(
+            title: "Total Tokens",
+            value: formatNumber(totals.totalTokens ?? 0),
+            color: CodexTheme.accentBlue
+          )
+          MetricCard(
+            title: "Cache Hits",
+            value: formatNumber(totals.cacheReadTokens ?? 0),
+            color: CodexTheme.warningAmber
+          )
+        }
+
+        // Action
+        HStack {
+          Text("Recent Activity")
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(CodexTheme.textPrimary)
+
+          Spacer()
+
+          Button {
+            HubActions.openTerminalForCcusage()
+          } label: {
+            Label("Open in Terminal", systemImage: "terminal")
+              .font(.system(size: 11, weight: .semibold))
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+
+          Button {
+            state.loadAnalytics()
+          } label: {
+            Image(systemName: "arrow.clockwise")
+              .font(.system(size: 11, weight: .semibold))
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }
+        .padding(.top, 8)
+
+        // Daily Table
+        if let daily = state.usageData?.daily, !daily.isEmpty {
+          VStack(spacing: 6) {
+            ForEach(daily.prefix(7)) { day in
+              HStack {
+                Text(day.period ?? "—")
+                  .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                  .foregroundStyle(CodexTheme.textPrimary)
+                  .frame(width: 95, alignment: .leading)
+
+                if let models = day.modelsUsed {
+                  Text(models.joined(separator: ", "))
+                    .font(.system(size: 11))
+                    .foregroundStyle(CodexTheme.textSecondary)
+                    .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text(formatNumber(day.totalTokens ?? 0))
+                  .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                  .foregroundStyle(CodexTheme.textSecondary)
+                  .frame(width: 75, alignment: .trailing)
+
+                Text(String(format: "$%.2f", day.totalCost ?? 0.0))
+                  .font(.system(size: 12, weight: .bold, design: .monospaced))
+                  .foregroundStyle(CodexTheme.textPrimary)
+                  .frame(width: 65, alignment: .trailing)
+              }
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                  .fill(CodexTheme.rowBackground)
+              )
+            }
+          }
+        }
+      } else {
+        VStack(spacing: 8) {
+          Text("No Token Usage Logged Yet")
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(CodexTheme.textPrimary)
+          Text("Run Codex sessions to automatically populate usage and cost metrics.")
+            .font(.system(size: 11.5))
+            .foregroundStyle(CodexTheme.textSecondary)
+          Button("Open Terminal CLI") {
+            HubActions.openTerminalForCcusage()
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.small)
+          .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 30)
+      }
+    }
+  }
+
+  private func formatNumber(_ num: Int) -> String {
+    if num >= 1_000_000_000 {
+      return String(format: "%.2fB", Double(num) / 1_000_000_000.0)
+    } else if num >= 1_000_000 {
+      return String(format: "%.1fM", Double(num) / 1_000_000.0)
+    } else if num >= 1_000 {
+      return String(format: "%.0fK", Double(num) / 1_000.0)
+    }
+    return "\(num)"
+  }
+}
+
+struct MetricCard: View {
+  let title: String
+  let value: String
+  let color: Color
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(CodexTheme.textSecondary)
+      Text(value)
+        .font(.system(size: 18, weight: .bold, design: .rounded))
+        .foregroundStyle(color)
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(CodexTheme.cardBackground)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .stroke(CodexTheme.border, lineWidth: 1)
+    )
+  }
+}
+
+// MARK: - Environment View
+
+struct EnvironmentView: View {
+  private let supportDir = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      PathRow(
+        title: "Isolated Profile Directory",
+        path: supportDir.appendingPathComponent("Profile").path
+      )
+
+      PathRow(
+        title: "CodexHome Workspace Storage",
+        path: supportDir.appendingPathComponent("CodexHome").path
+      )
+
+      PathRow(
+        title: "Bundled Enhancements",
+        path: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/enhancements").path
+      )
+    }
+  }
+}
+
+struct PathRow: View {
+  let title: String
+  let path: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text(title)
+          .font(.system(size: 12.5, weight: .bold))
+          .foregroundStyle(CodexTheme.textPrimary)
+        Spacer()
         Button {
           HubActions.revealPath(path)
         } label: {
-          Label("Reveal", systemImage: "arrow.up.forward.app")
-            .font(.system(size: 11, weight: .medium))
+          Text("Reveal in Finder")
+            .font(.system(size: 11, weight: .semibold))
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -947,16 +923,16 @@ struct EnvironmentRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
           RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(CodexTheme.rowAltBackground)
+            .fill(CodexTheme.rowBackground)
         )
     }
-    .padding(14)
+    .padding(12)
     .background(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(CodexTheme.cardBackground)
     )
     .overlay(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
         .stroke(CodexTheme.border, lineWidth: 1)
     )
   }
@@ -986,12 +962,19 @@ func loadEnhancements() -> [Enhancement] {
   return []
 }
 
-// MARK: - Objective-C Interop Entry Points
+// MARK: - Objective-C Interop
 
 @_cdecl("ShowEnhancementHub")
 public func ShowEnhancementHub() {
   DispatchQueue.main.async {
-    HubWindow.shared.show(enhancements: loadEnhancements())
+    HubWindow.shared.show(enhancements: loadEnhancements(), initialSection: .extensions)
+  }
+}
+
+@_cdecl("ShowEnhancementAnalytics")
+public func ShowEnhancementAnalytics() {
+  DispatchQueue.main.async {
+    HubWindow.shared.show(enhancements: loadEnhancements(), initialSection: .analytics)
   }
 }
 
