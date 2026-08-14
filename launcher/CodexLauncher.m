@@ -341,17 +341,27 @@ static NSMenuItem *MenuItemWithSymbol(NSString *title, SEL action, NSString *sym
 
 static void RebuildEnhancementMenu(void) {
   NSMenu *menu = [[NSMenu alloc] init];
+  menu.autoenablesItems = NO;
 
-  NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:@"Oh My OpenAI"
-                                                  action:nil
-                                           keyEquivalent:@""];
-  header.enabled = NO;
-  header.attributedTitle = [[NSAttributedString alloc]
-    initWithString:@"Oh My OpenAI"
-        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13
-                                                             weight:NSFontWeightSemibold]}];
-  [menu addItem:header];
+  NSMenuItem *openCodex = MenuItemWithSymbol(@"Open Codex",
+                                             @selector(openCodexAppAction:),
+                                             @"arrow.up.forward.app");
+  [menu addItem:openCodex];
+
+  NSMenuItem *newChat = MenuItemWithSymbol(@"New Chat",
+                                           @selector(newChatAction:),
+                                           @"square.and.pencil");
+  newChat.keyEquivalent = @"n";
+  [menu addItem:newChat];
+
   [menu addItem:[NSMenuItem separatorItem]];
+
+  NSMenuItem *enhParent = [[NSMenuItem alloc] initWithTitle:@"✦ Enhancements"
+                                                     action:nil
+                                              keyEquivalent:@""];
+  enhParent.image = [NSImage imageWithSystemSymbolName:@"sparkles"
+                              accessibilityDescription:@"Enhancements"];
+  NSMenu *enhSubmenu = [[NSMenu alloc] init];
 
   for (NSDictionary *enhancement in LoadEnhancementManifest()) {
     NSDictionary *ui = enhancement[@"ui"];
@@ -375,7 +385,7 @@ static void RebuildEnhancementMenu(void) {
         [submenu addItem:option];
       }
       item.submenu = submenu;
-      [menu addItem:item];
+      [enhSubmenu addItem:item];
     } else {
       NSString *title = ui[@"openLabel"];
       if (!title) title = ui[@"label"];
@@ -384,16 +394,27 @@ static void RebuildEnhancementMenu(void) {
                                             EnhancementSymbol(identifier));
       NSString *view = EnhancementViewOptions(enhancement).firstObject;
       item.representedObject = @[identifier, view];
-      [menu addItem:item];
+      [enhSubmenu addItem:item];
     }
   }
 
+  [enhSubmenu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem *enhSettings = MenuItemWithSymbol(@"Enhancements Settings…",
+                                               @selector(showSettingsAction:),
+                                               @"gearshape");
+  [enhSubmenu addItem:enhSettings];
+
+  enhParent.submenu = enhSubmenu;
+  [menu addItem:enhParent];
+
   [menu addItem:[NSMenuItem separatorItem]];
-  NSMenuItem *settings = MenuItemWithSymbol(@"Enhancements Settings…",
+  NSMenuItem *settings = MenuItemWithSymbol(@"Settings…",
                                             @selector(showSettingsAction:),
                                             @"gearshape");
   settings.keyEquivalent = @",";
   [menu addItem:settings];
+
+  [menu addItem:[NSMenuItem separatorItem]];
   NSMenuItem *quit = MenuItemWithSymbol(@"Quit Codex",
                                         @selector(terminate:),
                                         @"power");
@@ -1206,6 +1227,24 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
 }
 
 // ─── Enhancement menu/settings actions ─────────────────────────
+
+- (void)openCodexAppAction:(id)sender {
+  (void)sender;
+  [self launchWithArguments:@[]];
+  NSRunningApplication *app = [NSRunningApplication runningApplicationsWithBundleIdentifier:kRuntimeBundleIdentifier].firstObject;
+  if (app) {
+    [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  }
+}
+
+- (void)newChatAction:(id)sender {
+  (void)sender;
+  [self launchWithArguments:@[@"codex-rebuild://chat/new"]];
+  NSRunningApplication *app = [NSRunningApplication runningApplicationsWithBundleIdentifier:kRuntimeBundleIdentifier].firstObject;
+  if (app) {
+    [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  }
+}
 
 - (void)openEnhancementAction:(NSMenuItem *)sender {
   NSArray<NSString *> *payload = sender.representedObject;
