@@ -17,14 +17,13 @@
 - **First enhancement — opencodex**: a local OpenAI-compatible gateway
   dashboard (port 10100) served from the staged bun runtime, with per-service
   logs under `CodexDesktop-Rebuild/enhancements/`.
-- **More enhancements**: native `ccusage` (usage/cost analyzer scoped to the
-  app's CodexHome), `codex-chatgpt-web` (ChatGPT Web as native Codex models),
-  and `codexpp` (Codex++ launcher/manager). The bundler now supports
-  `github:` sources (repo tarballs and pinned release assets) and `tool`-type
-  enhancements; `scripts/enhancement-tool.js` runs tools with the app's
-  isolated CODEX_HOME.
+- **Native usage dashboard**: replaced the terminal-only `ccusage` integration
+   with the pinned NerfTrack macOS Intel desktop app, exposing usage history,
+   quota, diagnostics, and API-equivalent value estimates in a real UI.
+   `codex-chatgpt-web` remains available for bridge setup and diagnostics. The
+   bundler supports pinned GitHub release assets and native app enhancements.
 - **Native command center**: a menu bar item lists every enhancement
-  (dashboard in-app/browser, usage report, launcher, manager) and
+   (dashboard in-app/browser, usage report, and setup terminal) and
   **Enhancements Settings…** provides one native window per feature — enable
   toggle, status, view selector, and Open button (persisted in
   NSUserDefaults).

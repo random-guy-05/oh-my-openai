@@ -5,16 +5,15 @@
  * Tools are staged at build time (see enhancements/manifest.json and
  * scripts/bundle-enhancements.js) but are not started by the launcher. This
  * runner executes a tool's toolCommand from its staged directory with
- * CODEX_HOME pointed at the app's isolated CodexHome, so tools like ccusage
- * analyze exactly the usage this app produces.
+ * CODEX_HOME pointed at the app's isolated CodexHome. Native app enhancements
+ * are opened by the launcher and are not invoked through this CLI runner.
  *
  * Usage:
  *   node scripts/enhancement-tool.js <Codex.app> --list
  *   node scripts/enhancement-tool.js <Codex.app> <id> [args...]
  *
  * Examples:
- *   node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app ccusage --days 7
- *   node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app codexpp
+ *   node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app codex-chatgpt-web
  */
 "use strict";
 
@@ -50,6 +49,8 @@ function main() {
     for (const enhancement of manifest.enhancements) {
       const suffix = enhancement.type === "service"
         ? `service (port ${enhancement.config && enhancement.config.port})`
+      : enhancement.appPath
+        ? `native app — ${enhancement.appPath}`
         : `tool${enhancement.toolCommand ? " — " + enhancement.toolCommand.join(" ") : ""}`;
       console.log(`  ${enhancement.id}  [${suffix}]`);
     }
@@ -62,7 +63,7 @@ function main() {
     process.exit(1);
   }
   if (!enhancement.toolCommand || enhancement.toolCommand.length === 0) {
-    console.error(`Enhancement ${id} is not a runnable tool (no toolCommand).`);
+    console.error(`Enhancement ${id} is a native app or otherwise has no toolCommand; open it from the Codex command center.`);
     process.exit(1);
   }
 

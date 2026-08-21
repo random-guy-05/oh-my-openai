@@ -24,16 +24,18 @@
       }
     },
     {
-      "id": "ccusage",
+      "id": "nerftrack",
       "type": "tool",
-      "source": "npm:ccusage@20.0.19",
-      "description": "Real-time token & cost analytics engine for Codex sessions, models, and daily billing rollouts.",
-      "toolCommand": ["node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage"],
-      "verify": ["node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage"],
+      "source": "github:NerfTrack/NerfTrack@v1.1.2",
+      "asset": "NerfTrack-1.1.2-macos-x86_64.dmg",
+      "sha256": "5e132574fd6216516095f17bd20ad8fc5a3b6c2aad8971a75f4f37ac732994f7",
+      "appPath": "NerfTrack.app",
+      "description": "Native local dashboard for Codex usage, history, quota, diagnostics, and API-equivalent value estimates.",
+      "verify": ["NerfTrack.app/Contents/Info.plist"],
       "ui": {
-        "label": "Usage Analyzer",
-        "kind": "ccusage",
-        "openLabel": "View Analytics Report"
+        "label": "NerfTrack Usage Dashboard",
+        "kind": "app",
+        "openLabel": "Open NerfTrack"
       }
     },
     {
@@ -41,13 +43,13 @@
       "type": "tool",
       "source": "github:miuuyy/codex-chatgpt-web@v2.1.7",
       "dependencies": ["npm:bun@1.3.14"],
-      "description": "Local Responses bridge for routing tasks through user-authenticated ChatGPT sessions.",
+      "description": "ChatGPT Web bridge setup and diagnostics using the isolated Codex profile.",
       "toolCommand": ["node_modules/bun/bin/bun.exe", "run", "--cwd", "source", "src/cli.ts", "doctor"],
       "verify": ["source/package.json", "node_modules/bun/bin/bun.exe"],
       "ui": {
-        "label": "ChatGPT Web Bridge",
+        "label": "ChatGPT Web Bridge (Setup)",
         "kind": "terminal",
-        "openLabel": "Open Bridge Terminal"
+        "openLabel": "Open Setup Terminal"
       }
     }
   ]

@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run repository checks
+        run: npm test && npm run doctor
+
       - name: Check upstream versions
         id: detect
         run: |
@@ -74,6 +77,9 @@ jobs:
         run: |
           npm ci
 
+      - name: Run repository checks
+        run: npm test && npm run doctor
+
       - name: Install tools
         run: |
           brew install --quiet sevenzip
@@ -87,6 +93,10 @@ jobs:
       - name: Build side-by-side Intel DMG
         if: matrix.arch == 'x64'
         run: npm run build:side-by-side:x64
+
+      - name: Verify side-by-side enhancement payload
+        if: matrix.arch == 'x64'
+        run: node scripts/verify-enhancements.js --app out/side-by-side-mac-x64/Codex.app
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -112,6 +122,9 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
+
+      - name: Run repository checks
+        run: npm test && npm run doctor
 
       - name: Install tools
         run: |
@@ -161,6 +174,9 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
+
+      - name: Run repository checks
+        run: npm test && npm run doctor
 
       - name: Sync upstream (macOS ZIP for unix, skip Windows)
         run: node scripts/sync-upstream.js --force --skip-win
@@ -251,6 +267,43 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: artifacts
+
+      - name: Update Homebrew Cask metadata
+        if: steps.version.outputs.version != ''
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG=$(find artifacts -type f -name "Codex-side-by-side-mac-x64-${RELEASE_VERSION}.dmg" -print -quit)
+          test -n "$DMG"
+          RELEASE_SHA256=$(sha256sum "$DMG" | awk '{print $1}')
+          export RELEASE_SHA256
+          node <<'NODE'
+          const fs = require('fs');
+          const file = 'Casks/codex-desktop.rb';
+          const version = process.env.RELEASE_VERSION;
+          const sha256 = process.env.RELEASE_SHA256;
+          let cask = fs.readFileSync(file, 'utf8');
+          cask = cask.replace(/^\s*version\s+"[^"]+"/m, `  version "${version}"`);
+          cask = cask.replace(/^\s*# Side-by-side DMG hash.*$/m, `  # Side-by-side DMG hash for v${version}.`);
+           cask = cask.replace(/^\s*sha256\s+"[^"]+"/m, `  sha256 "${sha256}"`);
+           fs.writeFileSync(file, cask);
+           const sumsFile = 'SHA256SUMS';
+           const artifact = `Codex-side-by-side-mac-x64-${version}.dmg`;
+           const sums = fs.readFileSync(sumsFile, 'utf8')
+             .split(/\r?\n/)
+             .filter(line => !line.trim().endsWith(` ${artifact}`));
+           sums.push(`${sha256}  ${artifact}`);
+           fs.writeFileSync(sumsFile, sums.filter(Boolean).join('\n') + '\n');
+           NODE
+           node scripts/verify-release-metadata.js
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+           git add Casks/codex-desktop.rb SHA256SUMS
+          if ! git diff --cached --quiet; then
+            git commit -m "Update Homebrew Cask for ${RELEASE_VERSION}"
+            git push origin HEAD
+          fi
 
       - name: Display structure
         run: ls -lhR artifacts/

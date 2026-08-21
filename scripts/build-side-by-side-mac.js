@@ -189,6 +189,21 @@ function requireArchitecture(binaryPath, architecture, label) {
   }
 }
 
+function signBundledEnhancementApps(enhancementsRoot) {
+  if (!fs.existsSync(enhancementsRoot)) return;
+  for (const enhancementId of fs.readdirSync(enhancementsRoot)) {
+    const enhancementDir = path.join(enhancementsRoot, enhancementId);
+    if (!fs.statSync(enhancementDir).isDirectory()) continue;
+    for (const entry of fs.readdirSync(enhancementDir)) {
+      if (!entry.endsWith(".app")) continue;
+      const appPath = path.join(enhancementDir, entry);
+      run("/usr/bin/codesign", [
+        "--force", "--deep", "--sign", "-", "--timestamp=none", "--options", "runtime", appPath,
+      ]);
+    }
+  }
+}
+
 function extractEntitlements(appPath, destination) {
   const entitlements = run("/usr/bin/codesign", ["--display", "--entitlements", ":-", appPath]);
   if (!entitlements || entitlements.length === 0) {
@@ -354,141 +369,79 @@ async function main() {
 
             const helperFn = `
 function getEnhancementsTrayMenu(elModule) {
+  const fallback = (shell) => ({
+    label: '✦ Enhancements',
+    submenu: [{
+      label: 'Enhancements Settings…',
+      click: () => { if (shell) shell.openExternal('codex-rebuild://settings'); }
+    }]
+  });
+
   try {
     const fs = require('fs');
     const path = require('path');
     const el = elModule || require('electron');
     const shell = el.shell || (el.default && el.default.shell);
     const BrowserWindow = el.BrowserWindow || (el.default && el.default.BrowserWindow);
+    const resourcesPath = process.resourcesPath;
+    const manifestFile = resourcesPath
+      ? path.join(resourcesPath, 'enhancements', 'manifest.json')
+      : null;
+    if (!manifestFile || !fs.existsSync(manifestFile)) return fallback(shell);
 
-    let manifest = null;
-    const searchDirs = [
-      process.resourcesPath ? path.join(process.resourcesPath, 'enhancements') : null,
-      process.resourcesPath ? path.join(process.resourcesPath, '..', 'Resources', 'enhancements') : null,
-      '/Users/admin/oh-my-openai/out/side-by-side-mac-x64/Codex.app/Contents/Resources/enhancements',
-      '/Users/admin/oh-my-openai/enhancements'
-    ];
-
-    for (const dir of searchDirs) {
-      if (!dir) continue;
-      try {
-        const manifestFile = path.join(dir, 'manifest.json');
-        if (fs.existsSync(manifestFile)) {
-          manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-          break;
-        }
-      } catch {}
-    }
-
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
     const subItems = [];
-    if (manifest && Array.isArray(manifest.enhancements)) {
-      for (const enh of manifest.enhancements) {
-        const ui = enh.ui || {};
-        const label = ui.label || enh.id || 'Enhancement';
-        if (enh.id === 'opencodex' || (ui.kind === 'web' && ui.url)) {
-          const targetUrl = ui.url || 'http://127.0.0.1:10100';
-          subItems.push({
-            label: label,
-            submenu: [
-              {
-                label: 'In-App Window',
-                click: () => {
-                  try {
-                    if (BrowserWindow) {
-                      const win = new BrowserWindow({
-                        width: 1100,
-                        height: 750,
-                        title: label,
-                        titleBarStyle: 'hiddenInset',
-                        webPreferences: { nodeIntegration: false, contextIsolation: true }
-                      });
-                      win.loadURL(targetUrl);
-                    } else if (shell) {
-                      shell.openExternal(targetUrl);
-                    }
-                  } catch {
-                    if (shell) shell.openExternal(targetUrl);
-                  }
-                }
-              },
-              {
-                label: 'Default Browser',
-                click: () => {
-                  try {
-                    if (shell) shell.openExternal(targetUrl);
-                  } catch {}
-                }
+    for (const enhancement of Array.isArray(manifest.enhancements) ? manifest.enhancements : []) {
+      const ui = enhancement.ui || {};
+      const label = ui.label || enhancement.id || 'Enhancement';
+      const openUrl = (view) => {
+        if (!shell) return;
+        const query = new URLSearchParams({ id: enhancement.id, view });
+        shell.openExternal('codex-rebuild://enhancement?' + query.toString());
+      };
+
+      if (ui.kind === 'web' && ui.url) {
+        subItems.push({
+          label,
+          submenu: [
+            {
+              label: 'In-App Window',
+              click: () => {
+                try {
+                  if (!BrowserWindow) return openUrl('window');
+                  const win = new BrowserWindow({
+                    width: 1100,
+                    height: 750,
+                    title: label,
+                    titleBarStyle: 'hiddenInset',
+                    webPreferences: { nodeIntegration: false, contextIsolation: true }
+                  });
+                  win.loadURL(ui.url);
+                } catch { openUrl('window'); }
               }
-            ]
-          });
-        } else if (enh.id === 'ccusage') {
-          subItems.push({
-            label: 'Usage Analyzer (ccusage)',
-            click: () => {
-              try {
-                if (shell) shell.openExternal('codex-rebuild://analytics');
-              } catch {}
-            }
-          });
-        } else if (enh.id === 'codex-chatgpt-web') {
-          subItems.push({
-            label: 'ChatGPT Web Bridge (Terminal)',
-            click: () => {
-              try {
-                const { exec } = require('child_process');
-                const supportDir = path.join(require('os').homedir(), 'Library/Application Support/CodexDesktop-Rebuild');
-                const bridgeDir = process.resourcesPath ? path.join(process.resourcesPath, 'enhancements', 'codex-chatgpt-web') : '';
-                const script = 'tell application "Terminal" to do script "cd \\"' + bridgeDir + '\\" && export CODEX_HOME=\\"' + supportDir + '/CodexHome\\" && export CODEX_ELECTRON_USER_DATA_PATH=\\"' + supportDir + '/Profile\\" && node_modules/bun/bin/bun.exe run --cwd source src/cli.ts doctor"';
-                exec('osascript -e ' + JSON.stringify(script));
-              } catch {}
-            }
-          });
-        } else {
-          const openLabel = ui.openLabel || label;
-          subItems.push({
-            label: openLabel,
-            click: () => {
-              try {
-                if (shell) shell.openExternal('codex-rebuild://settings');
-              } catch {}
-            }
-          });
-        }
+            },
+            { label: 'Default Browser', click: () => openUrl('browser') }
+          ]
+        });
+      } else {
+        subItems.push({
+          label: ui.openLabel || label,
+          click: () => openUrl('launch')
+        });
       }
     }
 
-    if (subItems.length > 0) {
-      subItems.push({ type: 'separator' });
-    }
-
+    if (subItems.length > 0) subItems.push({ type: 'separator' });
     subItems.push({
       label: 'Enhancements Settings…',
-      click: () => {
-        try {
-          if (shell) shell.openExternal('codex-rebuild://settings');
-        } catch {}
-      }
+      click: () => { if (shell) shell.openExternal('codex-rebuild://settings'); }
     });
-
-    return {
-      label: '✦ Enhancements',
-      submenu: subItems
-    };
-  } catch (err) {
-    return {
-      label: '✦ Enhancements',
-      submenu: [
-        {
-          label: 'Enhancements Settings…',
-          click: () => {
-            try {
-              const { shell } = require('electron');
-              if (shell) shell.openExternal('codex-rebuild://settings');
-            } catch {}
-          }
-        }
-      ]
-    };
+    return { label: '✦ Enhancements', submenu: subItems };
+  } catch (error) {
+    try {
+      const el = elModule || require('electron');
+      return fallback(el.shell || (el.default && el.default.shell));
+    } catch { return fallback(null); }
   }
 }
 `;
@@ -519,6 +472,7 @@ function getEnhancementsTrayMenu(elModule) {
 
     console.log("   [runtime-enhancements] bundling into private runtime");
     await bundleEnhancements(uniqueRuntimeApp, { planOnly: false, platform: "mac-x64" });
+    signBundledEnhancementApps(path.join(uniqueRuntimeApp, "Contents", "Resources", "enhancements"));
 
     const contentHash = runtimeContentHash(uniqueRuntimeApp, uniqueRuntimeInfo);
     replacePlistString(uniqueRuntimeInfo, "CodexRebuildContentSHA256", contentHash);
@@ -631,6 +585,7 @@ function getEnhancementsTrayMenu(elModule) {
 
     console.log("   [enhancements] bundling");
     await bundleEnhancements(wrapperApp, { planOnly: false, platform: "mac-x64" });
+    signBundledEnhancementApps(path.join(wrapperApp, "Contents", "Resources", "enhancements"));
 
     run("/usr/bin/codesign", [
       "--force", "--sign", "-", "--timestamp=none", "--options", "runtime", launcherExecutable,

@@ -29,6 +29,8 @@ jobs:
           cache: npm
       - run: |
           npm ci
+      - run: npm test
+      - run: npm run doctor
       - run: |
           brew install --quiet sevenzip
       - run: node scripts/sync-upstream.js --force --skip-win
@@ -36,6 +38,9 @@ jobs:
       - name: Build side-by-side Intel DMG
         if: matrix.arch == 'x64'
         run: npm run build:side-by-side:x64
+      - name: Verify side-by-side enhancement payload
+        if: matrix.arch == 'x64'
+        run: node scripts/verify-enhancements.js --app out/side-by-side-mac-x64/Codex.app
       - uses: actions/upload-artifact@v7
         with:
           name: Codex-macOS-${{ matrix.arch }}
@@ -52,6 +57,8 @@ jobs:
           cache: npm
       - run: |
           npm ci
+      - run: npm test
+      - run: npm run doctor
       - run: |
           choco install 7zip -y
       - name: Add 7zz alias
@@ -80,6 +87,8 @@ jobs:
           cache: npm
       - run: |
           npm ci
+      - run: npm test
+      - run: npm run doctor
       - run: |
           sudo apt-get update
           sudo apt-get install -y rpm fakeroot dpkg 7zip

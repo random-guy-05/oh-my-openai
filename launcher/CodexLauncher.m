@@ -117,8 +117,6 @@ static BOOL gShowSettingsOnLaunch = NO;
 static BOOL gCaptureHubOnLaunch = NO;
 
 static NSStatusItem *gEnhancementStatusItem = nil;
-static NSWindow *gUsageWindow = nil;
-static NSTextView *gUsageTextView = nil;
 static NSArray<NSDictionary *> *gLoadedEnhancements = nil;
 
 static NSString *const kEnabledDefaultsKey = @"OMOEEnhancementsEnabled";
@@ -170,7 +168,6 @@ static void SetEnhancementView(NSString *identifier, NSString *view) {
 static NSArray<NSString *> *EnhancementViewOptions(NSDictionary *enhancement) {
   NSString *kind = enhancement[@"ui"][@"kind"];
   if ([kind isEqualToString:@"web"]) return @[@"window", @"browser"];
-  if ([kind isEqualToString:@"ccusage"]) return @[@"report"];
   return @[@"launch"];
 }
 
@@ -260,44 +257,70 @@ static void ShowWebEnhancement(NSDictionary *enhancement) {
   ShowWebWindow(label.UTF8String, urlString.UTF8String);
 }
 
-static void ShowUsageReportForEnhancement(NSDictionary *enhancement) {
-  if (!gUsageWindow) {
-    gUsageWindow = [[NSWindow alloc]
-      initWithContentRect:NSMakeRect(0, 0, 940, 620)
-                styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
-                  backing:NSBackingStoreBuffered
-                    defer:NO];
-    gUsageWindow.title = @"Usage report (ccusage)";
-    gUsageWindow.releasedWhenClosed = NO;
-    NSScrollView *scrollView = [[NSScrollView alloc]
-      initWithFrame:NSMakeRect(0, 0, 940, 620)];
-    [scrollView setHasVerticalScroller:YES];
-    [scrollView setAutoresizingMask:
-      (NSViewWidthSizable | NSViewHeightSizable)];
-    gUsageTextView = [[NSTextView alloc] initWithFrame:
-      NSMakeRect(0, 0, 920, 600)];
-    gUsageTextView.editable = NO;
-    gUsageTextView.font = [NSFont monospacedSystemFontOfSize:12
-                                                       weight:NSFontWeightRegular];
-    gUsageTextView.autoresizingMask = NSViewWidthSizable;
-    gUsageTextView.textContainerInset = NSMakeSize(12, 12);
-    scrollView.documentView = gUsageTextView;
-    gUsageWindow.contentView = scrollView;
+static void OpenBundledEnhancementApp(NSDictionary *enhancement) {
+  NSString *appPath = enhancement[@"appPath"];
+  if (![appPath isKindOfClass:[NSString class]]) return;
+  NSString *fullPath = [EnhancementDirectory(enhancement) stringByAppendingPathComponent:appPath];
+  NSURL *appURL = [NSURL fileURLWithPath:fullPath isDirectory:YES];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:fullPath]) {
+    NSLog(@"[CodexLauncher] failed to open bundled app %@ at %@", enhancement[@"id"], fullPath);
+    return;
   }
-  gUsageTextView.string = @"Collecting usage report…\n";
-  [gUsageWindow makeKeyAndOrderFront:nil];
-  [NSApp activateIgnoringOtherApps:YES];
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
+  configuration.activates = YES;
+  configuration.environment = @{
+    @"CODEX_HOME": [supportPath stringByAppendingPathComponent:kCodexHomeName],
+    @"CODEX_ELECTRON_USER_DATA_PATH": [supportPath stringByAppendingPathComponent:@"Profile"],
+  };
+  [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
+                                         configuration:configuration
+                                     completionHandler:^(NSRunningApplication *application, NSError *error) {
+    (void)application;
+    if (error) NSLog(@"[CodexLauncher] failed to launch bundled app %@: %@", enhancement[@"id"], error);
+  }];
+}
 
-  LaunchToolEnhancement(enhancement, ^(NSString *text) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (gUsageTextView) {
-        [gUsageTextView.textStorage appendAttributedString:
-          [[NSAttributedString alloc] initWithString:text]];
-        [gUsageTextView scrollToEndOfDocument:nil];
-      }
-    });
-  });
+static NSString *ShellQuote(NSString *value) {
+  return [NSString stringWithFormat:@"'%@'", [value stringByReplacingOccurrencesOfString:@"'"
+                                                                        withString:@"'\\''"]];
+}
+
+static NSString *AppleScriptString(NSString *value) {
+  return [[value stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"]
+    stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+}
+
+static void OpenTerminalEnhancement(NSDictionary *enhancement) {
+  NSArray<NSString *> *toolCommand = enhancement[@"toolCommand"];
+  if (![toolCommand isKindOfClass:[NSArray class]] || toolCommand.count == 0) return;
+  NSString *enhDir = EnhancementDirectory(enhancement);
+  NSString *binary = ResolveEnhancementBinary(enhDir, toolCommand[0]);
+  if (!binary) {
+    NSLog(@"[CodexLauncher] terminal tool %@ binary not found: %@", enhancement[@"id"], toolCommand[0]);
+    return;
+  }
+
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithObjects:
+    [NSString stringWithFormat:@"cd %@", ShellQuote(enhDir)],
+    [NSString stringWithFormat:@"export CODEX_HOME=%@", ShellQuote([supportPath stringByAppendingPathComponent:kCodexHomeName])],
+    [NSString stringWithFormat:@"export CODEX_ELECTRON_USER_DATA_PATH=%@", ShellQuote([supportPath stringByAppendingPathComponent:@"Profile"])],
+    ShellQuote(binary), nil];
+  for (NSString *argument in [toolCommand subarrayWithRange:NSMakeRange(1, toolCommand.count - 1)]) {
+    [parts addObject:ShellQuote(argument)];
+  }
+
+  NSString *terminalCommand = [parts componentsJoinedByString:@" && "];
+  NSString *script = [NSString stringWithFormat:
+    @"tell application \"Terminal\"\n  activate\n  do script \"%@\"\nend tell",
+    AppleScriptString(terminalCommand)];
+  NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:script];
+  NSDictionary *error = nil;
+  [appleScript executeAndReturnError:&error];
+  if (error) {
+    NSLog(@"[CodexLauncher] failed to open terminal tool %@: %@", enhancement[@"id"], error);
+  }
 }
 
 static void OpenEnhancement(NSString *identifier, NSString *view) {
@@ -311,8 +334,10 @@ static void OpenEnhancement(NSString *identifier, NSString *view) {
       } else {
         ShowWebEnhancement(enhancement);
       }
-    } else if ([kind isEqualToString:@"ccusage"]) {
-      ShowUsageReportForEnhancement(enhancement);
+    } else if ([kind isEqualToString:@"app"]) {
+      OpenBundledEnhancementApp(enhancement);
+    } else if ([kind isEqualToString:@"terminal"]) {
+      OpenTerminalEnhancement(enhancement);
     } else {
       LaunchToolEnhancement(enhancement, nil);
     }
@@ -320,11 +345,11 @@ static void OpenEnhancement(NSString *identifier, NSString *view) {
   }
 }
 
-static NSString *EnhancementSymbol(NSString *identifier) {
-  if ([identifier isEqualToString:@"opencodex"]) return @"globe";
-  if ([identifier isEqualToString:@"ccusage"]) return @"chart.bar.xaxis";
-  if ([identifier isEqualToString:@"codex-chatgpt-web"]) return @"bubble.left.and.bubble.right.fill";
-  if ([identifier isEqualToString:@"codexpp"]) return @"wand.and.stars";
+static NSString *EnhancementSymbol(NSDictionary *enhancement) {
+  NSString *kind = enhancement[@"ui"][@"kind"];
+  if ([enhancement[@"type"] isEqualToString:@"service"]) return @"globe";
+  if ([kind isEqualToString:@"app"]) return @"chart.xyaxis.line";
+  if ([kind isEqualToString:@"terminal"]) return @"bubble.left.and.bubble.right.fill";
   return @"sparkles";
 }
 
@@ -370,7 +395,7 @@ static void RebuildEnhancementMenu(void) {
     if (!EnhancementEnabled(enhancement[@"id"])) continue;
     NSString *identifier = enhancement[@"id"];
     NSString *kind = ui[@"kind"];
-    NSImage *symbol = [NSImage imageWithSystemSymbolName:EnhancementSymbol(identifier)
+    NSImage *symbol = [NSImage imageWithSystemSymbolName:EnhancementSymbol(enhancement)
                                 accessibilityDescription:ui[@"label"]];
     if ([kind isEqualToString:@"web"]) {
       NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:ui[@"label"]
@@ -392,7 +417,7 @@ static void RebuildEnhancementMenu(void) {
       if (!title) title = ui[@"label"];
       NSMenuItem *item = MenuItemWithSymbol(title,
                                             @selector(openEnhancementAction:),
-                                            EnhancementSymbol(identifier));
+                                             EnhancementSymbol(enhancement));
       NSString *view = EnhancementViewOptions(enhancement).firstObject;
       item.representedObject = @[identifier, view];
       [enhSubmenu addItem:item];
@@ -573,14 +598,16 @@ static BOOL StartEnhancements(void) {
     NSString *enhDir = [[[NSBundle.mainBundle.bundleURL
       URLByAppendingPathComponent:@"Contents/Resources/enhancements"]
       URLByAppendingPathComponent:id] path];
-    NSString *binaryPath = [enhDir stringByAppendingPathComponent:startCommand[0]];
+    NSString *command = startCommand[0];
+    NSString *binaryPath = ResolveEnhancementBinary(enhDir, command);
     if (![[NSFileManager defaultManager] isExecutableFileAtPath:binaryPath]) {
       NSLog(@"[CodexLauncher] enhancement %@ binary not executable at %@", id, startCommand[0]);
       continue;
     }
 
     NSString *logPath = [enhancementsLogDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.log", id]];
-    if (![[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil]) {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:logPath] &&
+        ![[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil]) {
       NSLog(@"[CodexLauncher] cannot create log file for enhancement %@", id);
       continue;
     }
@@ -595,6 +622,11 @@ static BOOL StartEnhancements(void) {
     task.launchPath = binaryPath;
     task.arguments = [startCommand subarrayWithRange:NSMakeRange(1, startCommand.count - 1)];
     task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
+    NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+    environment[@"CODEX_HOME"] = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+    environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
+      [supportPath stringByAppendingPathComponent:@"Profile"];
+    task.environment = environment;
     task.standardOutput = logHandle;
     task.standardError = logHandle;
 
@@ -1213,6 +1245,27 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
   if ([urlString containsString:@"analytics"] || [urlString containsString:@"usage"]) {
     ShowEnhancementAnalytics();
     return;
+  }
+
+  if ([components.host caseInsensitiveCompare:@"enhancement"] == NSOrderedSame) {
+    NSString *identifier = nil;
+    NSString *view = nil;
+    for (NSURLQueryItem *item in components.queryItems) {
+      if ([item.name isEqualToString:@"id"]) identifier = item.value;
+      if ([item.name isEqualToString:@"view"]) view = item.value;
+    }
+    if (identifier.length > 0) {
+      if (view.length == 0) {
+        for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+          if ([enhancement[@"id"] isEqualToString:identifier]) {
+            view = EnhancementViewOptions(enhancement).firstObject;
+            break;
+          }
+        }
+      }
+      OpenEnhancement(identifier, view ?: @"launch");
+      return;
+    }
   }
 
   if ([urlString containsString:@"settings"] || [urlString containsString:@"hub"] || [urlString containsString:@"enhancements"]) {

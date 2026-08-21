@@ -46,17 +46,18 @@ user invokes on demand.
   `github:<owner>/<repo>@<tag>` (repo tarball extracted to `source/`, or —
   with `asset` + `sha256` — a pinned release asset verified on download).
   `dependencies` installs extra npm packages into the same staging tree.
-- Types: `service` (launcher-managed `startCommand`, optional `config.port`)
-  and `tool` (staged; invoked via `scripts/enhancement-tool.js`, which sets
-  `CODEX_HOME` to the app's isolated CodexHome). Tools are ignored by the
-  launcher's lifecycle.
+ - Types: `service` (launcher-managed `startCommand`, optional `config.port`)
+   and `tool` (either a command-line tool or a native app bundle). Command-line
+   tools are invoked via `scripts/enhancement-tool.js`, which sets `CODEX_HOME`
+   to the app's isolated CodexHome; native apps open from the command center.
+   Tools are ignored by the launcher's lifecycle.
 - UI descriptors: each enhancement can declare `ui` (`label`, `kind`,
   `openLabel`, `url`). The launcher renders a native command center from
   them: a menu bar item with one entry per enhancement and an
-  **Enhancements Settings…** window (enable toggle, status, view selector,
-  Open button per feature; persisted in NSUserDefaults). `kind: web` opens
-  the URL in an in-app WKWebView window or the browser, `kind: ccusage`
-  renders a native usage report window, `kind: tool` launches the tool.
+   **Enhancements Settings…** window (enable toggle, status, view selector,
+   Open button per feature; persisted in NSUserDefaults). `kind: web` opens
+   the URL in an in-app WKWebView window or the browser, `kind: app` opens a
+   bundled native app, and `kind: terminal` launches a terminal workflow.
 - Runtime: the launcher reads the manifest from its own bundle, starts each
   service in its staged directory, and appends per-enhancement logs to
   `~/Library/Application Support/CodexDesktop-Rebuild/enhancements/<id>.log`.
@@ -66,14 +67,12 @@ Bundled in the current build:
 
 - `opencodex` (service, port 10100) — local OpenAI-compatible gateway
   dashboard, run by the staged bun runtime.
-- `ccusage` (tool) — native CLI usage/cost analyzer scoped to this app's
-  CodexHome: `node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app ccusage`
-- `codex-chatgpt-web` (tool) — ChatGPT Web (incl. Pro) as native Codex models
-  via a local Responses bridge; its launcher app handles sign-in and setup:
+- `nerftrack` (native app) — full local usage, quota, diagnostics, and
+  API-equivalent value dashboard bundled from the pinned macOS Intel release.
+  Its upstream GPL-3.0-only notice is recorded in `THIRD_PARTY_NOTICES.md`.
+- `codex-chatgpt-web` (tool) — ChatGPT Web bridge setup and diagnostics in the
+  isolated profile; it is not automatically started as a Codex model provider:
   `node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app codex-chatgpt-web`
-- `codexpp` (tool) — Codex++ external launcher/manager (provider switching,
-  themes, UI enhancements). Note: Codex++ targets the official app's CDP and
-  `~/.codex` data; point its app path at this bundle for best results.
 
 Current `enhancements/manifest.json` targets `mac-x64`; the bundler fails
 closed for other platforms until they are added.
@@ -97,6 +96,13 @@ npm run build:side-by-side:x64
 Skip the DMG with `node scripts/build-side-by-side-mac.js --skip-dmg`.
 The build fails closed on missing sources, arch mismatches, or failed
 enhancement verification.
+
+Run `npm test && npm run doctor` before packaging. After a build, validate the
+staged application with:
+
+```sh
+node scripts/verify-enhancements.js --app out/side-by-side-mac-x64/Codex.app
+```
 
 The release artifacts land in `out/`: the wrapper app
 (`out/side-by-side-mac-x64/Codex.app`) and the DMG

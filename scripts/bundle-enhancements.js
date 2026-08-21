@@ -70,8 +70,8 @@ function copyRecursive(src, dest) {
       count += 1;
     } else {
       fs.copyFileSync(s, d);
-      // copyFileSync does not preserve the source mode; keep exec bits
-      // (npm platform binaries like ccusage's ship without +x).
+      // copyFileSync does not preserve the source mode; keep exec bits for
+      // bundled scripts and native helper binaries.
       fs.chmodSync(d, fs.statSync(s).mode & 0o7777);
       count += 1;
     }
@@ -131,6 +131,30 @@ function extractZip(archive, destDir) {
   });
 }
 
+function extractDmg(archive, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const mountDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enhancement-dmg-"));
+  let attached = false;
+  try {
+    execFileSync("/usr/bin/hdiutil", [
+      "attach", archive, "-nobrowse", "-readonly", "-mountpoint", mountDir,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    attached = true;
+    const appName = fs.readdirSync(mountDir).find((name) => name.endsWith(".app"));
+    if (!appName) throw new Error(`DMG ${archive} contains no .app bundle`);
+    copyRecursive(path.join(mountDir, appName), path.join(destDir, appName));
+  } finally {
+    if (attached) {
+      try {
+        execFileSync("/usr/bin/hdiutil", ["detach", mountDir, "-force"], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch {}
+    }
+    fs.rmSync(mountDir, { recursive: true, force: true });
+  }
+}
+
 // ─── Manifest validation ────────────────────────────────────────
 
 function loadSourceManifest() {
@@ -161,8 +185,8 @@ function loadSourceManifest() {
       throw new Error(`Enhancement ${enhancement.id} must use an npm: or github: source (got ${enhancement.source})`);
     }
     if (enhancement.source.startsWith("github:") && enhancement.asset &&
-        typeof enhancement.sha256 !== "string") {
-      throw new Error(`Enhancement ${enhancement.id} uses a release asset without a pinned sha256`);
+        (!/^[a-f0-9]{64}$/.test(enhancement.sha256 || ""))) {
+      throw new Error(`Enhancement ${enhancement.id} uses a release asset without a valid 64-character sha256`);
     }
     if (enhancement.type === "service") {
       if (!Array.isArray(enhancement.startCommand) || enhancement.startCommand.length === 0) {
@@ -235,8 +259,8 @@ async function stageGithubSource(enhancement, stagingDir, planOnly) {
         if (actual !== enhancement.sha256) {
           throw new Error(`Enhancement ${enhancement.id} asset sha256 mismatch: expected ${enhancement.sha256}, got ${actual}`);
         }
-        const kind = enhancement.asset.endsWith(".zip") ? "zip" : "tar.gz";
-        if (kind === "zip") extractZip(archivePath, stagingDir);
+        if (enhancement.asset.endsWith(".dmg")) extractDmg(archivePath, stagingDir);
+        else if (enhancement.asset.endsWith(".zip")) extractZip(archivePath, stagingDir);
         else extractTarGz(archivePath, stagingDir);
       }
       return { url, mode: "asset", tag };
@@ -386,6 +410,13 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
       if (enhancement.verify) {
         checks.push(...verifyPaths(enhancement, enhancementDir, platform, enhancement.verify));
       }
+      if (enhancement.appPath) {
+        const appPath = path.join(enhancementDir, enhancement.appPath);
+        if (!fs.existsSync(path.join(appPath, "Contents", "Info.plist"))) {
+          throw new Error(`Enhancement ${enhancement.id}: app bundle is missing Info.plist: ${enhancement.appPath}`);
+        }
+        checks.push(`app bundle: ${enhancement.appPath}`);
+      }
       action.checks = checks;
 
       let resolvedVersion = null;
@@ -410,6 +441,8 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
         entry.startBinarySha256 = sha256File(path.join(enhancementDir, binaryRel));
       }
       if (enhancement.toolCommand) entry.toolCommand = enhancement.toolCommand;
+      if (enhancement.verify) entry.verify = enhancement.verify;
+      if (enhancement.appPath) entry.appPath = enhancement.appPath;
       if (enhancement.ui) entry.ui = enhancement.ui;
       if (enhancement.asset) {
         entry.asset = enhancement.asset;
@@ -417,7 +450,10 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
         entry.assetSha256 = enhancement.sha256;
       }
       effective.enhancements.push(entry);
-      console.log(`   [bundle] ${enhancement.id} v${resolvedVersion} (${copied} files, ${checks.length} checks)`);
+      const displayVersion = String(resolvedVersion || "unknown").startsWith("v")
+        ? resolvedVersion
+        : `v${resolvedVersion}`;
+      console.log(`   [bundle] ${enhancement.id} ${displayVersion} (${copied} files, ${checks.length} checks)`);
     }
 
     if (!planOnly) {

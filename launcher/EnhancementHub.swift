@@ -1,6 +1,6 @@
 // EnhancementHub.swift — High-Contrast macOS Command Center for Codex Enhancements.
-// Native SwiftUI interface with high-contrast palette, live ccusage analytics parser,
-// direct terminal launchers, and zero visual clutter.
+// Native SwiftUI interface with high-contrast palette, live enhancement health,
+// native dashboard launchers, and zero visual clutter.
 
 import AppKit
 import Foundation
@@ -90,6 +90,7 @@ struct Enhancement: Identifiable, Decodable {
   let config: Config?
   let toolCommand: [String]?
   let startCommand: [String]?
+  let appPath: String?
   let ui: UI?
 
   struct Config: Decodable {
@@ -108,19 +109,19 @@ struct Enhancement: Identifiable, Decodable {
   var kind: String { ui?.kind ?? "tool" }
 
   var iconSymbol: String {
-    switch id {
-    case "opencodex": return "network"
-    case "ccusage": return "chart.bar.xaxis"
-    case "codex-chatgpt-web": return "bubble.left.and.exclamationmark.bubble.right.fill"
+    if isService { return "network" }
+    switch kind {
+    case "app": return "chart.xyaxis.line"
+    case "terminal": return "bubble.left.and.exclamationmark.bubble.right.fill"
     default: return "sparkles"
     }
   }
 
   var accentColor: Color {
-    switch id {
-    case "opencodex": return CodexTheme.accentBlue
-    case "ccusage": return CodexTheme.warningAmber
-    case "codex-chatgpt-web": return CodexTheme.purple
+    if isService { return CodexTheme.accentBlue }
+    switch kind {
+    case "app": return CodexTheme.warningAmber
+    case "terminal": return CodexTheme.purple
     default: return CodexTheme.accentBlue
     }
   }
@@ -147,6 +148,44 @@ struct Enhancement: Identifiable, Decodable {
   }
 }
 
+enum EnhancementHealth: Equatable {
+  case checking
+  case installed
+  case running
+  case disabled
+  case unavailable(String)
+
+  var label: String {
+    switch self {
+    case .checking: return "Checking…"
+    case .installed: return "Installed"
+    case .running: return "Running"
+    case .disabled: return "Disabled"
+    case .unavailable(let reason): return reason
+    }
+  }
+
+  var color: Color {
+    switch self {
+    case .checking: return CodexTheme.warningAmber
+    case .installed: return CodexTheme.accentBlue
+    case .running: return CodexTheme.successGreen
+    case .disabled: return CodexTheme.textTertiary
+    case .unavailable: return CodexTheme.warningAmber
+    }
+  }
+
+  var icon: String {
+    switch self {
+    case .checking: return "clock"
+    case .installed: return "shippingbox"
+    case .running: return "checkmark.circle.fill"
+    case .disabled: return "pause.circle"
+    case .unavailable: return "exclamationmark.triangle.fill"
+    }
+  }
+}
+
 // MARK: - Navigation
 
 enum NavigationSection: String, CaseIterable, Identifiable {
@@ -165,31 +204,6 @@ enum NavigationSection: String, CaseIterable, Identifiable {
   }
 }
 
-// MARK: - Usage Analytics JSON Models
-
-struct UsageData: Decodable {
-  let daily: [DailyUsage]?
-  let totals: UsageTotals?
-
-  struct DailyUsage: Decodable, Identifiable {
-    var id: String { period ?? UUID().uuidString }
-    let period: String?
-    let totalCost: Double?
-    let totalTokens: Int?
-    let inputTokens: Int?
-    let outputTokens: Int?
-    let modelsUsed: [String]?
-  }
-
-  struct UsageTotals: Decodable {
-    let totalCost: Double?
-    let totalTokens: Int?
-    let inputTokens: Int?
-    let outputTokens: Int?
-    let cacheReadTokens: Int?
-  }
-}
-
 // MARK: - State Management
 
 private let kEnabledKey = "OMOEEnhancementsEnabled"
@@ -199,8 +213,7 @@ final class HubState: ObservableObject {
   @Published var enabled: [String: Bool] = HubState.loadEnabled()
   @Published var views: [String: String] = HubState.loadViews()
   @Published var selectedSection: NavigationSection = .extensions
-  @Published var usageData: UsageData?
-  @Published var isLoadingUsage = false
+  @Published var health: [String: EnhancementHealth] = [:]
 
   private static func loadEnabled() -> [String: Bool] {
     UserDefaults.standard.dictionary(forKey: kEnabledKey) as? [String: Bool] ?? [:]
@@ -230,24 +243,159 @@ final class HubState: ObservableObject {
     UserDefaults.standard.set(views, forKey: kViewKey)
   }
 
-  func loadAnalytics() {
-    isLoadingUsage = true
-    DispatchQueue.global(qos: .userInitiated).async {
-      let data = HubActions.fetchUsageReport()
-      DispatchQueue.main.async {
-        self.usageData = data
-        self.isLoadingUsage = false
+  func health(for enhancement: Enhancement) -> EnhancementHealth {
+    if !isEnabled(enhancement.id) { return .disabled }
+    return health[enhancement.id] ?? .checking
+  }
+
+  func canOpen(_ enhancement: Enhancement) -> Bool {
+    switch health(for: enhancement) {
+    case .installed, .running: return true
+    default: return false
+    }
+  }
+
+  func refreshHealth(_ enhancements: [Enhancement]) {
+    health = Dictionary(uniqueKeysWithValues: enhancements.map { ($0.id, EnhancementHealth.checking) })
+    for enhancement in enhancements {
+      if let appPath = enhancement.appPath {
+        let appURL = Bundle.main.bundleURL
+          .appendingPathComponent("Contents/Resources/enhancements")
+          .appendingPathComponent(enhancement.id, isDirectory: true)
+          .appendingPathComponent(appPath, isDirectory: true)
+        let infoPath = appURL.appendingPathComponent("Contents/Info.plist")
+        health[enhancement.id] = FileManager.default.fileExists(atPath: infoPath.path)
+          ? .installed
+          : .unavailable("App bundle missing")
+        continue
+      }
+      let command = enhancement.isService ? enhancement.startCommand : enhancement.toolCommand
+      guard let first = command?.first, !first.isEmpty else {
+        health[enhancement.id] = .unavailable("No command")
+        continue
+      }
+
+      let candidate: URL
+      if first.hasPrefix("/") {
+        candidate = URL(fileURLWithPath: first)
+      } else {
+        candidate = Bundle.main.bundleURL
+          .appendingPathComponent("Contents/Resources/enhancements")
+          .appendingPathComponent(enhancement.id, isDirectory: true)
+          .appendingPathComponent(first)
+      }
+      guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
+        health[enhancement.id] = .unavailable("Missing executable")
+        continue
+      }
+
+      if enhancement.isService,
+         let urlString = enhancement.ui?.url,
+         let url = URL(string: urlString) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+          let isResponding = (response as? HTTPURLResponse)?.statusCode != nil
+          DispatchQueue.main.async {
+            self.health[enhancement.id] = isResponding ? .running : .unavailable("Service not responding")
+          }
+        }.resume()
+      } else {
+        health[enhancement.id] = .installed
       }
     }
   }
+
 }
 
 // MARK: - Action Dispatcher
 
 enum HubActions {
+  private static let supportDirectory = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
+
+  private static func resolvedApp(_ enhancement: Enhancement) -> URL? {
+    guard let appPath = enhancement.appPath else { return nil }
+    return Bundle.main.bundleURL
+      .appendingPathComponent("Contents/Resources/enhancements")
+      .appendingPathComponent(enhancement.id, isDirectory: true)
+      .appendingPathComponent(appPath, isDirectory: true)
+  }
+
+  private static func resolvedTool(_ enhancement: Enhancement) -> (binary: URL, arguments: [String], directory: URL)? {
+    guard let command = enhancement.toolCommand, let first = command.first else { return nil }
+    let directory = Bundle.main.bundleURL
+      .appendingPathComponent("Contents/Resources/enhancements")
+      .appendingPathComponent(enhancement.id, isDirectory: true)
+    let binary: URL
+    if first.hasPrefix("/") {
+      binary = URL(fileURLWithPath: first)
+    } else if first.contains("/") {
+      binary = directory.appendingPathComponent(first)
+    } else {
+      let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
+        .split(separator: ":")
+        .map(String.init)
+      guard let match = pathEntries
+        .map({ URL(fileURLWithPath: $0).appendingPathComponent(first) })
+        .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else { return nil }
+      binary = match
+    }
+
+    guard FileManager.default.isExecutableFile(atPath: binary.path) else { return nil }
+    return (binary, Array(command.dropFirst()), directory)
+  }
+
+  private static func shellQuote(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+  }
+
+  private static func appleScriptString(_ value: String) -> String {
+    value
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+  }
+
+  private static func showLaunchError(_ title: String, _ detail: String) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = detail
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "OK")
+    alert.runModal()
+  }
+
   static func open(_ enhancement: Enhancement, view: String) {
-    if enhancement.id == "opencodex" {
-      let url = URL(string: enhancement.ui?.url ?? "http://127.0.0.1:10100")!
+    if enhancement.kind == "app" {
+      guard let appURL = resolvedApp(enhancement),
+            FileManager.default.fileExists(atPath: appURL.appendingPathComponent("Contents/Info.plist").path) else {
+        showLaunchError("\(enhancement.label) is unavailable", "The bundled app could not be found or is incomplete.")
+        return
+      }
+      let configuration = NSWorkspace.OpenConfiguration()
+      configuration.activates = true
+      configuration.environment = [
+        "CODEX_HOME": supportDirectory.appendingPathComponent("CodexHome").path,
+        "CODEX_ELECTRON_USER_DATA_PATH": supportDirectory.appendingPathComponent("Profile").path,
+      ]
+      NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+        if let error {
+          DispatchQueue.main.async {
+            showLaunchError("Could not open \(enhancement.label)", error.localizedDescription)
+          }
+        }
+      }
+      return
+    }
+
+    if enhancement.kind == "web" {
+      guard let urlString = enhancement.ui?.url,
+            let url = URL(string: urlString) else {
+        showLaunchError("\(enhancement.label) is not configured", "The bundled enhancement manifest does not contain a valid dashboard URL.")
+        return
+      }
       if view == "browser" {
         NSWorkspace.shared.open(url)
       } else {
@@ -256,13 +404,8 @@ enum HubActions {
       return
     }
 
-    if enhancement.id == "ccusage" {
-      openTerminalForCcusage()
-      return
-    }
-
-    if enhancement.id == "codex-chatgpt-web" {
-      openTerminalForChatGPTWeb()
+    if enhancement.kind == "terminal" {
+      openTerminalForTool(enhancement)
       return
     }
 
@@ -270,94 +413,52 @@ enum HubActions {
     launchTool(enhancement)
   }
 
-  static func openTerminalForCcusage() {
-    let supportDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
-    let ccusageBin = Bundle.main.bundleURL
-      .appendingPathComponent("Contents/Resources/enhancements/ccusage/node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage").path
-
-    let script = """
-    tell application "Terminal"
-      activate
-      do script "export CODEX_HOME='\(supportDir.appendingPathComponent("CodexHome").path)' && export CODEX_ELECTRON_USER_DATA_PATH='\(supportDir.appendingPathComponent("Profile").path)' && '\(ccusageBin)' daily"
-    end tell
-    """
-    if let appleScript = NSAppleScript(source: script) {
-      var error: NSDictionary?
-      appleScript.executeAndReturnError(&error)
+  static func openTerminalForTool(_ enhancement: Enhancement, extraArguments: [String] = []) {
+    guard let command = resolvedTool(enhancement) else {
+      showLaunchError("\(enhancement.label) is unavailable", "The bundled executable could not be found or is not executable.")
+      return
     }
-  }
 
-  static func openTerminalForChatGPTWeb() {
-    let supportDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
-    let bridgeDir = Bundle.main.bundleURL
-      .appendingPathComponent("Contents/Resources/enhancements/codex-chatgpt-web").path
-    let bunBin = (bridgeDir as NSString).appendingPathComponent("node_modules/bun/bin/bun.exe")
-
+    let arguments = command.arguments + extraArguments
+    let terminalCommand = ([
+      "cd \(shellQuote(command.directory.path))",
+      "export CODEX_HOME=\(shellQuote(supportDirectory.appendingPathComponent("CodexHome").path))",
+      "export CODEX_ELECTRON_USER_DATA_PATH=\(shellQuote(supportDirectory.appendingPathComponent("Profile").path))",
+      shellQuote(command.binary.path),
+    ] + arguments.map(shellQuote)).joined(separator: " && ")
     let script = """
     tell application "Terminal"
       activate
-      do script "cd '\(bridgeDir)' && export CODEX_HOME='\(supportDir.appendingPathComponent("CodexHome").path)' && export CODEX_ELECTRON_USER_DATA_PATH='\(supportDir.appendingPathComponent("Profile").path)' && '\(bunBin)' run --cwd source src/cli.ts doctor"
+      do script "\(appleScriptString(terminalCommand))"
     end tell
     """
     if let appleScript = NSAppleScript(source: script) {
       var error: NSDictionary?
-      appleScript.executeAndReturnError(&error)
+      _ = appleScript.executeAndReturnError(&error)
+      if let error {
+        showLaunchError("Could not open \(enhancement.label)", error[NSAppleScript.errorMessage] as? String ?? "Terminal rejected the launch request.")
+      }
     }
   }
 
   static func launchTool(_ enhancement: Enhancement) {
-    guard let toolCommand = enhancement.toolCommand, let first = toolCommand.first else { return }
-    let supportDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
-    let enhDir = Bundle.main.bundleURL
-      .appendingPathComponent("Contents/Resources/enhancements/\(enhancement.id)").path
-
-    let binary: String
-    if first.hasPrefix("/") {
-      binary = first
-    } else {
-      let joined = (enhDir as NSString).appendingPathComponent(first)
-      binary = FileManager.default.isExecutableFile(atPath: joined) ? joined : first
+    guard let command = resolvedTool(enhancement) else {
+      showLaunchError("\(enhancement.label) is unavailable", "The bundled executable could not be found or is not executable.")
+      return
     }
 
     let task = Process()
-    task.executableURL = URL(fileURLWithPath: binary)
-    task.arguments = Array(toolCommand.dropFirst())
-    task.currentDirectoryURL = URL(fileURLWithPath: enhDir, isDirectory: true)
+    task.executableURL = command.binary
+    task.arguments = command.arguments
+    task.currentDirectoryURL = command.directory
     var env = ProcessInfo.processInfo.environment
-    env["CODEX_HOME"] = supportDir.appendingPathComponent("CodexHome").path
-    env["CODEX_ELECTRON_USER_DATA_PATH"] = supportDir.appendingPathComponent("Profile").path
+    env["CODEX_HOME"] = supportDirectory.appendingPathComponent("CodexHome").path
+    env["CODEX_ELECTRON_USER_DATA_PATH"] = supportDirectory.appendingPathComponent("Profile").path
     task.environment = env
-    try? task.run()
-  }
-
-  static func fetchUsageReport() -> UsageData? {
-    let supportDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/CodexDesktop-Rebuild")
-    let ccusageBin = Bundle.main.bundleURL
-      .appendingPathComponent("Contents/Resources/enhancements/ccusage/node_modules/@ccusage/ccusage-darwin-x64/bin/ccusage").path
-
-    let task = Process()
-    task.executableURL = URL(fileURLWithPath: ccusageBin)
-    task.arguments = ["daily", "-j"]
-    var env = ProcessInfo.processInfo.environment
-    env["CODEX_HOME"] = supportDir.appendingPathComponent("CodexHome").path
-    env["CODEX_ELECTRON_USER_DATA_PATH"] = supportDir.appendingPathComponent("Profile").path
-    task.environment = env
-
-    let pipe = Pipe()
-    task.standardOutput = pipe
-    task.standardError = Pipe()
-
     do {
       try task.run()
-      task.waitUntilExit()
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      return try? JSONDecoder().decode(UsageData.self, from: data)
     } catch {
-      return nil
+      showLaunchError("Could not launch \(enhancement.label)", error.localizedDescription)
     }
   }
 
@@ -448,10 +549,12 @@ final class HubWindow: NSObject, NSWindowDelegate {
 
 struct HubRootView: View {
   let enhancements: [Enhancement]
+  let initialSection: NavigationSection
   @StateObject private var state = HubState()
 
   init(enhancements: [Enhancement], initialSection: NavigationSection = .extensions) {
     self.enhancements = enhancements
+    self.initialSection = initialSection
   }
 
   var body: some View {
@@ -473,7 +576,8 @@ struct HubRootView: View {
     }
     .frame(minWidth: 740, minHeight: 480)
     .onAppear {
-      state.loadAnalytics()
+      state.selectedSection = initialSection
+      state.refreshHealth(enhancements)
     }
   }
 }
@@ -545,9 +649,9 @@ struct SidebarView: View {
       // Footer
       HStack(spacing: 6) {
         Circle()
-          .fill(CodexTheme.successGreen)
+          .fill(CodexTheme.accentBlue)
           .frame(width: 6, height: 6)
-        Text("\(enhancements.count) Extensions Active")
+        Text("\(enhancements.count) Extensions Configured")
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(CodexTheme.textSecondary)
       }
@@ -570,6 +674,15 @@ struct DetailContentView: View {
           .font(.system(size: 18, weight: .bold))
           .foregroundStyle(CodexTheme.textPrimary)
         Spacer()
+
+        Button {
+          state.refreshHealth(enhancements)
+        } label: {
+          Label("Refresh", systemImage: "arrow.clockwise")
+            .font(.system(size: 11, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
       }
       .padding(.horizontal, 24)
       .padding(.top, 24)
@@ -587,7 +700,7 @@ struct DetailContentView: View {
               ExtensionCard(enhancement: item, state: state)
             }
           case .analytics:
-            AnalyticsDashboardView(state: state)
+            AnalyticsDashboardView(enhancements: enhancements, state: state)
           case .environment:
             EnvironmentView()
           }
@@ -612,6 +725,7 @@ struct ExtensionCard: View {
   }
 
   var body: some View {
+    let health = state.health(for: enhancement)
     VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .top, spacing: 12) {
         // Icon
@@ -645,6 +759,14 @@ struct ExtensionCard: View {
             .font(.system(size: 11.5))
             .foregroundStyle(CodexTheme.textSecondary)
             .lineSpacing(1.5)
+
+          HStack(spacing: 5) {
+            Image(systemName: health.icon)
+              .font(.system(size: 10, weight: .semibold))
+            Text(health.label)
+              .font(.system(size: 10.5, weight: .semibold))
+          }
+          .foregroundStyle(health.color)
         }
 
         Spacer()
@@ -689,6 +811,7 @@ struct ExtensionCard: View {
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
           .tint(enhancement.accentColor)
+          .disabled(!state.canOpen(enhancement))
         }
         .padding(.top, 4)
       }
@@ -708,163 +831,61 @@ struct ExtensionCard: View {
 // MARK: - Usage Analytics Dashboard
 
 struct AnalyticsDashboardView: View {
+  let dashboard: Enhancement?
   @ObservedObject var state: HubState
+
+  init(enhancements: [Enhancement], state: HubState) {
+    dashboard = enhancements.first { $0.kind == "app" }
+    self.state = state
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      if state.isLoadingUsage {
-        HStack(spacing: 8) {
-          ProgressView()
-            .controlSize(.small)
-          Text("Querying Codex Usage Engine...")
-            .font(.system(size: 12))
-            .foregroundStyle(CodexTheme.textSecondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 40)
-      } else if let totals = state.usageData?.totals {
-        // Metric Cards
-        HStack(spacing: 12) {
-          MetricCard(
-            title: "Total Cost",
-            value: String(format: "$%.2f", totals.totalCost ?? 0.0),
-            color: CodexTheme.successGreen
-          )
-          MetricCard(
-            title: "Total Tokens",
-            value: formatNumber(totals.totalTokens ?? 0),
-            color: CodexTheme.accentBlue
-          )
-          MetricCard(
-            title: "Cache Hits",
-            value: formatNumber(totals.cacheReadTokens ?? 0),
-            color: CodexTheme.warningAmber
-          )
-        }
+      if let dashboard {
+        HStack(alignment: .top, spacing: 14) {
+          ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .fill(dashboard.accentColor)
+              .frame(width: 48, height: 48)
+            Image(systemName: dashboard.iconSymbol)
+              .font(.system(size: 22, weight: .semibold))
+              .foregroundStyle(.white)
+          }
 
-        // Action
-        HStack {
-          Text("Recent Activity")
-            .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(CodexTheme.textPrimary)
+          VStack(alignment: .leading, spacing: 6) {
+            Text("NerfTrack Usage Dashboard")
+              .font(.system(size: 15, weight: .bold))
+              .foregroundStyle(CodexTheme.textPrimary)
+            Text("Open a full native dashboard for Codex usage history, quota, diagnostics, and API-equivalent value estimates.")
+              .font(.system(size: 12))
+              .foregroundStyle(CodexTheme.textSecondary)
+              .lineSpacing(2)
+          }
 
           Spacer()
 
           Button {
-            HubActions.openTerminalForCcusage()
+            HubActions.open(dashboard, view: "launch")
           } label: {
-            Label("Open in Terminal", systemImage: "terminal")
-              .font(.system(size: 11, weight: .semibold))
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-
-          Button {
-            state.loadAnalytics()
-          } label: {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 11, weight: .semibold))
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
-        .padding(.top, 8)
-
-        // Daily Table
-        if let daily = state.usageData?.daily, !daily.isEmpty {
-          VStack(spacing: 6) {
-            ForEach(daily.prefix(7)) { day in
-              HStack {
-                Text(day.period ?? "—")
-                  .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                  .foregroundStyle(CodexTheme.textPrimary)
-                  .frame(width: 95, alignment: .leading)
-
-                if let models = day.modelsUsed {
-                  Text(models.joined(separator: ", "))
-                    .font(.system(size: 11))
-                    .foregroundStyle(CodexTheme.textSecondary)
-                    .lineLimit(1)
-                }
-
-                Spacer()
-
-                Text(formatNumber(day.totalTokens ?? 0))
-                  .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                  .foregroundStyle(CodexTheme.textSecondary)
-                  .frame(width: 75, alignment: .trailing)
-
-                Text(String(format: "$%.2f", day.totalCost ?? 0.0))
-                  .font(.system(size: 12, weight: .bold, design: .monospaced))
-                  .foregroundStyle(CodexTheme.textPrimary)
-                  .frame(width: 65, alignment: .trailing)
-              }
-              .padding(.horizontal, 12)
-              .padding(.vertical, 8)
-              .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                  .fill(CodexTheme.rowBackground)
-              )
-            }
-          }
-        }
-      } else {
-        VStack(spacing: 8) {
-          Text("No Token Usage Logged Yet")
-            .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(CodexTheme.textPrimary)
-          Text("Run Codex sessions to automatically populate usage and cost metrics.")
-            .font(.system(size: 11.5))
-            .foregroundStyle(CodexTheme.textSecondary)
-          Button("Open Terminal CLI") {
-            HubActions.openTerminalForCcusage()
+            Label(dashboard.ui?.openLabel ?? "Open Dashboard", systemImage: "arrow.up.right")
+              .font(.system(size: 11.5, weight: .semibold))
           }
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
-          .padding(.top, 8)
+          .tint(dashboard.accentColor)
+          .disabled(!state.canOpen(dashboard))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(CodexTheme.cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(CodexTheme.border, lineWidth: 1))
+      } else {
+        Text("No native usage dashboard is configured.")
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(CodexTheme.textSecondary)
+          .frame(maxWidth: .infinity, alignment: .center)
+          .padding(.vertical, 40)
       }
     }
-  }
-
-  private func formatNumber(_ num: Int) -> String {
-    if num >= 1_000_000_000 {
-      return String(format: "%.2fB", Double(num) / 1_000_000_000.0)
-    } else if num >= 1_000_000 {
-      return String(format: "%.1fM", Double(num) / 1_000_000.0)
-    } else if num >= 1_000 {
-      return String(format: "%.0fK", Double(num) / 1_000.0)
-    }
-    return "\(num)"
-  }
-}
-
-struct MetricCard: View {
-  let title: String
-  let value: String
-  let color: Color
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(title)
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(CodexTheme.textSecondary)
-      Text(value)
-        .font(.system(size: 18, weight: .bold, design: .rounded))
-        .foregroundStyle(color)
-    }
-    .padding(12)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .fill(CodexTheme.cardBackground)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .stroke(CodexTheme.border, lineWidth: 1)
-    )
   }
 }
 
@@ -889,6 +910,11 @@ struct EnvironmentView: View {
       PathRow(
         title: "Bundled Enhancements",
         path: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/enhancements").path
+      )
+
+      PathRow(
+        title: "Enhancement Logs",
+        path: supportDir.appendingPathComponent("enhancements").path
       )
     }
   }
@@ -943,8 +969,7 @@ struct PathRow: View {
 func loadEnhancements() -> [Enhancement] {
   let manifestPaths = [
     Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/enhancements/manifest.json"),
-    Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/Codex.payload/Contents/Resources/enhancements/manifest.json"),
-    URL(fileURLWithPath: "/Users/admin/oh-my-openai/enhancements/manifest.json")
+    Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/Codex.payload/Contents/Resources/enhancements/manifest.json")
   ]
 
   for manifestURL in manifestPaths {

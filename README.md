@@ -49,22 +49,26 @@ brew uninstall --zap --cask codex-desktop
   under `~/Library/Application Support/CodexDesktop-Rebuild/`. No bundle
   patches.
 - **Enhancements layer**: the launcher starts bundled services before Codex
-  and stops them cleanly on quit — including raw SIGTERM/SIGINT/SIGHUP. Tools
-  are staged alongside and invoked with
-  `node scripts/enhancement-tool.js <Codex.app> <id>` (CODEX_HOME-scoped).
+   and stops them cleanly on quit — including raw SIGTERM/SIGINT/SIGHUP.
+   Command-line tools are staged alongside and invoked with
+   `node scripts/enhancement-tool.js <Codex.app> <id>`; native app enhancements
+   open from the command center with the isolated `CODEX_HOME` environment.
 - **Native command center**: a menu bar item (square-grid icon) lists every
-  enhancement — opencodex gateway (in-app window or browser), usage report,
-  ChatGPT Web bridge, Codex++ manager — plus **Enhancements Settings…**: one
+   enhancement — opencodex gateway (in-app window or browser), NerfTrack usage
+   dashboard, and ChatGPT Web bridge setup — plus **Enhancements Settings…**: one
   native window with an enable toggle, status, **view selector**, and Open
   button per feature. Choices persist in NSUserDefaults.
 - **opencodex** (service, `http://127.0.0.1:10100`) — local OpenAI-compatible
   gateway with model passthrough and custom-provider routing
   (config: `~/.codex/opencodex.config.toml`).
-- **ccusage** (tool) — native usage/cost analyzer for this app's CodexHome.
-- **codex-chatgpt-web** (tool) — ChatGPT Web (incl. Pro) as native Codex
-  models via a local Responses bridge (launcher app handles setup).
-- **codexpp** (tool) — Codex++ external launcher/manager for Codex (provider
-  switching, themes, UI enhancements; point its app path at this bundle).
+- **nerftrack** (native app) — full local usage, quota, diagnostics, history,
+  and API-equivalent value dashboard.
+
+The bundled NerfTrack release is distributed under its upstream GPL-3.0-only
+license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **codex-chatgpt-web** (tool) — ChatGPT Web bridge setup and diagnostics,
+  scoped to the app's isolated profile. It is not an automatically running
+  Codex model provider.
 
 ## Quick summary
 - Name: Oh My OpenAI (side-by-side rebuild of Codex)
@@ -139,6 +143,20 @@ npm run build:side-by-side:x64
 Outputs land in `out/`: the wrapper app (`out/side-by-side-mac-x64/Codex.app`)
 and the DMG (`out/Codex-side-by-side-mac-x64-<version>.dmg`). See
 `CUSTOM_BUILD.md` for details.
+
+Before packaging, run the local release checks:
+
+```bash
+npm test
+npm run doctor
+```
+
+`doctor` validates the enhancement manifest. To validate a built app's staged
+commands as well, pass it explicitly:
+
+```bash
+node scripts/verify-enhancements.js --app out/side-by-side-mac-x64/Codex.app
+```
 
 ---
 
