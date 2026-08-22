@@ -124,6 +124,11 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /\/api\/connect/);
   assert.match(buildScript, /CODEX_REBUILD_ENHANCEMENTS_PATH/);
   assert.match(buildScript, /path\.resolve\(resourcesPath, '\.\.', '\.\.', '\.\.'/);
+  assert.match(buildScript, /appendEnhancementsToApplicationMenu/);
+  assert.match(buildScript, /setApplicationMenu\(Wt\),OQ\(v\),setTimeout\(\(\)=>appendEnhancementsToApplicationMenu/);
+  assert.match(buildScript, /Menu\.setApplicationMenu\(menu\)/);
+  assert.match(buildScript, /OpenCodex Dashboard/);
+  assert.match(buildScript, /Codex ChatGPT Web/);
   assert.match(buildScript, /openUrl\('connect'\)/);
 });
 

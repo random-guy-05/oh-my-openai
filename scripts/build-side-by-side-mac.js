@@ -484,6 +484,58 @@ function getEnhancementsTrayMenu(elModule) {
     } catch { return fallback(null); }
   }
 }
+
+function appendEnhancementsToApplicationMenu(menu, elModule) {
+  try {
+    const el = elModule || require('electron');
+    const Menu = el.Menu || (el.default && el.default.Menu);
+    const MenuItem = el.MenuItem || (el.default && el.default.MenuItem);
+    const shell = el.shell || (el.default && el.default.shell);
+    const BrowserWindow = el.BrowserWindow || (el.default && el.default.BrowserWindow);
+    const net = el.net || (el.default && el.default.net);
+    const appMenu = (menu && Array.isArray(menu.items) ? menu.items : [])
+      .find((item) => item.role === 'appMenu' || item.label === 'Codex') ||
+      (menu && menu.items ? menu.items[0] : null);
+    if (!Menu || !MenuItem || !appMenu || !appMenu.submenu) return;
+    if (appMenu.submenu.items.some((item) => item.label === '✦ Enhancements')) return;
+    const showDashboard = (title, url) => {
+      if (BrowserWindow) {
+        const win = new BrowserWindow({
+          width: 1100,
+          height: 750,
+          title,
+          titleBarStyle: 'hiddenInset',
+          webPreferences: { nodeIntegration: false, contextIsolation: true }
+        });
+        win.loadURL(url);
+      } else if (shell) {
+        shell.openExternal(url);
+      }
+    };
+    const connectChatGPT = () => {
+      try {
+        const request = net && net.request
+          ? net.request({ method: 'POST', url: 'http://127.0.0.1:17842/api/connect' })
+          : null;
+        if (request) {
+          request.on('error', () => {});
+          request.end();
+        }
+        showDashboard('Codex ChatGPT Web', 'http://127.0.0.1:17842');
+      } catch {}
+    };
+    const applicationItems = [
+      { label: 'OpenCodex Dashboard', click: () => showDashboard('OpenCodex Gateway', 'http://127.0.0.1:10100') },
+      { label: 'Codex ChatGPT Web', click: () => showDashboard('Codex ChatGPT Web', 'http://127.0.0.1:17842') },
+      { label: 'Connect ChatGPT', click: connectChatGPT },
+      { type: 'separator' },
+      { label: 'Enhancements Settings…', click: () => { if (shell) shell.openExternal('codex-rebuild://settings'); } }
+    ];
+    appMenu.submenu.append(new MenuItem({ type: 'separator' }));
+    appMenu.submenu.append(new MenuItem({ label: '✦ Enhancements', submenu: applicationItems }));
+    Menu.setApplicationMenu(menu);
+  } catch {}
+}
 `;
             const targetPattern = "return[...h,...h.length>0?[{type:`separator`}]:[]";
             // Builds are often based on the last private runtime. Do not append
@@ -502,6 +554,10 @@ function getEnhancementsTrayMenu(elModule) {
               mainCode = mainCode.replace(
                 "if(process.platform===`darwin`){this.tray.on(`mouse-down`",
                 "if(process.platform===`darwin`){this.updatePersistentTrayMenu();this.tray.on(`mouse-down`"
+              );
+              mainCode = mainCode.replace(
+                "l.Menu.setApplicationMenu(Wt),OQ(v)",
+                "l.Menu.setApplicationMenu(Wt),OQ(v),setTimeout(()=>appendEnhancementsToApplicationMenu(l.Menu.getApplicationMenu(),l),0)"
               );
               fs.writeFileSync(mainJsPath, mainCode, "utf8");
               console.log(`   [asar] successfully patched ${file} (tray + enhancements)`);
