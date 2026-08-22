@@ -367,7 +367,8 @@ async function main() {
             const mainJsPath = path.join(viteBuildDir, file);
             let mainCode = fs.readFileSync(mainJsPath, "utf8");
 
-            const helperFn = `
+const helperFn = `
+/* codex-rebuild:enhancements-tray-v1 */
 function getEnhancementsTrayMenu(elModule) {
   const fallback = (shell) => ({
     label: '✦ Enhancements',
@@ -401,6 +402,12 @@ function getEnhancementsTrayMenu(elModule) {
       };
 
       if (ui.kind === 'web' && ui.url) {
+        const connectItem = Array.isArray(enhancement.connectCommand) && enhancement.connectCommand.length > 0
+          ? [{
+              label: enhancement.id === 'codex-chatgpt-web' ? 'Connect ChatGPT' : 'Connect',
+              click: () => openUrl('connect')
+            }]
+          : [];
         subItems.push({
           label,
           submenu: [
@@ -420,6 +427,7 @@ function getEnhancementsTrayMenu(elModule) {
                 } catch { openUrl('window'); }
               }
             },
+            ...connectItem,
             { label: 'Default Browser', click: () => openUrl('browser') }
           ]
         });
@@ -446,7 +454,11 @@ function getEnhancementsTrayMenu(elModule) {
 }
 `;
             const targetPattern = "return[...h,...h.length>0?[{type:`separator`}]:[]";
-            if (mainCode.includes(targetPattern)) {
+            // Builds are often based on the last private runtime. Do not append
+            // another tray helper when that runtime already contains ours.
+            if (mainCode.includes("codex-rebuild:enhancements-tray-v1")) {
+              console.log(`   [asar] enhancement tray already integrated in ${file}`);
+            } else if (mainCode.includes(targetPattern)) {
               mainCode = helperFn + "\n" + mainCode.replace(
                 targetPattern,
                 "return[...h,...h.length>0?[{type:`separator`}]:[],getEnhancementsTrayMenu(l),{type:`separator`}"

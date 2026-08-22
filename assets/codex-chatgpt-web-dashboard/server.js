@@ -122,6 +122,12 @@ function startConnection() {
   // LaunchServices to activate Chrome as well; macOS can otherwise leave the
   // profile's window behind an already-running regular Chrome session.
   spawn("/usr/bin/open", ["-a", "Google Chrome"], { stdio: "ignore" });
+  // `open -a` can activate the application without raising the newly-created
+  // profile window; ask Chrome itself to become frontmost as the final step.
+  spawn("/usr/bin/osascript", [
+    "-e",
+    'tell application "Google Chrome" to activate',
+  ], { stdio: "ignore" });
   return connectionStatus();
 }
 

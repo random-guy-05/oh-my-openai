@@ -118,6 +118,10 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   const buildScript = fs.readFileSync(path.join(__dirname, "build-side-by-side-mac.js"), "utf8");
   assert.doesNotMatch(buildScript, /\/Users\/admin\/oh-my-openai/);
   assert.match(buildScript, /codex-rebuild:\/\/enhancement/);
+  assert.match(buildScript, /codex-rebuild:enhancements-tray-v1/);
+  assert.match(buildScript, /enhancement tray already integrated/);
+  assert.match(buildScript, /Connect ChatGPT/);
+  assert.match(buildScript, /openUrl\('connect'\)/);
 });
 
 test("native launchers dispatch from manifest capabilities", () => {
@@ -145,6 +149,7 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.doesNotMatch(dashboardServer, /--replace-codex-route/);
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
   assert.match(dashboardServer, /opencodex/);
+  assert.match(dashboardServer, /osascript/);
   assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
   assert.match(dashboardServer, /--acknowledge-unofficial/);
   assert.match(launcher, /connectCommand/);
