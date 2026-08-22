@@ -555,10 +555,6 @@ function appendEnhancementsToApplicationMenu(menu, elModule) {
                 "if(process.platform===`darwin`){this.tray.on(`mouse-down`",
                 "if(process.platform===`darwin`){this.updatePersistentTrayMenu();this.tray.on(`mouse-down`"
               );
-              mainCode = mainCode.replace(
-                "l.Menu.setApplicationMenu(Wt),OQ(v)",
-                "l.Menu.setApplicationMenu(Wt),OQ(v),setTimeout(()=>appendEnhancementsToApplicationMenu(l.Menu.getApplicationMenu(),l),0)"
-              );
               fs.writeFileSync(mainJsPath, mainCode, "utf8");
               console.log(`   [asar] successfully patched ${file} (tray + enhancements)`);
             }

@@ -116,7 +116,7 @@ static CodexLauncherDelegate *gAppDelegate = nil;
 static BOOL gShowSettingsOnLaunch = NO;
 static BOOL gCaptureHubOnLaunch = NO;
 
-static NSStatusItem *gEnhancementStatusItem = nil;
+static __strong NSStatusItem *gEnhancementStatusItem = nil;
 static NSArray<NSDictionary *> *gLoadedEnhancements = nil;
 
 static NSString *const kEnabledDefaultsKey = @"OMOEEnhancementsEnabled";
@@ -541,24 +541,22 @@ static NSImage *ChatGPTTemplateImage(void) {
 }
 
 static void InstallEnhancementStatusItem(void) {
+  if (gEnhancementStatusItem) return;
   gEnhancementStatusItem = [[NSStatusBar systemStatusBar]
     statusItemWithLength:NSVariableStatusItemLength];
-  NSImage *icon = ChatGPTTemplateImage();
+  if (!gEnhancementStatusItem) return;
+  NSImage *icon = [[NSWorkspace sharedWorkspace]
+    iconForFile:NSBundle.mainBundle.bundlePath];
+  [icon setSize:NSMakeSize(18.0, 18.0)];
   if (icon) {
     gEnhancementStatusItem.button.image = icon;
+    gEnhancementStatusItem.button.imageScaling = NSImageScaleProportionallyDown;
   } else {
-    gEnhancementStatusItem.button.title = @"✦";
+    gEnhancementStatusItem.button.title = @"Codex";
   }
   gEnhancementStatusItem.button.toolTip = @"Codex Enhancements";
   gEnhancementStatusItem.visible = YES;
   RebuildEnhancementMenu();
-  // Re-assert the menu after the status bar has registered the item, so the
-  // item can never end up attached but empty.
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                 dispatch_get_main_queue(), ^{
-    gEnhancementStatusItem.button.toolTip = @"Codex Enhancements";
-    RebuildEnhancementMenu();
-  });
 }
 
 static void ShowEnhancementSettings(void) {
@@ -1336,9 +1334,10 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   // establishes the isolated profile before Electron's singleton lock.
   ClaimLauncherURLScheme();
 
-  // The Electron runtime now hosts the integrated ✦ Enhancements submenu directly
-  // inside the native ChatGPT/Codex menu bar status item.
-  // InstallEnhancementStatusItem();
+  // Keep the enhancements in the right-side Codex status item, where users
+  // expect a menu-bar utility to live; do not duplicate this menu in the
+  // top-left application menu.
+  InstallEnhancementStatusItem();
 
   if (gShowSettingsOnLaunch) [self showSettingsAction:nil];
   if (gCaptureHubOnLaunch) CaptureHubWindow();
