@@ -300,6 +300,22 @@ static NSString *AppleScriptString(NSString *value) {
 
 static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement);
 
+static void ActivateChromeLoginWindow(NSUInteger attempt) {
+  NSRunningApplication *chrome =
+    [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.google.Chrome"].firstObject;
+  if (chrome) {
+    [chrome activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    NSLog(@"[CodexLauncher] activated Google Chrome for ChatGPT login (attempt %lu)",
+          (unsigned long)attempt);
+  }
+  if (attempt < 10) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+      ActivateChromeLoginWindow(attempt + 1);
+    });
+  }
+}
+
 static void OpenTerminalEnhancement(NSDictionary *enhancement) {
   NSArray<NSString *> *toolCommand = enhancement[@"toolCommand"];
   if (![toolCommand isKindOfClass:[NSArray class]] || toolCommand.count == 0) return;
@@ -712,6 +728,10 @@ static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement) {
 
   if (!gConnectionTasks) gConnectionTasks = [[NSMutableArray alloc] init];
   [gConnectionTasks addObject:task];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+    ActivateChromeLoginWindow(1);
+  });
   [task setTerminationHandler:^(NSTask *finishedTask) {
     dispatch_async(dispatch_get_main_queue(), ^{
       [gConnectionTasks removeObject:finishedTask];

@@ -108,6 +108,10 @@ function startConnection() {
     setupOutput = `${setupOutput}\nConnection flow finished with ${code === 0 ? "success" : `exit code ${setupExitCode}`}.`.slice(-1200);
     setupProcess = null;
   });
+  // The upstream CLI launches a dedicated Chrome profile. Explicitly ask
+  // LaunchServices to activate Chrome as well; macOS can otherwise leave the
+  // profile's window behind an already-running regular Chrome session.
+  spawn("/usr/bin/open", ["-a", "Google Chrome"], { stdio: "ignore" });
   return connectionStatus();
 }
 
@@ -205,6 +209,7 @@ console.log(`[codex-chatgpt-web] dashboard listening on http://127.0.0.1:${serve
 ensureBridge().catch((error) => console.error(`[codex-chatgpt-web] bridge startup failed: ${error.message}`));
 
 function shutdown() {
+  setupProcess?.kill("SIGTERM");
   bridgeProcess?.kill("SIGTERM");
   server.stop();
   process.exit(0);

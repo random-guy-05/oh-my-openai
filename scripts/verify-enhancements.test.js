@@ -143,9 +143,12 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(dashboardServer, /\/api\/connect/);
   assert.match(dashboardServer, /--browser-only/);
   assert.match(dashboardServer, /--replace-codex-route/);
+  assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
   assert.match(dashboardServer, /--acknowledge-unofficial/);
   assert.match(launcher, /connectCommand/);
   assert.match(launcher, /LaunchConnectionEnhancement/);
+  assert.match(launcher, /ActivateChromeLoginWindow/);
+  assert.match(launcher, /NSApplicationActivateIgnoringOtherApps/);
   assert.match(launcher, /\[kind isEqualToString:@"app"\]/);
   assert.match(launcher, /\[kind isEqualToString:@"terminal"\]/);
   assert.match(launcher, /ResolveEnhancementBinary\(enhDir, command\)/);
