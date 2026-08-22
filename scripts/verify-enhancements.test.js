@@ -40,6 +40,7 @@ test("accepts the checked-in enhancement contract shape", () => {
     "setup",
     "--browser-only",
     "--login",
+    "--replace-codex-route",
     "--acknowledge-unofficial",
   ]);
   assert.equal(web.ui.connectLabel, "Connect ChatGPT");
@@ -141,6 +142,7 @@ test("native launchers dispatch from manifest capabilities", () => {
   );
   assert.match(dashboardServer, /\/api\/connect/);
   assert.match(dashboardServer, /--browser-only/);
+  assert.match(dashboardServer, /--replace-codex-route/);
   assert.match(dashboardServer, /--acknowledge-unofficial/);
   assert.match(launcher, /connectCommand/);
   assert.match(launcher, /LaunchConnectionEnhancement/);

@@ -82,6 +82,7 @@ function startConnection() {
     "setup",
     "--browser-only",
     "--login",
+    "--replace-codex-route",
     "--acknowledge-unofficial",
   ], {
     cwd: enhancementRoot,

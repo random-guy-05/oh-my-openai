@@ -44,7 +44,8 @@ async function refreshStatus() {
       connectButton.innerHTML = "Reconnect ChatGPT <span>↗</span>";
     } else if (connection.state === "failed") {
       setPill("warn", "Connection needs attention");
-      connectionMessage.textContent = "The connection flow did not complete. Use Connect ChatGPT to try again.";
+      const detail = connection.output?.split("\n").filter(Boolean).at(-2) || "The connection flow did not complete.";
+      connectionMessage.textContent = `${detail} Use Connect ChatGPT to try again.`;
       connectButton.disabled = false;
       connectButton.innerHTML = "Try ChatGPT Connection Again <span>↗</span>";
     } else {
