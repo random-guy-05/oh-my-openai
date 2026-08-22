@@ -117,6 +117,14 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(hub, /enhancement\.kind == "terminal"/);
   assert.doesNotMatch(hub, /enhancement\.id == "(?:opencodex|codex-chatgpt-web)"/);
   assert.match(hub, /WebWindow\.shared\.show\(title: enhancement\.label/);
+  assert.match(hub, /WKNavigationDelegate/);
+  assert.match(hub, /NSWorkspace\.shared\.open\(url\)/);
+  const dashboard = fs.readFileSync(
+    path.join(__dirname, "..", "assets", "codex-chatgpt-web-dashboard", "public", "index.html"),
+    "utf8",
+  );
+  assert.match(dashboard, /secure default browser/i);
+  assert.match(dashboard, /Open ChatGPT Web Securely/);
   assert.match(launcher, /\[kind isEqualToString:@"app"\]/);
   assert.match(launcher, /\[kind isEqualToString:@"terminal"\]/);
   assert.match(launcher, /ResolveEnhancementBinary\(enhDir, command\)/);

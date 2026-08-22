@@ -23,9 +23,9 @@
         <div class="hero-copy">
           <div class="eyebrow blue">CHATGPT WEB, INSIDE CODEX</div>
           <h2>Your ChatGPT workspace without another app.</h2>
-          <p>Use the signed-in ChatGPT Web surface in this Codex window while the local bridge stays loopback-only and the Codex harness remains the host.</p>
+          <p>ChatGPT blocks embedded WebKit sign-in as insecure, so authentication opens in your secure default browser. This dashboard and the loopback bridge stay inside Codex.</p>
           <div class="actions">
-            <a class="button primary" href="https://chatgpt.com">Open ChatGPT Web <span>↗</span></a>
+            <a class="button primary" href="https://chatgpt.com">Open ChatGPT Web Securely <span>↗</span></a>
             <button id="refresh-button" class="button secondary" type="button">Refresh status</button>
           </div>
         </div>
@@ -41,7 +41,7 @@
 
       <section class="lower-grid">
         <article class="card panel"><div class="panel-heading"><div><div class="eyebrow">DIAGNOSTICS</div><h3>Runtime health</h3></div><button id="doctor-button" class="text-button" type="button">Run doctor</button></div><pre id="doctor-output" class="output">No diagnostic run yet.</pre></article>
-        <article class="card panel next-steps"><div class="eyebrow">QUICK LINKS</div><h3>Keep your flow in one place.</h3><a href="https://github.com/miuuyy/codex-chatgpt-web">Upstream project <span>↗</span></a><a href="/api/bridge-health">Bridge health JSON <span>↗</span></a><p>OpenCodex, NerfTrack, and Codex Web GPT all use the same native command center and local window model.</p></article>
+        <article class="card panel next-steps"><div class="eyebrow">QUICK LINKS</div><h3>Keep your flow in one place.</h3><a href="https://github.com/miuuyy/codex-chatgpt-web">Upstream project <span>↗</span></a><a href="/api/bridge-health">Bridge health JSON <span>↗</span></a><p>Authentication intentionally hands off to your secure default browser because ChatGPT rejects embedded WebKit login.</p></article>
       </section>
     </main>
     <script src="/app.js"></script>

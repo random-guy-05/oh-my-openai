@@ -469,7 +469,7 @@ enum HubActions {
 
 // MARK: - Web Window Controller
 
-final class WebWindow: NSObject, NSWindowDelegate {
+final class WebWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
   static let shared = WebWindow()
   private var windows: [String: NSWindow] = [:]
 
@@ -491,12 +491,36 @@ final class WebWindow: NSObject, NSWindowDelegate {
     window.isReleasedWhenClosed = false
     window.center()
     let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+    webView.navigationDelegate = self
     window.contentView = webView
     webView.load(URLRequest(url: url))
     windows[title] = window
     window.delegate = self
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+  ) {
+    guard let url = navigationAction.request.url else {
+      decisionHandler(.allow)
+      return
+    }
+
+    let host = url.host?.lowercased()
+    let isLocalHost = host == "127.0.0.1" || host == "localhost"
+    let isWebURL = url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https"
+
+    if isWebURL && !isLocalHost {
+      NSWorkspace.shared.open(url)
+      decisionHandler(.cancel)
+      return
+    }
+
+    decisionHandler(.allow)
   }
 
   func windowWillClose(_ notification: Notification) {
