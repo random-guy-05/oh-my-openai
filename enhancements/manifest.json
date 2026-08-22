@@ -41,15 +41,16 @@
     {
       "id": "codex-chatgpt-web",
       "type": "tool",
-      "source": "github:miuuyy/codex-chatgpt-web@v2.1.7",
-      "dependencies": ["npm:bun@1.3.14"],
-      "description": "ChatGPT Web bridge setup and diagnostics using the isolated Codex profile.",
-      "toolCommand": ["node_modules/bun/bin/bun.exe", "run", "--cwd", "source", "src/cli.ts", "doctor"],
-      "verify": ["source/package.json", "node_modules/bun/bin/bun.exe"],
+      "source": "github:miuuyy/codex-chatgpt-web@v2.1.11",
+      "asset": "codex-web-gpt-2.1.11-mac-x64.dmg",
+      "sha256": "487f78eb7f05b413963bcbcc7ca1a23770b01731463458be969366cad457af88",
+      "appPath": "Codex Web GPT.app",
+      "description": "Native ChatGPT Web launcher with embedded browser sign-in, browser-only models, optional full harness, diagnostics, and guided setup.",
+      "verify": ["Codex Web GPT.app/Contents/Info.plist"],
       "ui": {
-        "label": "ChatGPT Web Bridge (Setup)",
-        "kind": "terminal",
-        "openLabel": "Open Setup Terminal"
+        "label": "Codex Web GPT",
+        "kind": "app",
+        "openLabel": "Open Codex Web GPT"
       }
     }
   ]

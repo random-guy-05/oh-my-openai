@@ -13,7 +13,7 @@
  *   node scripts/enhancement-tool.js <Codex.app> <id> [args...]
  *
  * Examples:
- *   node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app codex-chatgpt-web
+ *   node scripts/enhancement-tool.js out/side-by-side-mac-x64/Codex.app --list
  */
 "use strict";
 

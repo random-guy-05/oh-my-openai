@@ -55,7 +55,7 @@ brew uninstall --zap --cask codex-desktop
    open from the command center with the isolated `CODEX_HOME` environment.
 - **Native command center**: a menu bar item (square-grid icon) lists every
    enhancement — opencodex gateway (in-app window or browser), NerfTrack usage
-   dashboard, and ChatGPT Web bridge setup — plus **Enhancements Settings…**: one
+    dashboard, and Codex Web GPT — plus **Enhancements Settings…**: one
   native window with an enable toggle, status, **view selector**, and Open
   button per feature. Choices persist in NSUserDefaults.
 - **opencodex** (service, `http://127.0.0.1:10100`) — local OpenAI-compatible
@@ -66,9 +66,10 @@ brew uninstall --zap --cask codex-desktop
 
 The bundled NerfTrack release is distributed under its upstream GPL-3.0-only
 license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-- **codex-chatgpt-web** (tool) — ChatGPT Web bridge setup and diagnostics,
-  scoped to the app's isolated profile. It is not an automatically running
-  Codex model provider.
+- **codex-chatgpt-web** (native app) — the upstream Codex Web GPT launcher,
+  including its embedded ChatGPT browser, browser-only mode, guided setup,
+  diagnostics, and optional full-harness configuration. It is bundled and
+  opened from the command center by default; there is no setup-terminal step.
 
 ## Quick summary
 - Name: Oh My OpenAI (side-by-side rebuild of Codex)

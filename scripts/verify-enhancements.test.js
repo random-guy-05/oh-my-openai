@@ -28,6 +28,11 @@ test("accepts the checked-in enhancement contract shape", () => {
   const checkedIn = require("../enhancements/manifest.json");
   const result = validateManifest(checkedIn, "checked-in manifest");
   assert.deepEqual(result.ids, ["opencodex", "nerftrack", "codex-chatgpt-web"]);
+  const web = checkedIn.enhancements.find((entry) => entry.id === "codex-chatgpt-web");
+  assert.equal(web.ui.kind, "app");
+  assert.equal(web.appPath, "Codex Web GPT.app");
+  assert.notEqual(web.enabled, false);
+  assert.equal(web.toolCommand, undefined);
 });
 
 test("accepts a native app enhancement contract", () => {

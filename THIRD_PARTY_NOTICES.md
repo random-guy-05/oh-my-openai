@@ -15,3 +15,17 @@ the native usage dashboard enhancement.
 NerfTrack remains a separate application inside the enhancement bundle. Its
 copyright, license, and third-party notices remain governed by the upstream
 project and its bundled notice files.
+
+## Codex Web GPT
+
+This build bundles the upstream Codex Web GPT native launcher as the default
+ChatGPT Web UI enhancement.
+
+- Project: [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
+- Release: `v2.1.11`
+- License: MIT
+- Bundled asset: `codex-web-gpt-2.1.11-mac-x64.dmg`
+- Bundled asset SHA-256: `487f78eb7f05b413963bcbcc7ca1a23770b01731463458be969366cad457af88`
+
+The upstream launcher remains a separate application inside the enhancement
+bundle. Its own license and third-party notices govern the bundled app.
