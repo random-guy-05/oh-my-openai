@@ -454,6 +454,7 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
         resolvedVersion,
         description: enhancement.description || undefined,
         config: enhancement.config || {},
+        codexHome: enhancement.codexHome || undefined,
       };
       if (enhancement.type === "service") {
         entry.lifecycle = enhancement.lifecycle || "launcher";

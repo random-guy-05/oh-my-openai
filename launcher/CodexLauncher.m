@@ -205,6 +205,24 @@ static NSString *EnhancementDirectory(NSDictionary *enhancement) {
     path];
 }
 
+static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
+
+static NSString *EnhancementCodexHome(NSDictionary *enhancement, NSString *supportPath) {
+  NSString *homeName = enhancement[@"codexHome"];
+  if (![homeName isKindOfClass:[NSString class]] || homeName.length == 0 ||
+      [homeName containsString:@"/"] || [homeName containsString:@".."] ) {
+    homeName = kCodexHomeName;
+  }
+  NSString *homePath = [supportPath stringByAppendingPathComponent:homeName];
+  CreatePrivateDirectory(homePath, nil);
+  NSString *configPath = [homePath stringByAppendingPathComponent:@"config.toml"];
+  if (![NSFileManager.defaultManager fileExistsAtPath:configPath]) {
+    [@"model = \"gpt-5.6-sol\"\n" writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    chmod(configPath.fileSystemRepresentation, 0600);
+  }
+  return homePath;
+}
+
 static NSTask *LaunchToolEnhancement(NSDictionary *enhancement,
                                      void (^outputHandler)(NSString *text)) {
   NSArray<NSString *> *toolCommand = enhancement[@"toolCommand"];
@@ -652,7 +670,7 @@ static BOOL StartEnhancements(void) {
     task.arguments = [startCommand subarrayWithRange:NSMakeRange(1, startCommand.count - 1)];
     task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
     NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
-    environment[@"CODEX_HOME"] = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+   environment[@"CODEX_HOME"] = EnhancementCodexHome(enhancement, supportPath);
     environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
       [supportPath stringByAppendingPathComponent:@"Profile"];
     task.environment = environment;
@@ -712,7 +730,7 @@ static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement) {
   task.arguments = [connectCommand subarrayWithRange:NSMakeRange(1, connectCommand.count - 1)];
   task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
   NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
-  environment[@"CODEX_HOME"] = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+   environment[@"CODEX_HOME"] = EnhancementCodexHome(enhancement, supportPath);
   environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
     [supportPath stringByAppendingPathComponent:@"Profile"];
   task.environment = environment;

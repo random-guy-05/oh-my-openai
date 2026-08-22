@@ -1,5 +1,7 @@
 const connectionPill = document.querySelector("#connection-pill");
 const dashboardValue = document.querySelector("#dashboard-value");
+const opencodexValue = document.querySelector("#opencodex-value");
+const opencodexDetail = document.querySelector("#opencodex-detail");
 const bridgeValue = document.querySelector("#bridge-value");
 const bridgeDetail = document.querySelector("#bridge-detail");
 const configValue = document.querySelector("#config-value");
@@ -18,14 +20,18 @@ function formatTime() {
 }
 
 async function refreshStatus() {
-  setPill("checking", "Checking bridge");
+  setPill("checking", "Checking services");
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
     const data = await response.json();
     const running = data.bridge.running;
+    const opencodexRunning = data.opencodex?.running === true;
     const connection = data.connection || {};
     dashboardValue.textContent = "Online";
     dashboardValue.className = "metric-value good";
+    opencodexValue.textContent = opencodexRunning ? "Running" : "Not running";
+    opencodexValue.className = `metric-value ${opencodexRunning ? "good" : "warn"}`;
+    opencodexDetail.textContent = opencodexRunning ? `127.0.0.1:${data.opencodex.port}` : "OpenCodex service unavailable";
     bridgeValue.textContent = running ? "Running" : "Not running";
     bridgeValue.className = `metric-value ${running ? "good" : "warn"}`;
     bridgeDetail.textContent = running ? `127.0.0.1:${data.bridge.health.port || 17841}` : "Open setup or run doctor";
@@ -57,6 +63,7 @@ async function refreshStatus() {
   } catch (error) {
     dashboardValue.textContent = "Unavailable";
     bridgeValue.textContent = "Unavailable";
+    opencodexValue.textContent = "Unavailable";
     configValue.textContent = "Unknown";
     setPill("warn", "Dashboard error");
     lastUpdated.textContent = error.message;

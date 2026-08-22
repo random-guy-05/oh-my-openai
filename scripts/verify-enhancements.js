@@ -71,6 +71,10 @@ function validateManifest(manifest, label = "manifest") {
     assertString(enhancement.source, `Enhancement ${enhancement.id} source`);
     assert(enhancement.source.startsWith("npm:") || enhancement.source.startsWith("github:"),
       `Enhancement ${enhancement.id} source must use npm: or github:`);
+    if (enhancement.codexHome !== undefined) {
+      assert(typeof enhancement.codexHome === "string" && /^[A-Za-z0-9_-]+$/.test(enhancement.codexHome),
+        `Enhancement ${enhancement.id} codexHome must be a safe directory name`);
+    }
 
     if (enhancement.type === "service") validateCommand(enhancement.startCommand, `${enhancement.id}.startCommand`);
     if (enhancement.toolCommand) validateCommand(enhancement.toolCommand, `${enhancement.id}.toolCommand`);

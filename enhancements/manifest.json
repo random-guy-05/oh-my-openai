@@ -48,6 +48,7 @@
       "config": {
         "port": 17842
       },
+      "codexHome": "ChatGPTWebHome",
       "lifecycle": "launcher",
       "startCommand": [
         "runtime/bun",
@@ -63,7 +64,6 @@
         "setup",
         "--browser-only",
         "--login",
-        "--replace-codex-route",
         "--acknowledge-unofficial"
       ],
       "description": "In-Codex localhost dashboard for the upstream ChatGPT Web bridge, loopback health, diagnostics, and the signed-in ChatGPT Web surface.",

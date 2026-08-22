@@ -33,6 +33,7 @@ test("accepts the checked-in enhancement contract shape", () => {
   assert.equal(web.ui.kind, "web");
   assert.equal(web.ui.url, "http://127.0.0.1:17842");
   assert.equal(web.overlay, "assets/codex-chatgpt-web-dashboard");
+  assert.equal(web.codexHome, "ChatGPTWebHome");
   assert.deepEqual(web.connectCommand, [
     "runtime/bun",
     "run",
@@ -40,7 +41,6 @@ test("accepts the checked-in enhancement contract shape", () => {
     "setup",
     "--browser-only",
     "--login",
-    "--replace-codex-route",
     "--acknowledge-unofficial",
   ]);
   assert.equal(web.ui.connectLabel, "Connect ChatGPT");
@@ -142,12 +142,15 @@ test("native launchers dispatch from manifest capabilities", () => {
   );
   assert.match(dashboardServer, /\/api\/connect/);
   assert.match(dashboardServer, /--browser-only/);
-  assert.match(dashboardServer, /--replace-codex-route/);
+  assert.doesNotMatch(dashboardServer, /--replace-codex-route/);
+  assert.match(dashboardServer, /ensurePrivateCodexHome/);
+  assert.match(dashboardServer, /opencodex/);
   assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
   assert.match(dashboardServer, /--acknowledge-unofficial/);
   assert.match(launcher, /connectCommand/);
   assert.match(launcher, /LaunchConnectionEnhancement/);
   assert.match(launcher, /ActivateChromeLoginWindow/);
+  assert.match(launcher, /EnhancementCodexHome/);
   assert.match(launcher, /NSApplicationActivateIgnoringOtherApps/);
   assert.match(launcher, /\[kind isEqualToString:@"app"\]/);
   assert.match(launcher, /\[kind isEqualToString:@"terminal"\]/);

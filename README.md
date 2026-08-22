@@ -68,12 +68,15 @@ brew uninstall --zap --cask codex-desktop
 The bundled NerfTrack release is distributed under its upstream GPL-3.0-only
 license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - **codex-chatgpt-web** (launcher-managed service + in-app web dashboard) —
-  the upstream loopback ChatGPT Web bridge runs as a hidden local service,
-  while the command-center menu opens a local Codex Web GPT dashboard in the
-  existing WKWebView. The dashboard exposes bridge health, diagnostics, setup
-  status, and a **Connect ChatGPT** action that starts the bundled upstream
-  setup flow automatically; the dashboard itself remains in Codex and no
-  terminal command or second dashboard app is required.
+   the upstream loopback ChatGPT Web bridge runs as a hidden local service,
+   while the command-center menu opens a local Codex Web GPT dashboard in the
+   existing WKWebView. The dashboard exposes bridge health, diagnostics, setup
+   status, and a **Connect ChatGPT** action that starts the bundled upstream
+   setup flow automatically; the dashboard itself remains in Codex and no
+   terminal command or second dashboard app is required.
+   OpenCodex and ChatGPT Web run side by side: OpenCodex keeps the primary
+   `CodexHome` route at `127.0.0.1:10100`, while ChatGPT Web uses the private
+   `ChatGPTWebHome` route and never replaces the OpenCodex configuration.
 
 ## Quick summary
 - Name: Oh My OpenAI (side-by-side rebuild of Codex)

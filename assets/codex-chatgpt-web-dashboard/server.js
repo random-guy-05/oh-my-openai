@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -12,8 +12,11 @@ const port = Number.parseInt(
   10,
 );
 const bridgePort = Number.parseInt(process.env.CODEX_CHATGPT_WEB_PORT || "17841", 10);
+const openCodexPort = Number.parseInt(process.env.OPENCODEX_PORT || "10100", 10);
 const bridgeHome = process.env.CODEX_CHATGPT_WEB_HOME || join(process.env.HOME || "", ".codex-chatgpt-web");
 const bridgeConfigPath = join(bridgeHome, "config.json");
+const codexHome = process.env.CODEX_HOME || join(process.env.HOME || "", ".codex");
+const codexConfigPath = join(codexHome, "config.toml");
 const bridgeBinary = join(enhancementRoot, "runtime", "bun");
 const bridgeCli = join(enhancementRoot, "app", "cli.js");
 
@@ -48,6 +51,13 @@ function bridgeConfigured() {
   return existsSync(bridgeConfigPath);
 }
 
+function ensurePrivateCodexHome() {
+  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  if (!existsSync(codexConfigPath)) {
+    writeFileSync(codexConfigPath, 'model = "gpt-5.6-sol"\n', { mode: 0o600 });
+  }
+}
+
 async function ensureBridge() {
   if (bridgeProcess || !bridgeConfigured() || await bridgeHealth()) return;
   bridgeProcess = spawn(bridgeBinary, [bridgeCli, "serve"], {
@@ -74,6 +84,7 @@ function connectionStatus() {
 function startConnection() {
   if (setupProcess) return connectionStatus();
 
+  ensurePrivateCodexHome();
   setupState = "starting";
   setupExitCode = null;
   setupOutput = "Starting ChatGPT connection…";
@@ -82,7 +93,6 @@ function startConnection() {
     "setup",
     "--browser-only",
     "--login",
-    "--replace-codex-route",
     "--acknowledge-unofficial",
   ], {
     cwd: enhancementRoot,
@@ -113,6 +123,19 @@ function startConnection() {
   // profile's window behind an already-running regular Chrome session.
   spawn("/usr/bin/open", ["-a", "Google Chrome"], { stdio: "ignore" });
   return connectionStatus();
+}
+
+async function serviceHealth(portNumber, pathName) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1200);
+  try {
+    const response = await fetch(`http://127.0.0.1:${portNumber}${pathName}`, { signal: controller.signal });
+    return { running: response.ok, port: portNumber };
+  } catch {
+    return { running: false, port: portNumber };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function runDoctor() {
@@ -159,8 +182,10 @@ async function handle(request) {
   if (url.pathname === "/api/status") {
     await ensureBridge();
     const health = await bridgeHealth();
+    const opencodex = await serviceHealth(openCodexPort, "/health");
     return json({
       dashboard: { status: "ok", port },
+      opencodex,
       bridge: {
         configured: bridgeConfigured(),
         running: Boolean(health),
@@ -206,6 +231,7 @@ const server = Bun.serve({
 });
 
 console.log(`[codex-chatgpt-web] dashboard listening on http://127.0.0.1:${server.port}`);
+ensurePrivateCodexHome();
 ensureBridge().catch((error) => console.error(`[codex-chatgpt-web] bridge startup failed: ${error.message}`));
 
 function shutdown() {

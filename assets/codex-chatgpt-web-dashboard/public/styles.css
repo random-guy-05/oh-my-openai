@@ -31,7 +31,7 @@ h3 { margin-top: 6px; font-size: 18px; letter-spacing: -.025em; }
 .button.secondary { background: rgba(255, 255, 255, .08); color: #dae2ee; }
 .section-heading { margin: 32px 2px 14px; }
 .section-heading > span, .metric-detail, #last-updated { color: #8792a6; font-size: 12px; }
-.grid, .lower-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; }
+.grid, .lower-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; }
 .metric { padding: 21px 22px; }
 .metric-label { color: #9aa6ba; font-size: 12px; }
 .metric-value { margin-top: 14px; font-size: 23px; font-weight: 750; letter-spacing: -.035em; }

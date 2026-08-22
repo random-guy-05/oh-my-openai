@@ -27,6 +27,10 @@
    default-browser handoff for ChatGPT authentication. The menu and dashboard
    now expose **Connect ChatGPT**, which starts the bundled upstream setup/login
    flow without a terminal or second dashboard app.
+- **Dual backend coexistence**: OpenCodex remains the primary Codex route on
+   `127.0.0.1:10100`, while ChatGPT Web setup runs in an isolated
+   `ChatGPTWebHome`; connecting ChatGPT no longer replaces or mutates the
+   OpenCodex route, and the Web dashboard reports both service states.
 - **Native command center**: a menu bar item lists every enhancement
     (dashboard in-app/browser and native app launchers) and
   **Enhancements Settings…** provides one native window per feature — enable
