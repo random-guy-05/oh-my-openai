@@ -384,6 +384,7 @@ function getEnhancementsTrayMenu(elModule) {
     const el = elModule || require('electron');
     const shell = el.shell || (el.default && el.default.shell);
     const BrowserWindow = el.BrowserWindow || (el.default && el.default.BrowserWindow);
+    const net = el.net || (el.default && el.default.net);
     const resourcesPath = process.resourcesPath;
     const manifestFile = resourcesPath
       ? path.join(resourcesPath, 'enhancements', 'manifest.json')
@@ -405,7 +406,31 @@ function getEnhancementsTrayMenu(elModule) {
         const connectItem = Array.isArray(enhancement.connectCommand) && enhancement.connectCommand.length > 0
           ? [{
               label: enhancement.id === 'codex-chatgpt-web' ? 'Connect ChatGPT' : 'Connect',
-              click: () => openUrl('connect')
+              click: () => {
+                try {
+                  const request = net && net.request
+                    ? net.request({
+                        method: 'POST',
+                        url: new URL('/api/connect', ui.url).toString()
+                      })
+                    : null;
+                  if (request) {
+                    request.on('error', () => {});
+                    request.end();
+                  } else {
+                    return openUrl('connect');
+                  }
+                  if (!BrowserWindow) return openUrl('window');
+                  const win = new BrowserWindow({
+                    width: 1100,
+                    height: 750,
+                    title: label,
+                    titleBarStyle: 'hiddenInset',
+                    webPreferences: { nodeIntegration: false, contextIsolation: true }
+                  });
+                  win.loadURL(ui.url);
+                } catch { openUrl('connect'); }
+              }
             }]
           : [];
         subItems.push({
