@@ -1285,6 +1285,26 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
   }
 }
 
+static void ActivateRuntimeApplication(NSUInteger attempt) {
+  NSArray<NSRunningApplication *> *applications =
+    [NSRunningApplication runningApplicationsWithBundleIdentifier:kRuntimeBundleIdentifier];
+  for (NSRunningApplication *application in applications) {
+    if (application.terminated) continue;
+    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    return;
+  }
+
+  // Electron needs a short interval to register its application bundle after
+  // posix_spawn returns; keep the wrapper from leaving another app's menu bar
+  // active during that handoff.
+  if (attempt < 20) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+      ActivateRuntimeApplication(attempt + 1);
+    });
+  }
+}
+
 @interface CodexLauncherDelegate : NSObject <NSApplicationDelegate>
 
 - (instancetype)initWithCommandLineArguments:(NSArray<NSString *> *)arguments;
@@ -1417,7 +1437,9 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
   NSString *failure = nil;
   if (!LaunchRuntime(arguments, &failure)) {
     ShowLaunchError(failure ? failure : @"The Codex runtime could not be launched.");
+    return;
   }
+  ActivateRuntimeApplication(0);
 }
 
 // ─── Enhancement menu/settings actions ─────────────────────────
