@@ -73,8 +73,8 @@ Bundled in the current build:
 - `codex-chatgpt-web` (service, port 17842) — the upstream loopback ChatGPT
   Web bridge plus a small repo-owned dashboard overlay. The command center
   opens the dashboard in the existing WKWebView; it shows bridge health,
-  diagnostics, setup state, and a secure default-browser handoff for ChatGPT
-  authentication without launching another dashboard app.
+  diagnostics, setup state, and a **Connect ChatGPT** action that starts the
+  bundled setup/login flow without a terminal or another dashboard app.
 
 Current `enhancements/manifest.json` targets `mac-x64`; the bundler fails
 closed for other platforms until they are added.

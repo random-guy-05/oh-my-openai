@@ -5,6 +5,8 @@ const bridgeDetail = document.querySelector("#bridge-detail");
 const configValue = document.querySelector("#config-value");
 const lastUpdated = document.querySelector("#last-updated");
 const doctorOutput = document.querySelector("#doctor-output");
+const connectButton = document.querySelector("#connect-button");
+const connectionMessage = document.querySelector("#connection-message");
 
 function setPill(state, label) {
   connectionPill.className = `status-pill ${state}`;
@@ -21,6 +23,7 @@ async function refreshStatus() {
     const response = await fetch("/api/status", { cache: "no-store" });
     const data = await response.json();
     const running = data.bridge.running;
+    const connection = data.connection || {};
     dashboardValue.textContent = "Online";
     dashboardValue.className = "metric-value good";
     bridgeValue.textContent = running ? "Running" : "Not running";
@@ -29,7 +32,27 @@ async function refreshStatus() {
     configValue.textContent = data.bridge.configured ? "Ready" : "Needs setup";
     configValue.className = `metric-value ${data.bridge.configured ? "good" : "warn"}`;
     lastUpdated.textContent = `Updated ${formatTime()}`;
-    setPill(running ? "connected" : "warn", running ? "Bridge connected" : "Setup required");
+    if (connection.running || connection.state === "starting" || connection.state === "running") {
+      setPill("checking", "Connecting ChatGPT");
+      connectionMessage.textContent = "The secure sign-in flow is running. Finish sign-in in the window the app opened; this dashboard will update automatically.";
+      connectButton.disabled = true;
+      connectButton.innerHTML = "Connecting… <span>•</span>";
+    } else if (running) {
+      setPill("connected", "Bridge connected");
+      connectionMessage.textContent = "ChatGPT is connected and the local bridge is ready.";
+      connectButton.disabled = false;
+      connectButton.innerHTML = "Reconnect ChatGPT <span>↗</span>";
+    } else if (connection.state === "failed") {
+      setPill("warn", "Connection needs attention");
+      connectionMessage.textContent = "The connection flow did not complete. Use Connect ChatGPT to try again.";
+      connectButton.disabled = false;
+      connectButton.innerHTML = "Try ChatGPT Connection Again <span>↗</span>";
+    } else {
+      setPill("warn", "Setup required");
+      connectionMessage.textContent = "Choose Connect ChatGPT; the app will open and manage the secure sign-in flow for you.";
+      connectButton.disabled = false;
+      connectButton.innerHTML = "Connect ChatGPT <span>↗</span>";
+    }
   } catch (error) {
     dashboardValue.textContent = "Unavailable";
     bridgeValue.textContent = "Unavailable";
@@ -37,6 +60,19 @@ async function refreshStatus() {
     setPill("warn", "Dashboard error");
     lastUpdated.textContent = error.message;
   }
+}
+
+async function connectChatGPT() {
+  connectButton.disabled = true;
+  connectButton.innerHTML = "Starting connection… <span>•</span>";
+  connectionMessage.textContent = "Starting the secure ChatGPT sign-in flow…";
+  try {
+    await fetch("/api/connect", { method: "POST", cache: "no-store" });
+  } catch (error) {
+    connectionMessage.textContent = `Connection could not start: ${error.message}`;
+    connectButton.disabled = false;
+  }
+  await refreshStatus();
 }
 
 async function runDoctor() {
@@ -52,4 +88,5 @@ async function runDoctor() {
 
 document.querySelector("#refresh-button").addEventListener("click", refreshStatus);
 document.querySelector("#doctor-button").addEventListener("click", runDoctor);
+connectButton.addEventListener("click", connectChatGPT);
 refreshStatus();

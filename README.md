@@ -71,8 +71,9 @@ license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
   the upstream loopback ChatGPT Web bridge runs as a hidden local service,
   while the command-center menu opens a local Codex Web GPT dashboard in the
   existing WKWebView. The dashboard exposes bridge health, diagnostics, setup
-  status, and a secure default-browser handoff for ChatGPT authentication; the
-  dashboard itself remains in Codex and no second dashboard app is launched.
+  status, and a **Connect ChatGPT** action that starts the bundled upstream
+  setup flow automatically; the dashboard itself remains in Codex and no
+  terminal command or second dashboard app is required.
 
 ## Quick summary
 - Name: Oh My OpenAI (side-by-side rebuild of Codex)

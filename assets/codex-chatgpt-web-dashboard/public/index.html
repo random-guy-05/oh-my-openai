@@ -25,9 +25,10 @@
           <h2>Your ChatGPT workspace without another app.</h2>
           <p>ChatGPT blocks embedded WebKit sign-in as insecure, so authentication opens in your secure default browser. This dashboard and the loopback bridge stay inside Codex.</p>
           <div class="actions">
-            <a class="button primary" href="https://chatgpt.com">Open ChatGPT Web Securely <span>↗</span></a>
+            <button id="connect-button" class="button primary" type="button">Connect ChatGPT <span>↗</span></button>
             <button id="refresh-button" class="button secondary" type="button">Refresh status</button>
           </div>
+          <p id="connection-message" class="muted action-message">The app will open the dedicated secure sign-in flow for you.</p>
         </div>
         <div class="hero-orbit" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit-core">C</div></div>
       </section>

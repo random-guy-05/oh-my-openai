@@ -33,6 +33,16 @@ test("accepts the checked-in enhancement contract shape", () => {
   assert.equal(web.ui.kind, "web");
   assert.equal(web.ui.url, "http://127.0.0.1:17842");
   assert.equal(web.overlay, "assets/codex-chatgpt-web-dashboard");
+  assert.deepEqual(web.connectCommand, [
+    "runtime/bun",
+    "run",
+    "app/cli.js",
+    "setup",
+    "--browser-only",
+    "--login",
+    "--acknowledge-unofficial",
+  ]);
+  assert.equal(web.ui.connectLabel, "Connect ChatGPT");
   assert.notEqual(web.enabled, false);
   assert.equal(web.toolCommand, undefined);
   assert.equal(web.appPath, undefined);
@@ -124,7 +134,16 @@ test("native launchers dispatch from manifest capabilities", () => {
     "utf8",
   );
   assert.match(dashboard, /secure default browser/i);
-  assert.match(dashboard, /Open ChatGPT Web Securely/);
+  assert.match(dashboard, /Connect ChatGPT/);
+  const dashboardServer = fs.readFileSync(
+    path.join(__dirname, "..", "assets", "codex-chatgpt-web-dashboard", "server.js"),
+    "utf8",
+  );
+  assert.match(dashboardServer, /\/api\/connect/);
+  assert.match(dashboardServer, /--browser-only/);
+  assert.match(dashboardServer, /--acknowledge-unofficial/);
+  assert.match(launcher, /connectCommand/);
+  assert.match(launcher, /LaunchConnectionEnhancement/);
   assert.match(launcher, /\[kind isEqualToString:@"app"\]/);
   assert.match(launcher, /\[kind isEqualToString:@"terminal"\]/);
   assert.match(launcher, /ResolveEnhancementBinary\(enhDir, command\)/);

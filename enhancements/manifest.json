@@ -56,12 +56,22 @@
         "--port",
         "17842"
       ],
+      "connectCommand": [
+        "runtime/bun",
+        "run",
+        "app/cli.js",
+        "setup",
+        "--browser-only",
+        "--login",
+        "--acknowledge-unofficial"
+      ],
       "description": "In-Codex localhost dashboard for the upstream ChatGPT Web bridge, loopback health, diagnostics, and the signed-in ChatGPT Web surface.",
       "verify": ["server.js", "public/index.html"],
       "ui": {
         "label": "Codex ChatGPT Web",
         "kind": "web",
         "openLabel": "Open ChatGPT Dashboard",
+        "connectLabel": "Connect ChatGPT",
         "url": "http://127.0.0.1:17842"
       }
     }

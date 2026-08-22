@@ -24,8 +24,9 @@
    entry with a pinned upstream loopback bridge service plus a local dashboard
    overlay. The native command center opens `127.0.0.1:17842` in its existing
    WKWebView, with bridge health, diagnostics, setup status, and a secure
-   default-browser handoff for ChatGPT authentication — no second dashboard
-   app is launched.
+   default-browser handoff for ChatGPT authentication. The menu and dashboard
+   now expose **Connect ChatGPT**, which starts the bundled upstream setup/login
+   flow without a terminal or second dashboard app.
 - **Native command center**: a menu bar item lists every enhancement
     (dashboard in-app/browser and native app launchers) and
   **Enhancements Settings…** provides one native window per feature — enable

@@ -167,12 +167,19 @@ static void SetEnhancementView(NSString *identifier, NSString *view) {
 
 static NSArray<NSString *> *EnhancementViewOptions(NSDictionary *enhancement) {
   NSString *kind = enhancement[@"ui"][@"kind"];
-  if ([kind isEqualToString:@"web"]) return @[@"window", @"browser"];
+  if ([kind isEqualToString:@"web"]) {
+    NSArray<NSString *> *connectCommand = enhancement[@"connectCommand"];
+    if ([connectCommand isKindOfClass:[NSArray class]] && connectCommand.count > 0) {
+      return @[@"window", @"connect", @"browser"];
+    }
+    return @[@"window", @"browser"];
+  }
   return @[@"launch"];
 }
 
 static NSString *EnhancementViewLabel(NSString *view) {
   if ([view isEqualToString:@"window"]) return @"In-app window";
+  if ([view isEqualToString:@"connect"]) return @"Connect ChatGPT";
   if ([view isEqualToString:@"browser"]) return @"Browser";
   if ([view isEqualToString:@"report"]) return @"Native report";
   return @"Launch";
@@ -291,6 +298,8 @@ static NSString *AppleScriptString(NSString *value) {
     stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
 }
 
+static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement);
+
 static void OpenTerminalEnhancement(NSDictionary *enhancement) {
   NSArray<NSString *> *toolCommand = enhancement[@"toolCommand"];
   if (![toolCommand isKindOfClass:[NSArray class]] || toolCommand.count == 0) return;
@@ -331,6 +340,9 @@ static void OpenEnhancement(NSString *identifier, NSString *view) {
       if ([view isEqualToString:@"browser"]) {
         NSURL *url = [NSURL URLWithString:enhancement[@"ui"][@"url"]];
         if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+      } else if ([view isEqualToString:@"connect"]) {
+        LaunchConnectionEnhancement(enhancement);
+        ShowWebEnhancement(enhancement);
       } else {
         ShowWebEnhancement(enhancement);
       }
@@ -525,6 +537,7 @@ static void ShowEnhancementSettings(void) {
 
 static BOOL gEnhancementsStarted = NO;
 static NSMutableArray<NSTask *> *gEnhancementTasks = nil;
+static NSMutableArray<NSTask *> *gConnectionTasks = nil;
 
 // Async-signal-safe PID tracking so a raw SIGTERM/SIGINT/SIGHUP (AppKit only
 // delivers applicationWillTerminate: on ordinary quit paths) still stops every
@@ -645,6 +658,69 @@ static BOOL StartEnhancements(void) {
   return YES;
 }
 
+static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement) {
+  NSArray<NSString *> *connectCommand = enhancement[@"connectCommand"];
+  if (![connectCommand isKindOfClass:[NSArray class]] || connectCommand.count == 0) return nil;
+
+  if (gConnectionTasks) {
+    for (NSTask *existing in gConnectionTasks) {
+      if (existing.isRunning) return existing;
+    }
+  }
+
+  NSString *id = enhancement[@"id"];
+  NSString *enhDir = EnhancementDirectory(enhancement);
+  NSString *binary = ResolveEnhancementBinary(enhDir, connectCommand[0]);
+  if (!binary) {
+    NSLog(@"[CodexLauncher] connection binary not found for %@: %@", id, connectCommand[0]);
+    return nil;
+  }
+
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSString *logDirectory = [supportPath stringByAppendingPathComponent:@"enhancements"];
+  CreatePrivateDirectory(logDirectory, nil);
+  NSString *logPath = [logDirectory stringByAppendingPathComponent:
+    [NSString stringWithFormat:@"%@-connect.log", id]];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:logPath]) {
+    [[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
+  }
+  NSFileHandle *logHandle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+  if (!logHandle) {
+    NSLog(@"[CodexLauncher] cannot open connection log for %@", id);
+    return nil;
+  }
+  [logHandle seekToEndOfFile];
+
+  NSTask *task = [[NSTask alloc] init];
+  task.launchPath = binary;
+  task.arguments = [connectCommand subarrayWithRange:NSMakeRange(1, connectCommand.count - 1)];
+  task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
+  NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+  environment[@"CODEX_HOME"] = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+  environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
+    [supportPath stringByAppendingPathComponent:@"Profile"];
+  task.environment = environment;
+  task.standardOutput = logHandle;
+  task.standardError = logHandle;
+
+  @try {
+    [task launch];
+  } @catch (NSException *exception) {
+    NSLog(@"[CodexLauncher] failed to start connection for %@: %@", id, exception.reason);
+    return nil;
+  }
+
+  if (!gConnectionTasks) gConnectionTasks = [[NSMutableArray alloc] init];
+  [gConnectionTasks addObject:task];
+  [task setTerminationHandler:^(NSTask *finishedTask) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [gConnectionTasks removeObject:finishedTask];
+    });
+  }];
+  NSLog(@"[CodexLauncher] connection flow started for %@ (pid %d)", id, task.processIdentifier);
+  return task;
+}
+
 static void StopEnhancements(void) {
   if (!gEnhancementTasks) return;
   for (NSTask *task in gEnhancementTasks) {
@@ -661,6 +737,10 @@ static void StopEnhancements(void) {
   }
   NSLog(@"[CodexLauncher] stopped %lu enhancements", (unsigned long)gEnhancementTasks.count);
   [gEnhancementTasks removeAllObjects];
+  for (NSTask *task in gConnectionTasks) {
+    if (task.isRunning) [task terminate];
+  }
+  [gConnectionTasks removeAllObjects];
 }
 
 static NSDictionary *RuntimeInfo(NSURL *runtimeURL) {

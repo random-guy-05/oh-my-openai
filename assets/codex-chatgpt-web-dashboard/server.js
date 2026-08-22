@@ -18,6 +18,10 @@ const bridgeBinary = join(enhancementRoot, "runtime", "bun");
 const bridgeCli = join(enhancementRoot, "app", "cli.js");
 
 let bridgeProcess = null;
+let setupProcess = null;
+let setupState = "idle";
+let setupExitCode = null;
+let setupOutput = "";
 
 function json(payload, status = 200) {
   return Response.json(payload, {
@@ -56,6 +60,54 @@ async function ensureBridge() {
   bridgeProcess.once("exit", () => {
     bridgeProcess = null;
   });
+}
+
+function connectionStatus() {
+  return {
+    state: setupState,
+    running: Boolean(setupProcess),
+    exitCode: setupExitCode,
+    output: setupOutput.slice(-1200),
+  };
+}
+
+function startConnection() {
+  if (setupProcess) return connectionStatus();
+
+  setupState = "starting";
+  setupExitCode = null;
+  setupOutput = "Starting ChatGPT connection…";
+  setupProcess = spawn(bridgeBinary, [
+    bridgeCli,
+    "setup",
+    "--browser-only",
+    "--login",
+    "--acknowledge-unofficial",
+  ], {
+    cwd: enhancementRoot,
+    env: { ...process.env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  setupProcess.stdout?.on("data", (chunk) => {
+    setupState = "running";
+    setupOutput = `${setupOutput}\n${chunk.toString("utf8")}`.slice(-1200);
+  });
+  setupProcess.stderr?.on("data", (chunk) => {
+    setupOutput = `${setupOutput}\n${chunk.toString("utf8")}`.slice(-1200);
+  });
+  setupProcess.once("error", (error) => {
+    setupState = "failed";
+    setupExitCode = 1;
+    setupOutput = `${setupOutput}\n${error.message}`.slice(-1200);
+    setupProcess = null;
+  });
+  setupProcess.once("exit", (code, signal) => {
+    setupState = code === 0 ? "ready" : "failed";
+    setupExitCode = code ?? (signal ? 1 : 0);
+    setupOutput = `${setupOutput}\nConnection flow finished with ${code === 0 ? "success" : `exit code ${setupExitCode}`}.`.slice(-1200);
+    setupProcess = null;
+  });
+  return connectionStatus();
 }
 
 async function runDoctor() {
@@ -109,11 +161,16 @@ async function handle(request) {
         running: Boolean(health),
         health,
       },
+      connection: connectionStatus(),
       links: {
         chatgpt: "https://chatgpt.com",
         upstream: "https://github.com/miuuyy/codex-chatgpt-web",
       },
     });
+  }
+  if (url.pathname === "/api/connect") {
+    if (request.method !== "POST") return json({ error: "Use POST to start ChatGPT connection." }, 405);
+    return json(startConnection(), 202);
   }
   if (url.pathname === "/api/doctor") {
     return json(await runDoctor());
