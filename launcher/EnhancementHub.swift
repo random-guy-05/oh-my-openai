@@ -399,7 +399,7 @@ enum HubActions {
       if view == "browser" {
         NSWorkspace.shared.open(url)
       } else {
-        WebWindow.shared.show(title: "OpenCodex Gateway", url: url)
+        WebWindow.shared.show(title: enhancement.label, url: url)
       }
       return
     }
@@ -475,6 +475,9 @@ final class WebWindow: NSObject, NSWindowDelegate {
 
   func show(title: String, url: URL) {
     if let existing = windows[title] {
+      if let webView = existing.contentView as? WKWebView {
+        webView.load(URLRequest(url: url))
+      }
       existing.makeKeyAndOrderFront(nil)
       NSApp.activate(ignoringOtherApps: true)
       return

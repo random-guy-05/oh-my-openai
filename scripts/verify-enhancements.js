@@ -85,6 +85,10 @@ function validateManifest(manifest, label = "manifest") {
         `App-backed enhancement ${enhancement.id} must use ui.kind app`);
     }
 
+    if (enhancement.overlay) {
+      assertSafeRelative(enhancement.overlay, `${enhancement.id}.overlay`);
+    }
+
     if (enhancement.asset) {
       assertString(enhancement.asset, `${enhancement.id}.asset`);
       assert(/\.(?:dmg|zip|tar\.gz)$/.test(enhancement.asset),

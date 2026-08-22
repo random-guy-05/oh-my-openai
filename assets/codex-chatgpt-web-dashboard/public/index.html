@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Web GPT</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark">C</div>
+          <div>
+            <div class="eyebrow">CODEX ENHANCEMENT</div>
+            <h1>Codex Web GPT</h1>
+          </div>
+        </div>
+        <div id="connection-pill" class="status-pill checking"><span class="status-dot"></span><span>Checking bridge</span></div>
+      </header>
+
+      <section class="hero card">
+        <div class="hero-copy">
+          <div class="eyebrow blue">CHATGPT WEB, INSIDE CODEX</div>
+          <h2>Your ChatGPT workspace without another app.</h2>
+          <p>Use the signed-in ChatGPT Web surface in this Codex window while the local bridge stays loopback-only and the Codex harness remains the host.</p>
+          <div class="actions">
+            <a class="button primary" href="https://chatgpt.com">Open ChatGPT Web <span>↗</span></a>
+            <button id="refresh-button" class="button secondary" type="button">Refresh status</button>
+          </div>
+        </div>
+        <div class="hero-orbit" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit-core">C</div></div>
+      </section>
+
+      <section class="section-heading"><div><div class="eyebrow">LOCAL RUNTIME</div><h3>Bridge overview</h3></div><span id="last-updated">Waiting for status…</span></section>
+      <section class="grid">
+        <article class="metric card"><div class="metric-label">Dashboard</div><div id="dashboard-value" class="metric-value">Checking</div><div class="metric-detail">In-app local web surface</div></article>
+        <article class="metric card"><div class="metric-label">ChatGPT bridge</div><div id="bridge-value" class="metric-value">Checking</div><div id="bridge-detail" class="metric-detail">Loopback Responses service</div></article>
+        <article class="metric card"><div class="metric-label">Configuration</div><div id="config-value" class="metric-value">Checking</div><div class="metric-detail">Stored in your private user profile</div></article>
+      </section>
+
+      <section class="lower-grid">
+        <article class="card panel"><div class="panel-heading"><div><div class="eyebrow">DIAGNOSTICS</div><h3>Runtime health</h3></div><button id="doctor-button" class="text-button" type="button">Run doctor</button></div><pre id="doctor-output" class="output">No diagnostic run yet.</pre></article>
+        <article class="card panel next-steps"><div class="eyebrow">QUICK LINKS</div><h3>Keep your flow in one place.</h3><a href="https://github.com/miuuyy/codex-chatgpt-web">Upstream project <span>↗</span></a><a href="/api/bridge-health">Bridge health JSON <span>↗</span></a><p>OpenCodex, NerfTrack, and Codex Web GPT all use the same native command center and local window model.</p></article>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

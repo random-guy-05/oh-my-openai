@@ -29,10 +29,13 @@ test("accepts the checked-in enhancement contract shape", () => {
   const result = validateManifest(checkedIn, "checked-in manifest");
   assert.deepEqual(result.ids, ["opencodex", "nerftrack", "codex-chatgpt-web"]);
   const web = checkedIn.enhancements.find((entry) => entry.id === "codex-chatgpt-web");
-  assert.equal(web.ui.kind, "app");
-  assert.equal(web.appPath, "Codex Web GPT.app");
+  assert.equal(web.type, "service");
+  assert.equal(web.ui.kind, "web");
+  assert.equal(web.ui.url, "http://127.0.0.1:17842");
+  assert.equal(web.overlay, "assets/codex-chatgpt-web-dashboard");
   assert.notEqual(web.enabled, false);
   assert.equal(web.toolCommand, undefined);
+  assert.equal(web.appPath, undefined);
 });
 
 test("accepts a native app enhancement contract", () => {
@@ -113,6 +116,7 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(hub, /enhancement\.kind == "app"/);
   assert.match(hub, /enhancement\.kind == "terminal"/);
   assert.doesNotMatch(hub, /enhancement\.id == "(?:opencodex|codex-chatgpt-web)"/);
+  assert.match(hub, /WebWindow\.shared\.show\(title: enhancement\.label/);
   assert.match(launcher, /\[kind isEqualToString:@"app"\]/);
   assert.match(launcher, /\[kind isEqualToString:@"terminal"\]/);
   assert.match(launcher, /ResolveEnhancementBinary\(enhDir, command\)/);

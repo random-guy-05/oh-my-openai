@@ -10,6 +10,7 @@
  *       node_modules/...     installed package tree (npm: sources + dependencies)
  *       source/...           repository contents (github: tarball sources)
  *       <asset>.app|...      extracted release assets (github: asset sources)
+ *       dashboard/...        optional repo-local overlay files
  *
  * Enhancement types:
  *   service — started/stopped by the launcher around Codex (startCommand)
@@ -82,6 +83,20 @@ function copyRecursive(src, dest) {
 function clearDir(dir) {
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function resolveOverlayPath(overlay) {
+  if (typeof overlay !== "string" || overlay.length === 0 || path.isAbsolute(overlay)) {
+    throw new Error(`Enhancement overlay must be a safe relative path: ${overlay}`);
+  }
+  const resolved = path.resolve(PROJECT_ROOT, overlay);
+  if (resolved !== PROJECT_ROOT && !resolved.startsWith(`${PROJECT_ROOT}${path.sep}`)) {
+    throw new Error(`Enhancement overlay escapes the project root: ${overlay}`);
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    throw new Error(`Enhancement overlay directory is missing: ${overlay}`);
+  }
+  return resolved;
 }
 
 function machOArchitectures(binaryPath) {
@@ -207,6 +222,7 @@ function loadSourceManifest() {
          enhancement.verify.some((v) => typeof v !== "string"))) {
       throw new Error(`Enhancement ${enhancement.id} verify must be a string array`);
     }
+    if (enhancement.overlay) resolveOverlayPath(enhancement.overlay);
   }
   return manifest;
 }
@@ -357,6 +373,11 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
 
       const resolved = await resolveSource(enhancement, stagingDir, planOnly);
       action.resolved = resolved.install || resolved.url;
+
+      if (enhancement.overlay) {
+        action.overlay = enhancement.overlay;
+        copyRecursive(resolveOverlayPath(enhancement.overlay), stagingDir);
+      }
 
       if (enhancement.dependencies && enhancement.dependencies.length > 0) {
         const specs = enhancement.dependencies.map((d) => d.slice("npm:".length));

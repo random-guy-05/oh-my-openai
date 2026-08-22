@@ -20,11 +20,11 @@
 - **Native usage dashboard**: replaced the terminal-only `ccusage` integration
    with the pinned NerfTrack macOS Intel desktop app, exposing usage history,
    quota, diagnostics, and API-equivalent value estimates in a real UI.
-- **Codex Web GPT launcher**: replaced the terminal-only ChatGPT Web bridge
-   entry with the pinned upstream macOS Intel desktop launcher. It opens from
-   the native command center by default and includes embedded browser sign-in,
-   guided setup, diagnostics, browser-only models, and optional full-harness
-   configuration without a setup terminal.
+- **Codex ChatGPT Web dashboard**: replaced the separate launcher-app menu
+   entry with a pinned upstream loopback bridge service plus a local dashboard
+   overlay. The native command center opens `127.0.0.1:17842` in its existing
+   WKWebView, with bridge health, diagnostics, setup status, and a same-window
+   ChatGPT Web link — no second app is launched.
 - **Native command center**: a menu bar item lists every enhancement
     (dashboard in-app/browser and native app launchers) and
   **Enhancements Settings…** provides one native window per feature — enable

@@ -51,8 +51,9 @@ brew uninstall --zap --cask codex-desktop
 - **Enhancements layer**: the launcher starts bundled services before Codex
    and stops them cleanly on quit — including raw SIGTERM/SIGINT/SIGHUP.
    Command-line tools are staged alongside and invoked with
-   `node scripts/enhancement-tool.js <Codex.app> <id>`; native app enhancements
-   open from the command center with the isolated `CODEX_HOME` environment.
+    `node scripts/enhancement-tool.js <Codex.app> <id>`; web dashboards open
+    inside the command center's WKWebView and native apps use the isolated
+    `CODEX_HOME` environment.
 - **Native command center**: a menu bar item (square-grid icon) lists every
    enhancement — opencodex gateway (in-app window or browser), NerfTrack usage
     dashboard, and Codex Web GPT — plus **Enhancements Settings…**: one
@@ -66,10 +67,11 @@ brew uninstall --zap --cask codex-desktop
 
 The bundled NerfTrack release is distributed under its upstream GPL-3.0-only
 license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-- **codex-chatgpt-web** (native app) — the upstream Codex Web GPT launcher,
-  including its embedded ChatGPT browser, browser-only mode, guided setup,
-  diagnostics, and optional full-harness configuration. It is bundled and
-  opened from the command center by default; there is no setup-terminal step.
+- **codex-chatgpt-web** (launcher-managed service + in-app web dashboard) —
+  the upstream loopback ChatGPT Web bridge runs as a hidden local service,
+  while the command-center menu opens a local Codex Web GPT dashboard in the
+  existing WKWebView. The dashboard exposes bridge health, diagnostics, setup
+  status, and a same-window ChatGPT Web link; no second app is launched.
 
 ## Quick summary
 - Name: Oh My OpenAI (side-by-side rebuild of Codex)

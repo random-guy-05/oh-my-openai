@@ -70,10 +70,10 @@ Bundled in the current build:
 - `nerftrack` (native app) — full local usage, quota, diagnostics, and
   API-equivalent value dashboard bundled from the pinned macOS Intel release.
   Its upstream GPL-3.0-only notice is recorded in `THIRD_PARTY_NOTICES.md`.
-- `codex-chatgpt-web` (native app) — the upstream Codex Web GPT launcher with
-  embedded ChatGPT browser, guided setup, diagnostics, browser-only mode, and
-  optional full-harness configuration. It opens from the command center and
-  does not require a setup terminal.
+- `codex-chatgpt-web` (service, port 17842) — the upstream loopback ChatGPT
+  Web bridge plus a small repo-owned dashboard overlay. The command center
+  opens the dashboard in the existing WKWebView; it shows bridge health,
+  diagnostics, setup state, and ChatGPT Web without launching another app.
 
 Current `enhancements/manifest.json` targets `mac-x64`; the bundler fails
 closed for other platforms until they are added.

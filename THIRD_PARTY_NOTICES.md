@@ -18,14 +18,16 @@ project and its bundled notice files.
 
 ## Codex Web GPT
 
-This build bundles the upstream Codex Web GPT native launcher as the default
-ChatGPT Web UI enhancement.
+This build bundles the upstream Codex Web GPT loopback bridge runtime. Its
+command-center entry is wrapped by a repo-owned local dashboard; the upstream
+runtime is supervised as a hidden service rather than opened as a second app.
 
 - Project: [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)
 - Release: `v2.1.11`
 - License: MIT
-- Bundled asset: `codex-web-gpt-2.1.11-mac-x64.dmg`
-- Bundled asset SHA-256: `487f78eb7f05b413963bcbcc7ca1a23770b01731463458be969366cad457af88`
+- Bundled asset: `codex-chatgpt-web-darwin-amd64.tar.gz`
+- Bundled asset SHA-256: `447f37729c8709dfd72a5acf8d195376774e8b49e3ce05015dac61933c8d83a1`
 
-The upstream launcher remains a separate application inside the enhancement
-bundle. Its own license and third-party notices govern the bundled app.
+The dashboard overlay is part of this repository; the upstream runtime and
+its own license and third-party notices remain governed by the upstream
+project.

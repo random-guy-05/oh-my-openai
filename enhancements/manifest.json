@@ -40,17 +40,29 @@
     },
     {
       "id": "codex-chatgpt-web",
-      "type": "tool",
+      "type": "service",
       "source": "github:miuuyy/codex-chatgpt-web@v2.1.11",
-      "asset": "codex-web-gpt-2.1.11-mac-x64.dmg",
-      "sha256": "487f78eb7f05b413963bcbcc7ca1a23770b01731463458be969366cad457af88",
-      "appPath": "Codex Web GPT.app",
-      "description": "Native ChatGPT Web launcher with embedded browser sign-in, browser-only models, optional full harness, diagnostics, and guided setup.",
-      "verify": ["Codex Web GPT.app/Contents/Info.plist"],
+      "asset": "codex-chatgpt-web-darwin-amd64.tar.gz",
+      "sha256": "447f37729c8709dfd72a5acf8d195376774e8b49e3ce05015dac61933c8d83a1",
+      "overlay": "assets/codex-chatgpt-web-dashboard",
+      "config": {
+        "port": 17842
+      },
+      "lifecycle": "launcher",
+      "startCommand": [
+        "runtime/bun",
+        "run",
+        "server.js",
+        "--port",
+        "17842"
+      ],
+      "description": "In-Codex localhost dashboard for the upstream ChatGPT Web bridge, loopback health, diagnostics, and the signed-in ChatGPT Web surface.",
+      "verify": ["server.js", "public/index.html"],
       "ui": {
-        "label": "Codex Web GPT",
-        "kind": "app",
-        "openLabel": "Open Codex Web GPT"
+        "label": "Codex ChatGPT Web",
+        "kind": "web",
+        "openLabel": "Open ChatGPT Dashboard",
+        "url": "http://127.0.0.1:17842"
       }
     }
   ]
