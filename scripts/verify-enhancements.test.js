@@ -122,6 +122,8 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /enhancement tray already integrated/);
   assert.match(buildScript, /Connect ChatGPT/);
   assert.match(buildScript, /\/api\/connect/);
+  assert.match(buildScript, /CODEX_REBUILD_ENHANCEMENTS_PATH/);
+  assert.match(buildScript, /path\.resolve\(resourcesPath, '\.\.', '\.\.', '\.\.'/);
   assert.match(buildScript, /openUrl\('connect'\)/);
 });
 

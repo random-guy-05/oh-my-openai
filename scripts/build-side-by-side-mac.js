@@ -386,9 +386,16 @@ function getEnhancementsTrayMenu(elModule) {
     const BrowserWindow = el.BrowserWindow || (el.default && el.default.BrowserWindow);
     const net = el.net || (el.default && el.default.net);
     const resourcesPath = process.resourcesPath;
-    const manifestFile = resourcesPath
-      ? path.join(resourcesPath, 'enhancements', 'manifest.json')
-      : null;
+    const manifestCandidates = [
+      process.env.CODEX_REBUILD_ENHANCEMENTS_PATH
+        ? path.join(process.env.CODEX_REBUILD_ENHANCEMENTS_PATH, 'manifest.json')
+        : null,
+      resourcesPath ? path.join(resourcesPath, 'enhancements', 'manifest.json') : null,
+      resourcesPath
+        ? path.resolve(resourcesPath, '..', '..', '..', 'enhancements', 'manifest.json')
+        : null
+    ].filter(Boolean);
+    const manifestFile = manifestCandidates.find((candidate) => fs.existsSync(candidate));
     if (!manifestFile || !fs.existsSync(manifestFile)) return fallback(shell);
 
     const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
