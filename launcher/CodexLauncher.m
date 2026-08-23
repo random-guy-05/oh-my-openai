@@ -8,6 +8,7 @@
 #import <string.h>
 #import <sys/file.h>
 #import <sys/stat.h>
+#import <sys/wait.h>
 #import <unistd.h>
 
 extern char **environ;
@@ -118,6 +119,8 @@ static CodexLauncherDelegate *gAppDelegate = nil;
 static BOOL gShowSettingsOnLaunch = NO;
 static BOOL gCaptureHubOnLaunch = NO;
 static int gLauncherLockFD = -1;
+static pid_t gPrimaryRuntimePID = 0;
+static dispatch_source_t gPrimaryRuntimeExitSource = nil;
 
 static __strong NSStatusItem *gEnhancementStatusItem = nil;
 static NSArray<NSDictionary *> *gLoadedEnhancements = nil;
@@ -1985,6 +1988,25 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
   return YES;
 }
 
+static void MonitorPrimaryRuntime(pid_t pid) {
+  if (pid <= 0) return;
+  dispatch_source_t source = dispatch_source_create(
+    DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)pid, DISPATCH_PROC_EXIT,
+    dispatch_get_main_queue());
+  if (!source) return;
+  gPrimaryRuntimePID = pid;
+  gPrimaryRuntimeExitSource = source;
+  dispatch_source_set_event_handler(source, ^{
+    int status = 0;
+    waitpid(pid, &status, WNOHANG);
+    if (gPrimaryRuntimePID != pid) return;
+    gPrimaryRuntimePID = 0;
+    gPrimaryRuntimeExitSource = nil;
+    if (gAppDelegate) [(id)gAppDelegate performSelector:@selector(runtimeProcessDidExit)];
+  });
+  dispatch_resume(source);
+}
+
 static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **failure) {
   @autoreleasepool {
     NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
@@ -2068,6 +2090,7 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
       return NO;
     }
 
+    BOOL shouldMonitorAsPrimary = !RuntimeIsRunning();
     pid_t childPid = 0;
     int spawnResult = posix_spawn(&childPid, runtimePath.fileSystemRepresentation,
                                   NULL, NULL, childArgv, environ);
@@ -2080,6 +2103,7 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
         @"The Codex runtime failed to launch.\n\n%@", detail];
       return NO;
     }
+    if (shouldMonitorAsPrimary) MonitorPrimaryRuntime(childPid);
     return YES;
   }
 }
@@ -2180,6 +2204,10 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 - (void)workspaceApplicationDidTerminate:(NSNotification *)notification {
   NSRunningApplication *application = notification.userInfo[NSWorkspaceApplicationKey];
   if (![application.bundleIdentifier isEqualToString:kRuntimeBundleIdentifier]) return;
+  [self runtimeProcessDidExit];
+}
+
+- (void)runtimeProcessDidExit {
   // A catalog refresh intentionally replaces only the private runtime. Every
   // other runtime exit is a real app quit/crash, so tear down the supervisor
   // and both local services instead of leaving background processes behind.

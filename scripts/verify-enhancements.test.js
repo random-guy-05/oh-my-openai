@@ -214,6 +214,10 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(launcher, /disableSuddenTermination/);
   assert.match(launcher, /NSWorkspaceDidTerminateApplicationNotification/);
   assert.match(launcher, /workspaceApplicationDidTerminate/);
+  assert.match(launcher, /MonitorPrimaryRuntime/);
+  assert.match(launcher, /DISPATCH_SOURCE_TYPE_PROC/);
+  assert.match(launcher, /waitpid\(pid, &status, WNOHANG\)/);
+  assert.match(launcher, /runtimeProcessDidExit/);
   assert.match(launcher, /_modelRefreshRestartPending \|\| !_didPerformInitialLaunch/);
   assert.match(launcher, /StopEnhancements\(\);[\s\S]*_requiredServiceWaitAttempts = 0/);
   assert.match(launcher, /ProcessTreeContainsPID/);
