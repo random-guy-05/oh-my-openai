@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -17,6 +18,9 @@ const bridgeHome = process.env.CODEX_CHATGPT_WEB_HOME || join(process.env.HOME |
 const bridgeConfigPath = join(bridgeHome, "config.json");
 const codexHome = process.env.CODEX_HOME || join(process.env.HOME || "", ".codex");
 const codexConfigPath = join(codexHome, "config.toml");
+const sourceCodexHome = join(homedir(), ".codex");
+const sourceAuthPath = join(sourceCodexHome, "auth.json");
+const codexAuthPath = join(codexHome, "auth.json");
 const integrationJournalPaths = [
   join(bridgeHome, "codex", "integration-journal.json"),
   join(bridgeHome, "codex", "integration-journal.recovery.json"),
@@ -28,6 +32,7 @@ let setupProcess = null;
 let setupState = "idle";
 let setupExitCode = null;
 let setupOutput = "";
+let accountHealthCache = { checkedAt: 0, result: null };
 
 function json(payload, status = 200) {
   return Response.json(payload, {
@@ -56,6 +61,7 @@ function bridgeConfigured() {
 
 function ensurePrivateCodexHome() {
   mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  syncCodexAuth();
   if (!existsSync(codexConfigPath)) {
     writeFileSync(codexConfigPath, 'model = "gpt-5.6-sol"\n', { mode: 0o600 });
   }
@@ -71,6 +77,63 @@ function ensurePrivateCodexHome() {
     } catch {
       // A malformed journal is left in place for the upstream CLI to report.
     }
+  }
+}
+
+function syncCodexAuth() {
+  if (resolve(codexHome) === resolve(sourceCodexHome) || !existsSync(sourceAuthPath)) return;
+  try {
+    const source = JSON.parse(readFileSync(sourceAuthPath, "utf8"));
+    const sourceAccessToken = source?.tokens?.access_token;
+    if (typeof sourceAccessToken !== "string" || sourceAccessToken.length < 20) return;
+    let currentAccessToken = null;
+    if (existsSync(codexAuthPath)) {
+      try {
+        currentAccessToken = JSON.parse(readFileSync(codexAuthPath, "utf8"))?.tokens?.access_token;
+      } catch {}
+    }
+    if (currentAccessToken !== sourceAccessToken) {
+      copyFileSync(sourceAuthPath, codexAuthPath);
+      chmodSync(codexAuthPath, 0o600);
+      console.log("[codex-chatgpt-web] synchronized account auth into the isolated Codex home");
+    }
+  } catch (error) {
+    console.warn(`[codex-chatgpt-web] account auth could not be synchronized: ${error.message}`);
+  }
+}
+
+async function accountRouteHealth(force = false) {
+  if (!force && accountHealthCache.result && Date.now() - accountHealthCache.checkedAt < 10_000) {
+    return accountHealthCache.result;
+  }
+  syncCodexAuth();
+  let accessToken;
+  try {
+    accessToken = JSON.parse(readFileSync(codexAuthPath, "utf8"))?.tokens?.access_token;
+  } catch {
+    accessToken = null;
+  }
+  if (typeof accessToken !== "string" || accessToken.length < 20) {
+    accountHealthCache = {
+      checkedAt: Date.now(),
+      result: { status: "error", message: "The isolated Codex runtime has no ChatGPT account credential." },
+    };
+    return accountHealthCache.result;
+  }
+  try {
+    const response = await fetch(`http://127.0.0.1:${bridgePort}/v1/models?client_version=0.144.0`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    const payload = await response.json().catch(() => null);
+    const models = Array.isArray(payload?.models) ? payload.models : [];
+    const result = response.ok && models.length > 0
+      ? { status: "ok", modelCount: models.length, models: models.map((model) => model.slug).filter(Boolean).slice(0, 20) }
+      : { status: "error", message: payload?.error?.message || `ChatGPT account request failed with HTTP ${response.status}.` };
+    accountHealthCache = { checkedAt: Date.now(), result };
+    return result;
+  } catch (error) {
+    accountHealthCache = { checkedAt: Date.now(), result: { status: "error", message: error.message } };
+    return accountHealthCache.result;
   }
 }
 
@@ -118,10 +181,25 @@ function startConnection() {
     setupProcess = null;
   });
   setupProcess.once("exit", (code, signal) => {
-    setupState = code === 0 ? "ready" : "failed";
-    setupExitCode = code ?? (signal ? 1 : 0);
-    setupOutput = `${setupOutput}\nConnection flow finished with ${code === 0 ? "success" : `exit code ${setupExitCode}`}.`.slice(-1200);
+    const exitCode = code ?? (signal ? 1 : 0);
+    setupExitCode = exitCode;
     setupProcess = null;
+    void (async () => {
+      if (exitCode !== 0) {
+        setupState = "failed";
+        setupOutput = `${setupOutput}\nConnection flow finished with exit code ${exitCode}.`.slice(-1200);
+        return;
+      }
+      const account = await accountRouteHealth(true);
+      if (account.status !== "ok") {
+        setupState = "failed";
+        setupExitCode = 1;
+        setupOutput = `${setupOutput}\nConnection was not completed: ${account.message}`.slice(-1200);
+        return;
+      }
+      setupState = "ready";
+      setupOutput = `${setupOutput}\nVerified ChatGPT account access (${account.modelCount} models available). Connection flow finished with success.`.slice(-1200);
+    })();
   });
   return connectionStatus();
 }
@@ -140,10 +218,11 @@ async function serviceHealth(portNumber, pathName) {
 }
 
 async function runDoctor() {
+  ensurePrivateCodexHome();
   return new Promise((resolveResult) => {
     const child = spawn(bridgeBinary, [bridgeCli, "doctor", "--json"], {
       cwd: enhancementRoot,
-      env: { ...process.env },
+      env: { ...process.env, CODEX_HOME: codexHome },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const chunks = [];
@@ -192,6 +271,7 @@ async function handle(request) {
         running: Boolean(health),
         health,
       },
+      account: await accountRouteHealth(),
       connection: connectionStatus(),
       links: {
         chatgpt: "https://chatgpt.com",

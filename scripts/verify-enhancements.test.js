@@ -162,6 +162,9 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(loginFlow, /--browser-only/);
   assert.doesNotMatch(dashboardServer, /--replace-codex-route/);
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
+  assert.match(dashboardServer, /syncCodexAuth/);
+  assert.match(dashboardServer, /accountRouteHealth/);
+  assert.match(dashboardServer, /CODEX_HOME: codexHome/);
   assert.match(dashboardServer, /opencodex/);
   assert.match(dashboardServer, /serviceHealth\(openCodexPort, "\/healthz"\)/);
   assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
@@ -172,6 +175,7 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(loginFlow, /new WebSocket/);
   assert.match(loginFlow, /remote-allow-origins/);
   assert.match(loginFlow, /composerSelector/);
+  assert.match(loginFlow, /loggedOutMarker/);
   assert.match(loginFlow, /login-profile/);
   assert.match(dashboardServer, /login\.js/);
   assert.match(launcher, /connectCommand/);

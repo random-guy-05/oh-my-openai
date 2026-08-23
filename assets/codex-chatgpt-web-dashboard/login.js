@@ -7,7 +7,7 @@
 // persists the session, closes only that temporary browser, and then lets the
 // upstream CLI finish its normal setup/configuration work.
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -17,6 +17,9 @@ const root = resolve(import.meta.dir);
 const home = resolve(process.env.CODEX_CHATGPT_WEB_HOME || join(homedir(), ".codex-chatgpt-web"));
 const browserRoot = join(home, "browser");
 const loginProfile = join(browserRoot, "login-profile");
+const chromeUserDataRoot = resolve(process.env.CODEX_CHATGPT_WEB_CHROME_DATA || join(homedir(), "Library/Application Support/Google/Chrome"));
+const chromeProfileName = process.env.CODEX_CHATGPT_WEB_CHROME_PROFILE || "Default";
+const profileSeedMarker = join(browserRoot, "profile-seed.json");
 const storageStatePath = join(browserRoot, "storage-state.json");
 const verifiedPath = `${storageStatePath}.verified.json`;
 const chromeExecutable = process.env.CODEX_CHATGPT_WEB_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -35,6 +38,31 @@ function log(message) {
 function fail(message) {
   process.stderr.write(`[codex-chatgpt-web] ${message}\n`);
   process.exitCode = 1;
+}
+
+function seedLoginProfile() {
+  if (existsSync(profileSeedMarker)) return false;
+  const sourceProfile = join(chromeUserDataRoot, chromeProfileName);
+  const sourcePreferences = join(sourceProfile, "Preferences");
+  if (!existsSync(sourcePreferences)) return false;
+  if (existsSync(loginProfile)) {
+    renameSync(loginProfile, `${loginProfile}.legacy-${Date.now()}`);
+  }
+  const targetProfile = join(loginProfile, "Default");
+  mkdirSync(targetProfile, { recursive: true, mode: 0o700 });
+  cpSync(sourceProfile, targetProfile, {
+    recursive: true,
+    filter: (sourcePath) => !["SingletonCookie", "SingletonLock", "SingletonSocket", "LOCK"].includes(sourcePath.split("/").at(-1)),
+  });
+  const sourceLocalState = join(chromeUserDataRoot, "Local State");
+  if (existsSync(sourceLocalState)) cpSync(sourceLocalState, join(loginProfile, "Local State"));
+  writeFileSync(profileSeedMarker, JSON.stringify({
+    version: 1,
+    sourceProfile: chromeProfileName,
+    seededAt: new Date().toISOString(),
+  }, null, 2) + "\n", { mode: 0o600 });
+  log(`Reused the existing Chrome ${chromeProfileName} account session in the app-owned profile.`);
+  return true;
 }
 
 function findFreePort() {
@@ -207,15 +235,35 @@ async function waitForComposer(client, sessionId) {
   const deadline = Date.now() + 10 * 60_000;
   const expression = `(() => {
     const selector = ${JSON.stringify(composerSelector)};
-    return [...document.querySelectorAll(selector)].some((element) => {
+    const visible = (element) => {
       const rect = element.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== "hidden";
-    });
+    };
+    const composerVisible = [...document.querySelectorAll(selector)].some(visible);
+    const visibleLoginControl = [...document.querySelectorAll("button, a")].some((element) =>
+      visible(element) && /^(log in|sign up)$/i.test((element.innerText || element.textContent || "").trim())
+    );
+    const bodyText = (document.body?.innerText || "").replace(/\\s+/g, " ");
+    const loggedOutMarker = /Log in to get answers based on saved chats|Sign up for free|Your session has expired/i.test(bodyText);
+    return { composerVisible, loggedOut: visibleLoginControl || loggedOutMarker, pageReady: document.readyState === "complete" };
   })()`;
+  let authenticatedSince = null;
   while (Date.now() < deadline) {
     try {
-      if (await evaluate(client, sessionId, expression)) return;
-    } catch {}
+      const state = await evaluate(client, sessionId, expression);
+      if (state?.loggedOut) {
+        throw new Error("ChatGPT is not signed in in the connection profile. Sign in to ChatGPT in that window, then Connect again.");
+      }
+      if (state?.composerVisible && state?.pageReady) {
+        authenticatedSince ??= Date.now();
+        if (Date.now() - authenticatedSince >= 2_000) return;
+      } else {
+        authenticatedSince = null;
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("not signed in")) throw error;
+      authenticatedSince = null;
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   }
   throw new Error("ChatGPT authentication could not be verified: no visible composer is present");
@@ -275,6 +323,7 @@ async function login() {
 
   mkdirSync(browserRoot, { recursive: true, mode: 0o700 });
   mkdirSync(loginProfile, { recursive: true, mode: 0o700 });
+  const seededProfile = seedLoginProfile();
   const port = await findFreePort();
   log("Opening a private ChatGPT sign-in window…");
 
@@ -284,6 +333,7 @@ async function login() {
     "--disable-background-mode",
     "--no-first-run",
     "--no-default-browser-check",
+    "--profile-directory=Default",
     `--remote-debugging-port=${port}`,
     "--remote-allow-origins=*",
     loginUrl,
@@ -293,7 +343,7 @@ async function login() {
   try {
     client = await waitForDevTools(port);
     const sessionId = await waitForChatGPTPage(client);
-    await restoreStorageState(client, sessionId);
+    if (!seededProfile) await restoreStorageState(client, sessionId);
     log("Sign in to ChatGPT in this private window if needed; the window will close automatically when the composer is ready.");
     await waitForComposer(client, sessionId);
 
