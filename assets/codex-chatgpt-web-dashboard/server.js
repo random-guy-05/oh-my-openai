@@ -4,6 +4,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSyn
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 
 const enhancementRoot = resolve(import.meta.dir);
 const dashboardRoot = join(import.meta.dir, "public");
@@ -64,6 +65,7 @@ function bridgeConfigured() {
 
 function ensurePrivateCodexHome() {
   mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  ensurePrivateBridgeConfig();
   syncCodexAuth();
   if (!existsSync(codexConfigPath)) {
     writeFileSync(codexConfigPath, 'model = "gpt-5.6-sol"\n', { mode: 0o600 });
@@ -81,6 +83,52 @@ function ensurePrivateCodexHome() {
       // A malformed journal is left in place for the upstream CLI to report.
     }
   }
+}
+
+function ensurePrivateBridgeConfig() {
+  mkdirSync(bridgeHome, { recursive: true, mode: 0o700 });
+  let config = null;
+  for (const candidate of [bridgeConfigPath, join(homedir(), ".codex-chatgpt-web", "config.json")]) {
+    if (!existsSync(candidate)) continue;
+    try {
+      config = JSON.parse(readFileSync(candidate, "utf8"));
+      if (config && typeof config === "object" && !Array.isArray(config)) break;
+    } catch {
+      config = null;
+    }
+  }
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    config = {
+      version: 3,
+      releaseVersion: "2.1.11",
+      mode: "browser-only",
+      host: "127.0.0.1",
+      port: bridgePort,
+      contextWindow: 256000,
+      appName: "Codex Native2",
+      browserHost: "managed-chrome",
+      chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      headed: true,
+      solAvailable: true,
+      proAvailable: false,
+      autoApproveToolCalls: false,
+      controlToken: randomBytes(32).toString("base64url"),
+      acknowledgedUnofficialAt: new Date().toISOString(),
+    };
+  }
+
+  config.version = 3;
+  config.mode = "browser-only";
+  config.host = "127.0.0.1";
+  config.port = bridgePort;
+  config.browserHost = "managed-chrome";
+  config.storageStatePath = join(bridgeHome, "browser", "storage-state.json");
+  config.brokerSocketPath = join(bridgeHome, "runtime", "turn-broker.sock");
+  config.runtimeCommand = [bridgeBinary, bridgeCli];
+  config.controlToken ||= randomBytes(32).toString("base64url");
+  config.acknowledgedUnofficialAt ||= new Date().toISOString();
+  writeFileSync(bridgeConfigPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(bridgeConfigPath, 0o600);
 }
 
 function syncCodexAuth() {
@@ -144,6 +192,9 @@ async function ensureBridge() {
   if (bridgeStartupPromise) return bridgeStartupPromise;
 
   bridgeStartupPromise = (async () => {
+    const alreadyHealthy = await bridgeHealth();
+    if (alreadyHealthy) return alreadyHealthy;
+
     mkdirSync(bridgeHome, { recursive: true, mode: 0o700 });
     bridgeProcess = spawn(bridgeBinary, [bridgeCli, "serve"], {
       cwd: enhancementRoot,
@@ -167,7 +218,10 @@ async function ensureBridge() {
     writeFileSync(bridgePidPath, `${bridgeProcess.pid}\n`, { mode: 0o600 });
 
     const ownedProcess = bridgeProcess;
-    for (let attempt = 0; attempt < 40; attempt++) {
+    // Browser-only startup can take several seconds while the managed Chrome
+    // profile is initialized. Keep one owner waiting instead of timing out
+    // and allowing the next dashboard request to spawn a duplicate bridge.
+    for (let attempt = 0; attempt < 120; attempt++) {
       if (ownedProcess?.exitCode == null && await bridgeHealth()) return;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }

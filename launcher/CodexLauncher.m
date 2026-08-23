@@ -250,6 +250,43 @@ static BOOL NormalizePrivateCodexConfig(NSString *configPath, NSString *supportP
   return YES;
 }
 
+static NSString *EscapeTOMLBasicString(NSString *value) {
+  NSString *escaped = [value stringByReplacingOccurrencesOfString:@"\\"
+                                                           withString:@"\\\\"];
+  return [escaped stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+}
+
+// The embedded Codex runtime reads this private config, while the native
+// ChatGPT app continues to use ~/.codex/config.toml. Keeping the route here
+// makes the model selector consume the same catalog that OpenCodex serves.
+static BOOL ConfigurePrivateRuntimeRouting(NSString *configPath, NSString *supportPath) {
+  NSData *data = [NSData dataWithContentsOfFile:configPath];
+  NSString *contents = data.length > 0
+    ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
+    : @"model = \"gpt-5.6-sol\"\n";
+  if (!contents) return NO;
+
+  NSMutableArray<NSString *> *kept = [NSMutableArray array];
+  [contents enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
+    (void)stop;
+    if (!IsWrapperManagedRoutingLine(line, supportPath)) [kept addObject:line];
+  }];
+
+  NSString *catalogPath = [supportPath stringByAppendingPathComponent:
+    @"OpenCodexHome/opencodex-catalog.json"];
+  [kept addObject:[NSString stringWithFormat:
+    @"openai_base_url = \"http://127.0.0.1:10100/v1\""]];
+  [kept addObject:[NSString stringWithFormat:
+    @"model_catalog_json = \"%@\"", EscapeTOMLBasicString(catalogPath)]];
+
+  NSString *configured = [[kept componentsJoinedByString:@"\n"]
+    stringByAppendingString:@"\n"];
+  if (![configured writeToFile:configPath atomically:YES
+                       encoding:NSUTF8StringEncoding error:nil]) return NO;
+  chmod(configPath.fileSystemRepresentation, 0600);
+  return YES;
+}
+
 static NSString *EnhancementCodexHome(NSDictionary *enhancement, NSString *supportPath) {
   NSString *homeName = enhancement[@"codexHome"];
   if (![homeName isKindOfClass:[NSString class]] || homeName.length == 0 ||
@@ -1285,7 +1322,12 @@ static BOOL AcquireLauncherLock(void) {
   NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
   if (!CreatePrivateDirectory(supportPath, nil)) return NO;
   NSString *lockPath = [supportPath stringByAppendingPathComponent:@"launcher.lock"];
-  gLauncherLockFD = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR, 0600);
+  // The embedded Electron runtime must not inherit this descriptor. If it did,
+  // quitting the launcher left the singleton lock held by the child and every
+  // subsequent app launch incorrectly exited as "already running".
+  gLauncherLockFD = open(lockPath.fileSystemRepresentation,
+                         O_CREAT | O_RDWR | O_CLOEXEC,
+                         0600);
   if (gLauncherLockFD < 0) return NO;
   if (flock(gLauncherLockFD, LOCK_EX | LOCK_NB) != 0) {
     close(gLauncherLockFD);
@@ -1525,6 +1567,10 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
   NSString *privateConfigPath = [codexHomePath stringByAppendingPathComponent:@"config.toml"];
   if (!NormalizePrivateCodexConfig(privateConfigPath, supportPath)) {
     if (failure) *failure = @"The private Codex config could not be normalized safely.";
+    return NO;
+  }
+  if (!ConfigurePrivateRuntimeRouting(privateConfigPath, supportPath)) {
+    if (failure) *failure = @"The private Codex model catalog route could not be configured safely.";
     return NO;
   }
 

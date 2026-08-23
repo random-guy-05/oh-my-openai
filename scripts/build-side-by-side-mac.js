@@ -353,8 +353,11 @@ async function main() {
       path.join(uniqueRuntimeResources, "Assets.car"));
 
     const runtimeAsar = path.join(uniqueRuntimeResources, "app.asar");
-    if (fs.existsSync(runtimeAsar)) {
-      console.log("   [asar] integrating ✦ Enhancements into native tray menu");
+    // The native launcher owns the single right-side menu-bar item. Keep the
+    // Electron runtime untouched so it cannot grow a duplicate menu surface.
+    const useEmbeddedElectronTray = false;
+    if (useEmbeddedElectronTray && fs.existsSync(runtimeAsar)) {
+      console.log("   [asar] integrating optional embedded tray menu");
       const npxBin = fs.existsSync("/usr/local/bin/npx") ? "/usr/local/bin/npx" : "npx";
       const extractAsarDir = path.join(temporaryDirectory, "_extracted_asar");
       run(npxBin, ["--yes", "asar", "extract", runtimeAsar, extractAsarDir]);
@@ -548,11 +551,13 @@ function appendEnhancementsToApplicationMenu(menu, elModule) {
 }
 `;
             const targetPattern = "return[...h,...h.length>0?[{type:`separator`}]:[]";
-            // Builds are often based on the last private runtime. Do not append
-            // another tray helper when that runtime already contains ours.
-            if (mainCode.includes("codex-rebuild:enhancements-tray-v1")) {
+            // The native launcher owns the single right-side menu-bar item.
+            // Do not inject a second Electron tray: it duplicates the menu and
+            // routes Settings through LaunchServices, which can create another
+            // runtime process when the wrapper is already warm.
+            if (useEmbeddedElectronTray && mainCode.includes("codex-rebuild:enhancements-tray-v1")) {
               console.log(`   [asar] enhancement tray already integrated in ${file}`);
-            } else if (mainCode.includes(targetPattern)) {
+            } else if (useEmbeddedElectronTray && mainCode.includes(targetPattern)) {
               mainCode = helperFn + "\n" + mainCode.replace(
                 targetPattern,
                 "return[...h,...h.length>0?[{type:`separator`}]:[],getEnhancementsTrayMenu(l),{type:`separator`}"

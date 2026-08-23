@@ -136,6 +136,7 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /getNativeStatusItemState!=null/);
   assert.match(buildScript, /process\.platform===`darwin`&&e\.getNativeStatusItemState!=null/);
   assert.match(buildScript, /native macOS status-item addon only understands/);
+  assert.match(buildScript, /useEmbeddedElectronTray = false/);
   assert.doesNotMatch(buildScript, /setApplicationMenu\(Wt\),OQ\(v\),setTimeout\(\(\)=>appendEnhancementsToApplicationMenu/);
   assert.match(buildScript, /OpenCodex Dashboard/);
   assert.match(buildScript, /Codex ChatGPT Web/);
@@ -148,6 +149,10 @@ test("packaged tray integration does not depend on developer-machine paths", () 
 test("native launchers dispatch from manifest capabilities", () => {
   const hub = fs.readFileSync(path.join(__dirname, "..", "launcher", "EnhancementHub.swift"), "utf8");
   const launcher = fs.readFileSync(path.join(__dirname, "..", "launcher", "CodexLauncher.m"), "utf8");
+  assert.match(launcher, /ConfigurePrivateRuntimeRouting/);
+  assert.match(launcher, /openai_base_url/);
+  assert.match(launcher, /model_catalog_json/);
+  assert.match(launcher, /O_CLOEXEC/);
   assert.match(hub, /enhancement\.kind == "web"/);
   assert.match(hub, /enhancement\.kind == "app"/);
   assert.match(hub, /enhancement\.kind == "terminal"/);
