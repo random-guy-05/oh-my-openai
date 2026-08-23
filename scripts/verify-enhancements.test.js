@@ -54,6 +54,7 @@ test("accepts the checked-in enhancement contract shape", () => {
   assert.deepEqual(services.map((entry) => entry.lifecycle), ["launcher", "launcher"]);
   assert.notEqual(services[0].config.port, services[1].config.port);
   assert.equal(opencodex.healthPath, "/healthz");
+  assert.equal(opencodex.required, true);
   assert.equal(web.healthPath, "/healthz");
   assert.equal(web.readinessPath, "/api/status");
 });
@@ -149,6 +150,15 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(bundler, /entry\.connectCommand = enhancement\.connectCommand/);
 });
 
+test("verified installer supports fresh installs and recoverable rollback", () => {
+  const installer = fs.readFileSync(path.join(__dirname, "install-verified-side-by-side.js"), "utf8");
+  assert.match(installer, /requestedAsar \|\| sha256\(sourceAsar\)/);
+  assert.match(installer, /launcherEnhancementsPrefix/);
+  assert.match(installer, /if \(fs\.existsSync\(installedLauncher\)\) fs\.renameSync/);
+  assert.match(installer, /restoreInstalledTarget/);
+  assert.match(installer, /failed-Codex-launcher\.app/);
+});
+
 test("native launchers dispatch from manifest capabilities", () => {
   const hub = fs.readFileSync(path.join(__dirname, "..", "launcher", "EnhancementHub.swift"), "utf8");
   const launcher = fs.readFileSync(path.join(__dirname, "..", "launcher", "CodexLauncher.m"), "utf8");
@@ -182,6 +192,13 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(hub, /WebWindow\.shared\.show\(title: enhancement\.label/);
   assert.match(hub, /static func connect\(_ enhancement: Enhancement\)/);
   assert.match(hub, /enhancement\.connectCommand\?\.isEmpty == false/);
+  assert.match(hub, /copyDiagnostics/);
+  assert.match(hub, /Timer\.publish\(every: 5/);
+  assert.match(launcher, /RequiredEnhancementsHealthy/);
+  assert.match(hub, /SetEnhancementRuntimeEnabled/);
+  assert.match(launcher, /void SetEnhancementRuntimeEnabled/);
+  assert.match(launcher, /RemoveChatGPTWebModels/);
+  assert.match(launcher, /toggle-refresh/);
   assert.match(hub, /WKNavigationDelegate/);
   assert.match(hub, /NSWorkspace\.shared\.open\(url\)/);
   const dashboard = fs.readFileSync(

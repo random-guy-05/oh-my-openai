@@ -3,6 +3,7 @@
 // native dashboard launchers, and zero visual clutter.
 
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 import WebKit
@@ -90,6 +91,7 @@ struct Enhancement: Identifiable, Decodable {
   let config: Config?
   let healthPath: String?
   let readinessPath: String?
+  let required: Bool?
   let toolCommand: [String]?
   let startCommand: [String]?
   let connectCommand: [String]?
@@ -213,6 +215,9 @@ enum NavigationSection: String, CaseIterable, Identifiable {
 private let kEnabledKey = "OMOEEnhancementsEnabled"
 private let kViewKey = "OMOEEnhancementsView"
 
+@_silgen_name("SetEnhancementRuntimeEnabled")
+private func SetEnhancementRuntimeEnabled(_ identifier: UnsafePointer<CChar>, _ enabled: Int32)
+
 final class HubState: ObservableObject {
   @Published var enabled: [String: Bool] = HubState.loadEnabled()
   @Published var views: [String: String] = HubState.loadViews()
@@ -234,6 +239,8 @@ final class HubState: ObservableObject {
   func setEnabled(_ id: String, _ value: Bool) {
     enabled[id] = value
     UserDefaults.standard.set(enabled, forKey: kEnabledKey)
+    health[id] = .checking
+    id.withCString { SetEnhancementRuntimeEnabled($0, value ? 1 : 0) }
   }
 
   func view(for id: String, options: [String]) -> String {
@@ -248,6 +255,7 @@ final class HubState: ObservableObject {
   }
 
   func health(for enhancement: Enhancement) -> EnhancementHealth {
+    if enhancement.required == true { return health[enhancement.id] ?? .checking }
     if !isEnabled(enhancement.id) { return .disabled }
     return health[enhancement.id] ?? .checking
   }
@@ -466,6 +474,28 @@ enum HubActions {
     WebWindow.shared.show(title: enhancement.label, url: dashboardURL)
   }
 
+  static func copyDiagnostics(_ enhancements: [Enhancement], health: [String: EnhancementHealth]) {
+    let bundle = Bundle.main
+    let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+    let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+    var lines = [
+      "Codex Suite diagnostics",
+      "Version: \(version) (\(build))",
+      "Generated: \(ISO8601DateFormatter().string(from: Date()))",
+      "Support directory: \(supportDirectory.path)",
+      "",
+      "Enhancements:",
+    ]
+    for enhancement in enhancements {
+      let state = health[enhancement.id]?.label ?? "Not checked"
+      let endpoint = enhancement.ui?.url ?? "local app"
+      lines.append("- \(enhancement.label): \(state) [\(endpoint)]")
+    }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(lines.joined(separator: "\n"), forType: .string)
+  }
+
   static func openTerminalForTool(_ enhancement: Enhancement, extraArguments: [String] = []) {
     guard let command = resolvedTool(enhancement) else {
       showLaunchError("\(enhancement.label) is unavailable", "The bundled executable could not be found or is not executable.")
@@ -659,6 +689,9 @@ struct HubRootView: View {
       state.selectedSection = initialSection
       state.refreshHealth(enhancements)
     }
+    .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+      state.refreshHealth(enhancements)
+    }
   }
 }
 
@@ -763,6 +796,15 @@ struct DetailContentView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+
+        Button {
+          HubActions.copyDiagnostics(enhancements, health: state.health)
+        } label: {
+          Label("Copy Diagnostics", systemImage: "doc.on.doc")
+            .font(.system(size: 11, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
       }
       .padding(.horizontal, 24)
       .padding(.top, 24)
@@ -853,12 +895,14 @@ struct ExtensionCard: View {
 
         // Toggle
         Toggle("", isOn: Binding(
-          get: { state.isEnabled(enhancement.id) },
+          get: { enhancement.required == true || state.isEnabled(enhancement.id) },
           set: { state.setEnabled(enhancement.id, $0) }
         ))
         .toggleStyle(.switch)
         .labelsHidden()
         .controlSize(.small)
+        .disabled(enhancement.required == true)
+        .help(enhancement.required == true ? "Required for Codex model routing" : "Start or stop this enhancement now")
       }
 
       // Actions Strip

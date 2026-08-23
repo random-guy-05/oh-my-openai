@@ -15,16 +15,16 @@ const sourceLauncher = path.join(ROOT, "out", "side-by-side-mac-x64", "Codex.app
 const sourceRuntime = path.join(sourceLauncher, "Contents", "Resources", "Codex.payload");
 const stageLauncher = "/Applications/.Codex.verified-stage.app";
 const stageRuntime = path.join(support, ".Codex.verified-stage.app");
-const expectedAsar = process.argv[2];
+const sourceAsar = path.join(sourceRuntime, "Contents", "Resources", "app.asar");
+const requestedAsar = process.argv[2];
 const backupRoot = process.argv[3] || path.join(ROOT, "out", "install-backups");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const backup = path.join(backupRoot, `pre-install-${stamp}`);
 
-if (!/^[a-f0-9]{64}$/.test(expectedAsar || "")) {
-  throw new Error("expected packaged ASAR SHA-256 is required");
-}
-
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+if (!fs.existsSync(sourceAsar)) throw new Error("verified side-by-side runtime ASAR is missing");
+const expectedAsar = requestedAsar || sha256(sourceAsar);
+if (!/^[a-f0-9]{64}$/.test(expectedAsar)) throw new Error("expected packaged ASAR SHA-256 is invalid");
 const verify = (app) => execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "inherit" });
 const copy = (from, to) => execFileSync("/usr/bin/ditto", [from, to], { stdio: "inherit" });
 const sleep = () => execFileSync("/bin/sleep", ["1"]);
@@ -33,11 +33,12 @@ function customPids() {
   const output = execFileSync("/bin/ps", ["ax", "-o", "pid=,command="], { encoding: "utf8" });
   const runtimePrefix = installedRuntime + path.sep;
   const launcherExecutable = path.join(installedLauncher, "Contents", "MacOS", "CodexLauncher");
+  const launcherEnhancementsPrefix = path.join(installedLauncher, "Contents", "Resources", "enhancements") + path.sep;
   return output.split("\n").flatMap((line) => {
     const match = line.match(/^\s*(\d+)\s+(.*)$/);
     if (!match) return [];
     const command = match[2];
-    return command.startsWith(runtimePrefix) || command === launcherExecutable
+    return command.startsWith(runtimePrefix) || command.startsWith(launcherEnhancementsPrefix) || command === launcherExecutable
       ? [Number(match[1])]
       : [];
   });
@@ -56,8 +57,11 @@ function stopCustomRuntime() {
   throw new Error(`custom runtime did not stop: ${customPids().join(", ")}`);
 }
 
-function restoreIfMissing(installed, saved) {
-  if (!fs.existsSync(installed) && fs.existsSync(saved)) fs.renameSync(saved, installed);
+function restoreInstalledTarget(installed, saved, failedName) {
+  if (fs.existsSync(installed)) {
+    fs.renameSync(installed, path.join(backup, failedName));
+  }
+  if (fs.existsSync(saved)) fs.renameSync(saved, installed);
 }
 
 fs.mkdirSync(backupRoot, { recursive: true });
@@ -81,8 +85,8 @@ const savedLauncher = path.join(backup, "Codex-launcher-previous.app");
 const savedRuntime = path.join(backup, "Codex-runtime-previous.app");
 
 try {
-  fs.renameSync(installedLauncher, savedLauncher);
-  fs.renameSync(installedRuntime, savedRuntime);
+  if (fs.existsSync(installedLauncher)) fs.renameSync(installedLauncher, savedLauncher);
+  if (fs.existsSync(installedRuntime)) fs.renameSync(installedRuntime, savedRuntime);
   fs.renameSync(stageLauncher, installedLauncher);
   fs.renameSync(stageRuntime, installedRuntime);
   verify(installedLauncher);
@@ -90,8 +94,8 @@ try {
   const installedAsar = path.join(installedRuntime, "Contents", "Resources", "app.asar");
   if (sha256(installedAsar) !== expectedAsar) throw new Error("installed runtime ASAR hash mismatch");
 } catch (error) {
-  restoreIfMissing(installedLauncher, savedLauncher);
-  restoreIfMissing(installedRuntime, savedRuntime);
+  restoreInstalledTarget(installedLauncher, savedLauncher, "failed-Codex-launcher.app");
+  restoreInstalledTarget(installedRuntime, savedRuntime, "failed-Codex-runtime.app");
   throw error;
 }
 

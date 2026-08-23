@@ -11,6 +11,7 @@
         "port": 10100
       },
       "healthPath": "/healthz",
+      "required": true,
       "codexHome": "OpenCodexHome",
       "lifecycle": "launcher",
       "startCommand": [

@@ -141,11 +141,19 @@ static NSDictionary *EnhancementDefaults(void) {
 }
 
 static BOOL EnhancementEnabled(NSString *identifier) {
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if ([enhancement[@"id"] isEqualToString:identifier] &&
+        [enhancement[@"required"] boolValue]) return YES;
+  }
   NSNumber *value = EnhancementDefaults()[identifier];
   return value ? value.boolValue : YES;
 }
 
 static void SetEnhancementEnabled(NSString *identifier, BOOL enabled) {
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if ([enhancement[@"id"] isEqualToString:identifier] &&
+        [enhancement[@"required"] boolValue]) return;
+  }
   NSMutableDictionary *stored = [EnhancementDefaults() mutableCopy];
   if (!stored) stored = [NSMutableDictionary dictionary];
   stored[identifier] = @(enabled);
@@ -354,6 +362,42 @@ static BOOL SynchronizePrivateRuntimeModelCache(NSString *supportPath,
   NSLog(@"[CodexLauncher] Synchronized %lu models into %@",
         (unsigned long)[parsed[@"models"] count], destinationPath);
   return YES;
+}
+
+static void RemoveChatGPTWebModelsFromCatalog(NSString *path) {
+  NSData *data = [NSData dataWithContentsOfFile:path];
+  if (data.length == 0) return;
+  id parsed = [NSJSONSerialization JSONObjectWithData:data
+                                               options:NSJSONReadingMutableContainers
+                                                 error:nil];
+  if (![parsed isKindOfClass:[NSDictionary class]]) return;
+  NSMutableDictionary *document = [parsed mutableCopy];
+  NSArray *models = document[@"models"];
+  if (![models isKindOfClass:[NSArray class]]) return;
+  NSMutableArray *kept = [NSMutableArray array];
+  for (NSDictionary *model in models) {
+    NSString *slug = [model[@"slug"] isKindOfClass:[NSString class]] ? model[@"slug"] : nil;
+    if (![slug hasPrefix:@"codex-chatgpt-web/"]) [kept addObject:model];
+  }
+  if (kept.count == models.count) return;
+  document[@"models"] = kept;
+  NSData *output = [NSJSONSerialization dataWithJSONObject:document
+                                                   options:NSJSONWritingPrettyPrinted
+                                                     error:nil];
+  if (output.length > 0 && [output writeToFile:path atomically:YES]) {
+    chmod(path.fileSystemRepresentation, 0600);
+  }
+}
+
+static void RemoveChatGPTWebModels(NSString *supportPath) {
+  for (NSString *relativePath in @[
+    @"OpenCodexHome/opencodex-catalog.json",
+    @"OpenCodexHome/models_cache.json",
+    @"CodexHome/models_cache.json"
+  ]) {
+    RemoveChatGPTWebModelsFromCatalog(
+      [supportPath stringByAppendingPathComponent:relativePath]);
+  }
 }
 
 static NSString *EnhancementCodexHome(NSDictionary *enhancement, NSString *supportPath) {
@@ -925,6 +969,7 @@ static BOOL EnhancementAlreadyHealthy(NSDictionary *enhancement) {
 
 // Forward declaration (defined later in this file)
 static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
+static BOOL RuntimeIsRunning(void);
 
 static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
                                      NSArray<NSString *> *command,
@@ -994,11 +1039,15 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
     [gEnhancementOneShotTasks addObject:task];
     TrackEnhancementPid(task.processIdentifier);
     BOOL isPreflight = [logSuffix isEqualToString:@"preflight"];
+    BOOL refreshAfterToggle = [logSuffix isEqualToString:@"toggle-refresh"];
     [task setTerminationHandler:^(NSTask *finishedTask) {
       dispatch_async(dispatch_get_main_queue(), ^{
         UntrackEnhancementPid(finishedTask.processIdentifier);
         [gEnhancementOneShotTasks removeObject:finishedTask];
         if (isPreflight) CompleteEnhancementPreflight(finishedTask.terminationStatus == 0);
+        if (refreshAfterToggle && finishedTask.terminationStatus == 0 && RuntimeIsRunning()) {
+          [(id)gAppDelegate performSelector:@selector(restartRuntimeForModelRefresh)];
+        }
       });
     }];
     NSLog(@"[CodexLauncher] enhancement %@ %@ command launched (pid %d)",
@@ -1027,7 +1076,7 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
       if (gEnhancementTasksByID[identifier] == finishedTask) {
         [gEnhancementTasksByID removeObjectForKey:identifier];
       }
-      if (gEnhancementsStopping || !gEnhancementsStarted) return;
+      if (gEnhancementsStopping || !gEnhancementsStarted || !EnhancementEnabled(identifier)) return;
       NSInteger attempt = gEnhancementRestartAttempts[identifier].integerValue + 1;
       gEnhancementRestartAttempts[identifier] = @(attempt);
       if (attempt > 5) {
@@ -1292,6 +1341,101 @@ static void StopEnhancements(void) {
   for (NSTask *task in [gConnectionTasks copy]) TerminateProcessTree(task);
   [gConnectionTasks removeAllObjects];
   gEnhancementPidCount = 0;
+}
+
+static BOOL RequiredEnhancementsHealthy(NSString **failure) {
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if (![enhancement[@"required"] boolValue]) continue;
+    NSNumber *port = enhancement[@"config"][@"port"];
+    NSString *healthPath = enhancement[@"healthPath"];
+    NSString *label = enhancement[@"ui"][@"label"] ?: enhancement[@"id"];
+    if (![port isKindOfClass:[NSNumber class]] || healthPath.length == 0) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The required service %@ has no valid health endpoint.", label];
+      return NO;
+    }
+    NSString *url = [NSString stringWithFormat:@"http://127.0.0.1:%@%@", port, healthPath];
+    NSString *output = nil;
+    if (!RunTool(@"/usr/bin/curl", @[@"-fsS", @"--max-time", @"2", url], &output)) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"%@ did not become ready at %@. Codex was not opened because every model request depends on this local route.\n\n%@",
+        label, url, output ?: @"No service response was received."];
+      return NO;
+    }
+    NSData *data = [output dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *health = data.length > 0
+      ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    if (![health[@"status"] isEqualToString:@"ok"]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"%@ returned an invalid health response. Codex was not opened with a broken model route.", label];
+      return NO;
+    }
+  }
+  return YES;
+}
+
+// Called directly by the SwiftUI settings panel. Optional services are
+// applied immediately; required services ignore disable requests so the UI
+// cannot persist a configuration that makes every Codex request fail.
+void SetEnhancementRuntimeEnabled(const char *identifierCString, int enabledValue) {
+  if (!identifierCString) return;
+  NSString *identifier = [NSString stringWithUTF8String:identifierCString];
+  if (identifier.length == 0) return;
+  BOOL enabled = enabledValue != 0;
+  NSDictionary *target = nil;
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if ([enhancement[@"id"] isEqualToString:identifier]) {
+      target = enhancement;
+      break;
+    }
+  }
+  if (!target || ([target[@"required"] boolValue] && !enabled)) return;
+
+  SetEnhancementEnabled(identifier, enabled);
+  RebuildEnhancementMenu();
+  if (!gEnhancementsStarted || ![target[@"type"] isEqualToString:@"service"]) return;
+
+  if (enabled) {
+    if (!gEnhancementTasksByID[identifier] && !gAdoptedEnhancementPIDs[identifier]) {
+      gEnhancementRestartAttempts[identifier] = @0;
+      LaunchEnhancementCommand(target, target[@"startCommand"], @"", YES);
+    }
+    if ([identifier isEqualToString:@"codex-chatgpt-web"]) {
+      for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+        NSArray *postStart = enhancement[@"postStartCommand"];
+        if (![enhancement[@"id"] isEqualToString:@"opencodex"] || postStart.count == 0) continue;
+        NSDictionary *refreshTarget = [enhancement copy];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+          if (EnhancementEnabled(identifier)) {
+            LaunchEnhancementCommand(refreshTarget, postStart, @"toggle-refresh", NO);
+          }
+        });
+        break;
+      }
+    }
+    return;
+  }
+
+  NSTask *task = gEnhancementTasksByID[identifier];
+  if (task) TerminateProcessTree(task);
+  NSNumber *adoptedPID = gAdoptedEnhancementPIDs[identifier];
+  if (adoptedPID) {
+    TerminateProcessTreeByPID(adoptedPID.intValue);
+    UntrackEnhancementPid(adoptedPID.intValue);
+    [gAdoptedEnhancementPIDs removeObjectForKey:identifier];
+  }
+  RemoveEnhancementPID(identifier);
+  if ([identifier isEqualToString:@"codex-chatgpt-web"]) {
+    for (NSTask *connectionTask in [gConnectionTasks copy]) {
+      TerminateProcessTree(connectionTask);
+    }
+    NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+    RemoveChatGPTWebModels(supportPath);
+    if (RuntimeIsRunning()) {
+      [(id)gAppDelegate performSelector:@selector(restartRuntimeForModelRefresh)];
+    }
+  }
 }
 
 static NSDictionary *RuntimeInfo(NSURL *runtimeURL) {
@@ -1937,6 +2081,7 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   BOOL _didPerformInitialLaunch;
   NSUInteger _preflightWaitAttempts;
   NSUInteger _modelCacheWaitAttempts;
+  NSUInteger _requiredServiceWaitAttempts;
   BOOL _modelRefreshRestartPending;
 }
 
@@ -2065,6 +2210,19 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
     gEnhancementPreflightComplete = YES;
   }
 
+  NSString *requiredFailure = nil;
+  if (!RequiredEnhancementsHealthy(&requiredFailure)) {
+    if (_requiredServiceWaitAttempts++ < 80) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                     dispatch_get_main_queue(), ^{
+        [self performInitialLaunch];
+      });
+      return;
+    }
+    ShowLaunchError(requiredFailure ?: @"A required enhancement service did not become ready.");
+    return;
+  }
+
   NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
   NSString *codexHomePath = [supportPath stringByAppendingPathComponent:kCodexHomeName];
   if (gEnhancementPreflightRequired &&
@@ -2091,6 +2249,10 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 - (void)launchWithArguments:(NSArray<NSString *> *)arguments {
   StartEnhancements();
   NSString *failure = nil;
+  if (!RequiredEnhancementsHealthy(&failure)) {
+    ShowLaunchError(failure ?: @"A required enhancement service is unavailable.");
+    return;
+  }
   if (!LaunchRuntime(arguments, &failure)) {
     ShowLaunchError(failure ? failure : @"The Codex runtime could not be launched.");
     return;

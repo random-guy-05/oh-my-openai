@@ -9,6 +9,7 @@ const lastUpdated = document.querySelector("#last-updated");
 const doctorOutput = document.querySelector("#doctor-output");
 const connectButton = document.querySelector("#connect-button");
 const connectionMessage = document.querySelector("#connection-message");
+let refreshInFlight = false;
 
 function setPill(state, label) {
   connectionPill.className = `status-pill ${state}`;
@@ -20,9 +21,12 @@ function formatTime() {
 }
 
 async function refreshStatus() {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   setPill("checking", "Checking services");
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Status request failed with HTTP ${response.status}`);
     const data = await response.json();
     const running = data.bridge.running;
     const account = data.account || {};
@@ -81,6 +85,8 @@ async function refreshStatus() {
     configValue.textContent = "Unknown";
     setPill("warn", "Dashboard error");
     lastUpdated.textContent = error.message;
+  } finally {
+    refreshInFlight = false;
   }
 }
 
@@ -89,7 +95,9 @@ async function connectChatGPT() {
   connectButton.innerHTML = "Starting connection… <span>•</span>";
   connectionMessage.textContent = "Starting the secure ChatGPT sign-in flow…";
   try {
-    await fetch("/api/connect", { method: "POST", cache: "no-store" });
+    const response = await fetch("/api/connect", { method: "POST", cache: "no-store" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
   } catch (error) {
     connectionMessage.textContent = `Connection could not start: ${error.message}`;
     connectButton.disabled = false;
@@ -112,3 +120,9 @@ document.querySelector("#refresh-button").addEventListener("click", refreshStatu
 document.querySelector("#doctor-button").addEventListener("click", runDoctor);
 connectButton.addEventListener("click", connectChatGPT);
 refreshStatus();
+setInterval(() => {
+  if (document.visibilityState === "visible") void refreshStatus();
+}, 3000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void refreshStatus();
+});

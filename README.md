@@ -3,8 +3,9 @@
 Oh My OpenAI is a readable, inspectable side-by-side rebuild of the Codex
 desktop runtime and launcher for macOS. It packages the **stock** official
 Codex runtime with a launcher that starts bundled **enhancement services**
-(an OpenAI-compatible gateway dashboard, more to come) — no app-bundle
-patches, nothing to re-apply when upstream updates.
+(an OpenAI-compatible gateway and ChatGPT Web bridge). A narrowly scoped,
+build-verified Electron integration adds these controls to the existing
+right-side Codex menu; the launcher owns service lifecycle and configuration.
 
 ## Quick Install (Homebrew)
 
@@ -44,24 +45,24 @@ brew uninstall --zap --cask codex-desktop
 
 ## Current build (26.818.41509)
 
-- **Stock runtime**: the runtime payload is the official OpenAI Intel app,
-  uniquely identified (`io.haleclipse.codexdesktop.runtime`) and isolated
-  under `~/Library/Application Support/CodexDesktop-Rebuild/`. No bundle
-  patches.
+- **Official runtime base**: the runtime payload is derived from the official
+  OpenAI Intel app, uniquely identified (`io.haleclipse.codexdesktop.runtime`)
+  and isolated under `~/Library/Application Support/CodexDesktop-Rebuild/`.
+  The build adds only the verified right-side enhancements menu integration.
 - **Enhancements layer**: the launcher starts bundled services before Codex
    and stops them cleanly on quit — including raw SIGTERM/SIGINT/SIGHUP.
    Command-line tools are staged alongside and invoked with
     `node scripts/enhancement-tool.js <Codex.app> <id>`; web dashboards open
     inside the command center's WKWebView and native apps use the isolated
     `CODEX_HOME` environment.
-- **Native command center**: a menu bar item (square-grid icon) lists every
-   enhancement — opencodex gateway (in-app window or browser), NerfTrack usage
+- **Native command center**: the Codex icon on the right side of the macOS menu
+   bar lists every enhancement — OpenCodex gateway (in-app window or browser), NerfTrack usage
     dashboard, and Codex Web GPT — plus **Enhancements Settings…**: one
   native window with an enable toggle, status, **view selector**, and Open
   button per feature. Choices persist in NSUserDefaults.
 - **opencodex** (service, `http://127.0.0.1:10100`) — local OpenAI-compatible
   gateway with model passthrough and custom-provider routing
-  (config: `~/.codex/opencodex.config.toml`).
+  (private config: `~/Library/Application Support/CodexDesktop-Rebuild/OpenCodexHome/config.json`).
 - **nerftrack** (native app) — full local usage, quota, diagnostics, history,
   and API-equivalent value dashboard.
 
@@ -88,12 +89,12 @@ license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## What makes this different
 
-1) **No patch pipeline**
-   The runtime is byte-for-byte the official app (renamed bundle id and
-   executable for side-by-side isolation). Upstream updates can never break
-   customizations — there are none to re-apply. The previous patch system
-   (chat presets, custom-providers UI, resource-saver, feature gates) was
-   removed entirely in favor of this setup.
+1) **Small, release-gated integration surface**
+   The previous broad patch system (chat presets, custom-provider UI rewrites,
+   resource-saver changes, and feature gates) is gone. The only Electron
+   integration adds the enhancement controls to the existing status menu.
+   Packaging fails if the pinned upstream bundle shape cannot be integrated,
+   and `npm run verify:artifact` checks the marker inside the final ASAR.
 
 2) **Enhancements live outside the app bundle**
    Services are staged into `Contents/Resources/enhancements/` at build time
@@ -111,6 +112,8 @@ license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
    The launcher installs a fingerprinted private runtime under
    `~/Library/Application Support/CodexDesktop-Rebuild/Codex.app`, keeping
    CODEX_HOME and profile data isolated from the official app.
+   OAuth credentials are never copied from `~/.codex`; the side-by-side app
+   signs in independently so refresh-token rotation cannot sign another app out.
 
 ---
 
@@ -159,6 +162,17 @@ npm test
 npm run doctor
 ```
 
+After building, run the complete artifact gate:
+
+```bash
+npm run verify:artifact -- out/side-by-side-mac-x64/Codex.app
+```
+
+This starts both service stacks in temporary isolated homes, verifies the
+Responses API route and slash-containing model aliases, proves shutdown leaves
+no bridge behind, checks that no auth file is copied, validates the packaged
+menu integration, and performs a deep code-signature check.
+
 `doctor` validates the enhancement manifest. To validate a built app's staged
 commands as well, pass it explicitly:
 
@@ -173,13 +187,29 @@ node scripts/verify-enhancements.js --app out/side-by-side-mac-x64/Codex.app
   (the launcher installs `Codex.app` inside this folder)
 - Enhancement logs: `~/Library/Application Support/CodexDesktop-Rebuild/enhancements/`
 - opencodex dashboard: `http://127.0.0.1:10100`
+- ChatGPT Web dashboard: `http://127.0.0.1:17842`
+
+## First launch and connection
+
+1. Open Codex normally. The launcher starts OpenCodex and ChatGPT Web before
+   opening the private Codex runtime.
+2. Sign into the side-by-side Codex app once. This login is intentionally
+   independent from the official ChatGPT/Codex installation.
+3. From the right-side Codex icon, choose **Connect ChatGPT Web**. Complete the
+   dedicated ChatGPT browser sign-in once; the app verifies the composer,
+   refreshes the model catalog, and restarts only the private runtime.
+4. Open **Settings…** from the same menu to see live readiness. “Running” means
+   the complete route is usable, not merely that a local process exists.
+
+If startup fails, the launcher now keeps Codex closed rather than opening it
+with a dead model route. Use **Settings… → Copy Diagnostics** and reveal the
+enhancement logs from **Sandbox & Paths** when reporting an issue.
 
 ## Manual Installation
 
 Download the DMG from the [latest release](https://github.com/random-guy-05/oh-my-openai/releases),
 open it, and drag **Codex** to Applications. The build is ad-hoc signed and
-not notarized, so first launch may require Control-click → Open and a
-Keychain Always Allow approval.
+not notarized, so first launch may require Control-click → Open.
 
 ## License
 
