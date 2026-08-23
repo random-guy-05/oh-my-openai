@@ -148,7 +148,7 @@ test("native launchers dispatch from manifest capabilities", () => {
     path.join(__dirname, "..", "assets", "codex-chatgpt-web-dashboard", "public", "index.html"),
     "utf8",
   );
-  assert.match(dashboard, /secure default browser/i);
+  assert.match(dashboard, /private Chrome sign-in window/i);
   assert.match(dashboard, /Connect ChatGPT/);
   const dashboardServer = fs.readFileSync(
     path.join(__dirname, "..", "assets", "codex-chatgpt-web-dashboard", "server.js"),
