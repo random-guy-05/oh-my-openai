@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -17,10 +17,13 @@ const bridgeHome = process.env.CODEX_CHATGPT_WEB_HOME || join(process.env.HOME |
 const bridgeConfigPath = join(bridgeHome, "config.json");
 const codexHome = process.env.CODEX_HOME || join(process.env.HOME || "", ".codex");
 const codexConfigPath = join(codexHome, "config.toml");
+const integrationJournalPaths = [
+  join(bridgeHome, "codex", "integration-journal.json"),
+  join(bridgeHome, "codex", "integration-journal.recovery.json"),
+];
 const bridgeBinary = join(enhancementRoot, "runtime", "bun");
 const bridgeCli = join(enhancementRoot, "app", "cli.js");
 
-let bridgeProcess = null;
 let setupProcess = null;
 let setupState = "idle";
 let setupExitCode = null;
@@ -56,20 +59,25 @@ function ensurePrivateCodexHome() {
   if (!existsSync(codexConfigPath)) {
     writeFileSync(codexConfigPath, 'model = "gpt-5.6-sol"\n', { mode: 0o600 });
   }
+  for (const journalPath of integrationJournalPaths) {
+    if (!existsSync(journalPath)) continue;
+    try {
+      const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+      if (journal.configPath && resolve(journal.configPath) !== resolve(codexConfigPath)) {
+        const stalePath = `${journalPath}.stale-${process.pid}`;
+        renameSync(journalPath, stalePath);
+        console.log(`[codex-chatgpt-web] moved stale integration journal to ${stalePath}`);
+      }
+    } catch {
+      // A malformed journal is left in place for the upstream CLI to report.
+    }
+  }
 }
 
 async function ensureBridge() {
-  if (bridgeProcess || !bridgeConfigured() || await bridgeHealth()) return;
-  bridgeProcess = spawn(bridgeBinary, [bridgeCli, "serve"], {
-    cwd: enhancementRoot,
-    env: { ...process.env },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  bridgeProcess.stdout?.on("data", (chunk) => process.stdout.write(`[codex-chatgpt-web] ${chunk}`));
-  bridgeProcess.stderr?.on("data", (chunk) => process.stderr.write(`[codex-chatgpt-web] ${chunk}`));
-  bridgeProcess.once("exit", () => {
-    bridgeProcess = null;
-  });
+  // A configured bridge is owned by launchd. The dashboard only observes it;
+  // spawning a fallback here races launchd during startup/restart and can
+  // create two daemons competing for the same loopback port.
 }
 
 function connectionStatus() {
@@ -87,13 +95,10 @@ function startConnection() {
   ensurePrivateCodexHome();
   setupState = "starting";
   setupExitCode = null;
-  setupOutput = "Starting ChatGPT connection…";
+  setupOutput = "Opening a private ChatGPT sign-in window…";
   setupProcess = spawn(bridgeBinary, [
-    bridgeCli,
-    "setup",
-    "--browser-only",
-    "--login",
-    "--acknowledge-unofficial",
+    "run",
+    join(enhancementRoot, "login.js"),
   ], {
     cwd: enhancementRoot,
     env: { ...process.env },
@@ -118,16 +123,6 @@ function startConnection() {
     setupOutput = `${setupOutput}\nConnection flow finished with ${code === 0 ? "success" : `exit code ${setupExitCode}`}.`.slice(-1200);
     setupProcess = null;
   });
-  // The upstream CLI launches a dedicated Chrome profile. Explicitly ask
-  // LaunchServices to activate Chrome as well; macOS can otherwise leave the
-  // profile's window behind an already-running regular Chrome session.
-  spawn("/usr/bin/open", ["-a", "Google Chrome"], { stdio: "ignore" });
-  // `open -a` can activate the application without raising the newly-created
-  // profile window; ask Chrome itself to become frontmost as the final step.
-  spawn("/usr/bin/osascript", [
-    "-e",
-    'tell application "Google Chrome" to activate',
-  ], { stdio: "ignore" });
   return connectionStatus();
 }
 
@@ -242,7 +237,6 @@ ensureBridge().catch((error) => console.error(`[codex-chatgpt-web] bridge startu
 
 function shutdown() {
   setupProcess?.kill("SIGTERM");
-  bridgeProcess?.kill("SIGTERM");
   server.stop();
   process.exit(0);
 }

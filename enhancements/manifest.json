@@ -60,14 +60,10 @@
       "connectCommand": [
         "runtime/bun",
         "run",
-        "app/cli.js",
-        "setup",
-        "--browser-only",
-        "--login",
-        "--acknowledge-unofficial"
+        "login.js"
       ],
       "description": "In-Codex localhost dashboard for the upstream ChatGPT Web bridge, loopback health, diagnostics, and the signed-in ChatGPT Web surface.",
-      "verify": ["server.js", "public/index.html"],
+      "verify": ["server.js", "login.js", "public/index.html"],
       "ui": {
         "label": "Codex ChatGPT Web",
         "kind": "web",

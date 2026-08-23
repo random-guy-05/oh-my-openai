@@ -40,7 +40,7 @@ async function refreshStatus() {
     lastUpdated.textContent = `Updated ${formatTime()}`;
     if (connection.running || connection.state === "starting" || connection.state === "running") {
       setPill("checking", "Connecting ChatGPT");
-      connectionMessage.textContent = "The secure sign-in flow is running. Finish sign-in in the window the app opened; this dashboard will update automatically.";
+      connectionMessage.textContent = "A private ChatGPT sign-in window is open. Sign in there; it will close automatically when the composer is ready.";
       connectButton.disabled = true;
       connectButton.innerHTML = "Connecting… <span>•</span>";
     } else if (running) {
@@ -56,7 +56,7 @@ async function refreshStatus() {
       connectButton.innerHTML = "Try ChatGPT Connection Again <span>↗</span>";
     } else {
       setPill("warn", "Setup required");
-      connectionMessage.textContent = "Choose Connect ChatGPT; the app will open and manage the secure sign-in flow for you.";
+      connectionMessage.textContent = "Choose Connect ChatGPT to open a private sign-in window. The app will verify the composer and finish setup automatically.";
       connectButton.disabled = false;
       connectButton.innerHTML = "Connect ChatGPT <span>↗</span>";
     }

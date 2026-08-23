@@ -38,11 +38,7 @@ test("accepts the checked-in enhancement contract shape", () => {
   assert.deepEqual(web.connectCommand, [
     "runtime/bun",
     "run",
-    "app/cli.js",
-    "setup",
-    "--browser-only",
-    "--login",
-    "--acknowledge-unofficial",
+    "login.js",
   ]);
   assert.equal(web.ui.connectLabel, "Connect ChatGPT");
   assert.notEqual(web.enabled, false);
@@ -158,15 +154,26 @@ test("native launchers dispatch from manifest capabilities", () => {
     path.join(__dirname, "..", "assets", "codex-chatgpt-web-dashboard", "server.js"),
     "utf8",
   );
+  const loginFlow = fs.readFileSync(
+    path.join(__dirname, "..", "assets", "codex-chatgpt-web-dashboard", "login.js"),
+    "utf8",
+  );
   assert.match(dashboardServer, /\/api\/connect/);
-  assert.match(dashboardServer, /--browser-only/);
+  assert.match(loginFlow, /--browser-only/);
   assert.doesNotMatch(dashboardServer, /--replace-codex-route/);
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
   assert.match(dashboardServer, /opencodex/);
   assert.match(dashboardServer, /serviceHealth\(openCodexPort, "\/healthz"\)/);
-  assert.match(dashboardServer, /osascript/);
   assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
-  assert.match(dashboardServer, /--acknowledge-unofficial/);
+  assert.match(loginFlow, /--acknowledge-unofficial/);
+  assert.match(loginFlow, /--restart-service/);
+  assert.match(loginFlow, /waitForBridgeHealth/);
+  assert.match(loginFlow, /class DevToolsClient/);
+  assert.match(loginFlow, /new WebSocket/);
+  assert.match(loginFlow, /remote-allow-origins/);
+  assert.match(loginFlow, /composerSelector/);
+  assert.match(loginFlow, /login-profile/);
+  assert.match(dashboardServer, /login\.js/);
   assert.match(launcher, /connectCommand/);
   assert.match(launcher, /LaunchConnectionEnhancement/);
   assert.match(launcher, /ActivateChromeLoginWindow/);
