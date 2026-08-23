@@ -145,6 +145,11 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /OpenCodex Dashboard/);
   assert.match(buildScript, /Codex ChatGPT Web/);
   assert.match(buildScript, /openUrl\('connect'\)/);
+  assert.match(buildScript, /"clang"/);
+  assert.match(buildScript, /"-fobjc-arc"/);
+  assert.match(buildScript, /launcherObject/);
+  const artifactVerifier = fs.readFileSync(path.join(__dirname, "verify-release-artifact.js"), "utf8");
+  assert.match(artifactVerifier, /_objc_storeStrong/);
   const bundler = fs.readFileSync(path.join(__dirname, "bundle-enhancements.js"), "utf8");
   assert.match(bundler, /entry\.postStartCommand = enhancement\.postStartCommand/);
   assert.match(bundler, /entry\.connectCommand = enhancement\.connectCommand/);
@@ -205,6 +210,8 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(hub, /Timer\.publish\(every: 5/);
   assert.match(launcher, /RequiredEnhancementsHealthy/);
   assert.match(launcher, /kRequiredServiceStartupAttempts = 480/);
+  assert.match(launcher, /disableAutomaticTermination/);
+  assert.match(launcher, /disableSuddenTermination/);
   assert.match(launcher, /StopEnhancements\(\);[\s\S]*_requiredServiceWaitAttempts = 0/);
   assert.match(launcher, /ProcessTreeContainsPID/);
   assert.match(launcher, /unrelated process on port/);

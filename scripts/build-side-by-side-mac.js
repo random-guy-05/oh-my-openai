@@ -697,20 +697,28 @@ function appendEnhancementsToApplicationMenu(menu, elModule) {
     replacePlistString(path.join(contents, "Info.plist"), "CFBundleVersion", customBuild);
 
     console.log("   [launcher] compiling Intel native launcher (ObjC + SwiftUI)");
+    const launcherObject = path.join(contents, "MacOS", "CodexLauncher.o");
+    run("/usr/bin/xcrun", [
+      "clang",
+      "-target", "x86_64-apple-macos13.0",
+      "-fobjc-arc",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-c", path.join(PROJECT_ROOT, "launcher", "CodexLauncher.m"),
+      "-o", launcherObject,
+    ]);
     run("/usr/bin/xcrun", [
       "swiftc",
       "-target", "x86_64-apple-macos13.0",
       "-parse-as-library",
-      "-Xcc", "-fobjc-arc",
-      "-Xcc", "-Wall",
-      "-Xcc", "-Wextra",
-      "-Xcc", "-Werror",
       "-framework", "Cocoa",
       "-framework", "WebKit",
-      path.join(PROJECT_ROOT, "launcher", "CodexLauncher.m"),
       path.join(PROJECT_ROOT, "launcher", "EnhancementHub.swift"),
+      launcherObject,
       "-o", launcherExecutable,
     ]);
+    fs.rmSync(launcherObject);
     fs.chmodSync(launcherExecutable, 0o755);
     requireArchitecture(launcherExecutable, "x86_64", "Codex launcher");
 

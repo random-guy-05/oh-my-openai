@@ -11,6 +11,7 @@ const root = path.resolve(__dirname, "..");
 const app = path.resolve(process.argv[2] || path.join(root, "out/side-by-side-mac-x64/Codex.app"));
 const runtime = path.join(app, "Contents/Resources/Codex.payload");
 const runtimeAsar = path.join(runtime, "Contents/Resources/app.asar");
+const launcher = path.join(app, "Contents/MacOS/CodexLauncher");
 
 function run(label, executable, args) {
   process.stdout.write(`[verify] ${label}\n`);
@@ -26,6 +27,10 @@ run("built enhancement bundle", process.execPath, ["scripts/verify-enhancements.
 run("Responses provider routing", process.execPath, ["scripts/verify-provider-routing.js", app]);
 run("service lifecycle and auth isolation", process.execPath, ["scripts/verify-service-lifecycle.js", app]);
 run("deep code signature", "/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
+
+const launcherSymbols = execFileSync("/usr/bin/nm", ["-u", launcher], { encoding: "utf8" });
+assert.match(launcherSymbols, /_objc_storeStrong/,
+  "Native launcher was not compiled with Objective-C ARC; cached service metadata could dangle");
 
 const marker = "codex-rebuild:enhancements-tray-v1";
 const javascriptFiles = asar.listPackage(runtimeAsar)

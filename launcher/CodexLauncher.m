@@ -133,9 +133,12 @@ static NSArray<NSDictionary *> *LoadEnhancementManifest(void) {
   NSDictionary *manifest = data
     ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]
     : nil;
-  gLoadedEnhancements = [manifest[@"enhancements"] isKindOfClass:[NSArray class]]
+  // Keep this valid for the launcher lifetime even if a future build loses
+  // ARC flags: the manifest is read once, then used from later run-loop turns.
+  NSArray<NSDictionary *> *enhancements = [manifest[@"enhancements"] isKindOfClass:[NSArray class]]
     ? manifest[@"enhancements"]
     : @[];
+  gLoadedEnhancements = [enhancements copy];
   return gLoadedEnhancements;
 }
 
@@ -164,11 +167,11 @@ static void SetEnhancementEnabled(NSString *identifier, BOOL enabled) {
   [[NSUserDefaults standardUserDefaults] setObject:stored forKey:kEnabledDefaultsKey];
 }
 
-static NSString *EnhancementView(NSString *identifier) {
+static __attribute__((unused)) NSString *EnhancementView(NSString *identifier) {
   return [[NSUserDefaults standardUserDefaults] dictionaryForKey:kViewDefaultsKey][identifier];
 }
 
-static void SetEnhancementView(NSString *identifier, NSString *view) {
+static __attribute__((unused)) void SetEnhancementView(NSString *identifier, NSString *view) {
   NSMutableDictionary *stored = [NSMutableDictionary dictionary];
   [stored addEntriesFromDictionary:
     [[NSUserDefaults standardUserDefaults] dictionaryForKey:kViewDefaultsKey]];
@@ -188,7 +191,7 @@ static NSArray<NSString *> *EnhancementViewOptions(NSDictionary *enhancement) {
   return @[@"launch"];
 }
 
-static NSString *EnhancementViewLabel(NSString *view) {
+static __attribute__((unused)) NSString *EnhancementViewLabel(NSString *view) {
   if ([view isEqualToString:@"window"]) return @"In-app window";
   if ([view isEqualToString:@"connect"]) return @"Connect ChatGPT";
   if ([view isEqualToString:@"browser"]) return @"Browser";
@@ -798,7 +801,7 @@ static NSImage *ChatGPTTemplateImage(void) {
   return SparkTemplateImage();
 }
 
-static void InstallEnhancementStatusItem(void) {
+static __attribute__((unused)) void InstallEnhancementStatusItem(void) {
   if (gEnhancementStatusItem) return;
   gEnhancementStatusItem = [[NSStatusBar systemStatusBar]
     statusItemWithLength:NSVariableStatusItemLength];
@@ -877,7 +880,7 @@ static void CompleteEnhancementPreflight(BOOL success) {
     NSLog(@"[CodexLauncher] OpenCodex preflight failed; launching with the isolated baseline config");
   }
   if (!gEnhancementsStopping && gAppDelegate) {
-    [gAppDelegate performSelector:@selector(performInitialLaunch)];
+    [(id)gAppDelegate performSelector:@selector(performInitialLaunch)];
   }
 }
 
@@ -1717,7 +1720,7 @@ static BOOL AcquireLauncherLock(void) {
   return YES;
 }
 
-static BOOL LinkSharedCodexPath(NSString *sourcePath,
+static __attribute__((unused)) BOOL LinkSharedCodexPath(NSString *sourcePath,
                                 NSString *destinationPath,
                                 BOOL expectDirectory,
                                 NSString **failure) {
@@ -2130,6 +2133,12 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
   (void)notification;
+
+  // This hidden process is the lifetime owner/supervisor for the runtime and
+  // local services. It must remain alive even while no native window is open.
+  [NSProcessInfo.processInfo disableAutomaticTermination:
+    @"Codex supervises its private runtime and local model services"];
+  [NSProcessInfo.processInfo disableSuddenTermination];
 
   // Migrate machines that ran an older build where the private runtime briefly
   // owned this scheme. The launcher is the only safe entry point because it
