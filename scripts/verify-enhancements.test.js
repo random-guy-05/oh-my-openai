@@ -222,7 +222,7 @@ test("native launchers dispatch from manifest capabilities", () => {
     "utf8",
   );
   assert.match(dashboardServer, /\/api\/connect/);
-  assert.match(loginFlow, /--browser-only/);
+  assert.doesNotMatch(loginFlow, /\bsetup\b[\s\S]*--browser-only/);
   assert.doesNotMatch(dashboardServer, /--replace-codex-route/);
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
   assert.doesNotMatch(dashboardServer, /syncCodexAuth|sourceAuthPath|copyFileSync/);
@@ -238,9 +238,10 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(dashboardServer, /ensureBridge/);
   assert.match(dashboardServer, /CODEX_CHATGPT_WEB_HOME/);
   assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
-  assert.match(loginFlow, /--acknowledge-unofficial/);
-  assert.match(loginFlow, /--restart-service/);
-  assert.match(loginFlow, /waitForBridgeHealth/);
+  assert.match(dashboardServer, /restartOwnedBridge/);
+  assert.doesNotMatch(loginFlow, /--restart-service/);
+  assert.match(loginFlow, /Storage\.getCookies/);
+  assert.doesNotMatch(loginFlow, /cpSync\(sourceProfile, targetProfile/);
   assert.match(loginFlow, /class DevToolsClient/);
   assert.match(loginFlow, /new WebSocket/);
   assert.match(loginFlow, /remote-allow-origins/);

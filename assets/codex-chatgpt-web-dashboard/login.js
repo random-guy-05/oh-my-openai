@@ -9,11 +9,10 @@
 
 import { cpSync, mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 
-const root = resolve(import.meta.dir);
 const home = resolve(process.env.CODEX_CHATGPT_WEB_HOME || join(homedir(), ".codex-chatgpt-web"));
 const browserRoot = join(home, "browser");
 const loginProfile = join(browserRoot, "login-profile");
@@ -24,11 +23,12 @@ const storageStatePath = join(browserRoot, "storage-state.json");
 const verifiedPath = `${storageStatePath}.verified.json`;
 const chromeExecutable = process.env.CODEX_CHATGPT_WEB_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const loginUrl = "https://chatgpt.com/?temporary-chat=true";
-const bridgePort = Number.parseInt(process.env.CODEX_CHATGPT_WEB_PORT || "17841", 10);
 const composerSelector = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
   '[contenteditable="true"][data-lexical-editor="true"]',
+  '[contenteditable="true"][role="textbox"]',
+  'textarea[placeholder*="Ask"]',
 ].join(", ");
 
 function log(message) {
@@ -50,10 +50,25 @@ function seedLoginProfile() {
   }
   const targetProfile = join(loginProfile, "Default");
   mkdirSync(targetProfile, { recursive: true, mode: 0o700 });
-  cpSync(sourceProfile, targetProfile, {
-    recursive: true,
-    filter: (sourcePath) => !["SingletonCookie", "SingletonLock", "SingletonSocket", "LOCK"].includes(sourcePath.split("/").at(-1)),
-  });
+  // Seed only the files needed to reuse a signed-in web session. Copying the
+  // entire Chrome profile would unnecessarily duplicate history, extensions,
+  // caches, and saved form data into this app-owned profile.
+  for (const relativePath of [
+    "Preferences",
+    "Secure Preferences",
+    "Cookies",
+    "Cookies-wal",
+    "Cookies-shm",
+    "Network/Cookies",
+    "Network/Cookies-wal",
+    "Network/Cookies-shm",
+  ]) {
+    const source = join(sourceProfile, relativePath);
+    if (!existsSync(source)) continue;
+    const destination = join(targetProfile, relativePath);
+    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+    cpSync(source, destination);
+  }
   const sourceLocalState = join(chromeUserDataRoot, "Local State");
   if (existsSync(sourceLocalState)) cpSync(sourceLocalState, join(loginProfile, "Local State"));
   writeFileSync(profileSeedMarker, JSON.stringify({
@@ -75,62 +90,6 @@ function findFreePort() {
       server.close((error) => error ? reject(error) : resolvePort(port));
     });
   });
-}
-
-function runSetupAttempt(restartService) {
-  return new Promise((resolveSetup, rejectSetup) => {
-    const argumentsForSetup = [
-      join(root, "app", "cli.js"),
-      "setup",
-      "--browser-only",
-      "--acknowledge-unofficial",
-      ...(restartService ? ["--restart-service"] : []),
-    ];
-    const child = spawn(process.execPath, argumentsForSetup, {
-      cwd: root,
-      env: {
-        ...process.env,
-        CODEX_CHATGPT_WEB_HOME: home,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stdout.on("data", (chunk) => process.stdout.write(chunk));
-    child.stderr.on("data", (chunk) => process.stderr.write(chunk));
-    child.once("error", rejectSetup);
-    child.once("exit", (code, signal) => {
-      if (code === 0) resolveSetup();
-      else rejectSetup(new Error(`ChatGPT setup exited with ${signal ? `signal ${signal}` : `code ${code}`}`));
-    });
-  });
-}
-
-async function waitForBridgeHealth(timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${bridgePort}/healthz`);
-      const payload = await response.json().catch(() => null);
-      if (response.ok && payload?.status === "ok") return true;
-    } catch {}
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
-  }
-  return false;
-}
-
-async function runSetup() {
-  let lastError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await runSetupAttempt(attempt === 0);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (attempt === 2) throw error;
-      log("The local bridge is still starting; waiting for it to become healthy before retrying setup…");
-      await waitForBridgeHealth(30_000);
-    }
-  }
-  throw lastError;
 }
 
 class DevToolsClient {
@@ -213,6 +172,7 @@ async function waitForChatGPTPage(client) {
       const sessionId = attached.sessionId;
       await client.command("Runtime.enable", {}, sessionId);
       await client.command("Page.enable", {}, sessionId);
+      await client.command("Network.enable", {}, sessionId);
       await client.command("Page.navigate", { url: loginUrl }, sessionId);
       return sessionId;
     }
@@ -270,7 +230,12 @@ async function waitForComposer(client, sessionId) {
 }
 
 async function captureStorageState(client, sessionId) {
-  const cookieResult = await client.command("Network.getAllCookies", {}, sessionId);
+  let cookieResult;
+  try {
+    cookieResult = await client.command("Storage.getCookies");
+  } catch {
+    cookieResult = await client.command("Network.getAllCookies", {}, sessionId);
+  }
   const localStorage = await evaluate(client, sessionId, `(() => {
     try { return Object.entries(localStorage).map(([name, value]) => ({ name, value })); }
     catch { return []; }
@@ -356,15 +321,15 @@ async function login() {
       solAvailable: true,
       proAvailable: false,
     }, null, 2) + "\n", { mode: 0o600 });
-    log("ChatGPT sign-in verified. Finishing connection setup…");
+    log("ChatGPT sign-in verified. The dashboard will restart its owned bridge and refresh the model catalog.");
   } finally {
     try { client?.close(); } catch {}
     try { chrome.kill("SIGTERM"); } catch {}
   }
 
   // Keep the isolated profile so the one-time sign-in is remembered for the
-  // next Connect click. It never touches the user's normal Chrome profile.
-  await runSetup();
+  // next Connect click. The dashboard owns bridge restart/configuration; this
+  // login helper never invokes the upstream terminal-style setup workflow.
   log("ChatGPT Web is connected.");
 }
 

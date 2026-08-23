@@ -226,6 +226,22 @@ async function ensureBridge() {
   return bridgeStartupPromise;
 }
 
+async function restartOwnedBridge() {
+  const ownedProcess = bridgeProcess;
+  if (ownedProcess?.exitCode == null) {
+    ownedProcess.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolveExit) => ownedProcess.once("exit", resolveExit)),
+      new Promise((resolveWait) => setTimeout(resolveWait, 5000)),
+    ]);
+    if (ownedProcess.exitCode == null) ownedProcess.kill("SIGKILL");
+  }
+  if (bridgeProcess === ownedProcess) bridgeProcess = null;
+  bridgeStartupPromise = null;
+  accountHealthCache = { checkedAt: 0, result: null };
+  return ensureBridge();
+}
+
 function connectionStatus() {
   return {
     state: setupState,
@@ -271,6 +287,21 @@ function startConnection() {
       if (exitCode !== 0) {
         setupState = "failed";
         setupOutput = `${setupOutput}\nConnection flow finished with exit code ${exitCode}.`.slice(-1200);
+        return;
+      }
+      const browser = browserSessionHealth();
+      if (!browser.authenticated) {
+        setupState = "failed";
+        setupExitCode = 1;
+        setupOutput = `${setupOutput}\nConnection was not completed: ${browser.message}`.slice(-1200);
+        return;
+      }
+      try {
+        await restartOwnedBridge();
+      } catch (error) {
+        setupState = "failed";
+        setupExitCode = 1;
+        setupOutput = `${setupOutput}\nThe managed bridge could not restart: ${error.message}`.slice(-1200);
         return;
       }
       const account = await accountRouteHealth(true);
@@ -402,7 +433,8 @@ async function handle(request) {
     const opencodex = await serviceHealth(openCodexPort, "/healthz");
     const account = await accountRouteHealth();
     const browser = browserSessionHealth();
-    const ready = Boolean(health) && opencodex.running && account.status === "ok" && browser.authenticated;
+    const ready = health?.accepting_turns === true && opencodex.running &&
+      account.status === "ok" && browser.authenticated;
     return json({
       dashboard: { status: "ok", service: "codex-chatgpt-web-dashboard", port },
       opencodex,
