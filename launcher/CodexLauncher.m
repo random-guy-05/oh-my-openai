@@ -2139,6 +2139,11 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   [NSProcessInfo.processInfo disableAutomaticTermination:
     @"Codex supervises its private runtime and local model services"];
   [NSProcessInfo.processInfo disableSuddenTermination];
+  [NSWorkspace.sharedWorkspace.notificationCenter
+    addObserver:self
+       selector:@selector(workspaceApplicationDidTerminate:)
+           name:NSWorkspaceDidTerminateApplicationNotification
+         object:nil];
 
   // Migrate machines that ran an older build where the private runtime briefly
   // owned this scheme. The launcher is the only safe entry point because it
@@ -2166,9 +2171,20 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
   StopEnhancements();
+  [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
   [[NSAppleEventManager sharedAppleEventManager]
     removeEventHandlerForEventClass:kCodexInternetEventClass
                           andEventID:kCodexGetURLEvent];
+}
+
+- (void)workspaceApplicationDidTerminate:(NSNotification *)notification {
+  NSRunningApplication *application = notification.userInfo[NSWorkspaceApplicationKey];
+  if (![application.bundleIdentifier isEqualToString:kRuntimeBundleIdentifier]) return;
+  // A catalog refresh intentionally replaces only the private runtime. Every
+  // other runtime exit is a real app quit/crash, so tear down the supervisor
+  // and both local services instead of leaving background processes behind.
+  if (_modelRefreshRestartPending || !_didPerformInitialLaunch) return;
+  [NSApp terminate:nil];
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)application
