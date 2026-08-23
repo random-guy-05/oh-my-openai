@@ -40,6 +40,12 @@ test("accepts the checked-in enhancement contract shape", () => {
     "run",
     "login.js",
   ]);
+  const opencodex = checkedIn.enhancements.find((entry) => entry.id === "opencodex");
+  assert.deepEqual(opencodex.postStartCommand, [
+    "node_modules/bun/bin/bun.exe",
+    "run",
+    "post-start.js",
+  ]);
   assert.equal(web.ui.connectLabel, "Connect ChatGPT");
   assert.notEqual(web.enabled, false);
   assert.equal(web.toolCommand, undefined);
@@ -132,6 +138,9 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /OpenCodex Dashboard/);
   assert.match(buildScript, /Codex ChatGPT Web/);
   assert.match(buildScript, /openUrl\('connect'\)/);
+  const bundler = fs.readFileSync(path.join(__dirname, "bundle-enhancements.js"), "utf8");
+  assert.match(bundler, /entry\.postStartCommand = enhancement\.postStartCommand/);
+  assert.match(bundler, /entry\.connectCommand = enhancement\.connectCommand/);
 });
 
 test("native launchers dispatch from manifest capabilities", () => {
@@ -182,8 +191,11 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(launcher, /LaunchConnectionEnhancement/);
   assert.match(launcher, /ActivateChromeLoginWindow/);
   assert.match(launcher, /EnhancementCodexHome/);
+  assert.match(launcher, /PrepareOpenCodexHome/);
+  assert.match(launcher, /OPENCODEX_HOME/);
+  assert.match(launcher, /codex-chatgpt-web/);
   assert.match(launcher, /NSApplicationActivateIgnoringOtherApps/);
   assert.match(launcher, /\[kind isEqualToString:@"app"\]/);
   assert.match(launcher, /\[kind isEqualToString:@"terminal"\]/);
-  assert.match(launcher, /ResolveEnhancementBinary\(enhDir, command\)/);
+  assert.match(launcher, /ResolveEnhancementBinary\(enhDir, command\[0\]\)/);
 });

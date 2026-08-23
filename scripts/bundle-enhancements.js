@@ -459,6 +459,8 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
       if (enhancement.type === "service") {
         entry.lifecycle = enhancement.lifecycle || "launcher";
         entry.startCommand = enhancement.startCommand;
+        if (enhancement.postStartCommand) entry.postStartCommand = enhancement.postStartCommand;
+        if (enhancement.connectCommand) entry.connectCommand = enhancement.connectCommand;
         const binaryRel = enhancement.startCommand[0];
         entry.startBinarySha256 = sha256File(path.join(enhancementDir, binaryRel));
       }

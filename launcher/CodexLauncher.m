@@ -223,6 +223,55 @@ static NSString *EnhancementCodexHome(NSDictionary *enhancement, NSString *suppo
   return homePath;
 }
 
+// OpenCodex normally reads ~/.opencodex/config.json. The side-by-side app must
+// keep its routing state isolated from the user's native Codex and from the
+// launchd-owned ChatGPT Web bridge, so give it an app-private copy and add the
+// loopback bridge as a first-class provider. This makes chatgpt-web/* models
+// routable through the same OpenCodex endpoint as the OpenCode models.
+static NSString *PrepareOpenCodexHome(NSString *supportPath) {
+  NSString *homePath = [supportPath stringByAppendingPathComponent:@"OpenCodexHome"];
+  CreatePrivateDirectory(homePath, nil);
+  NSString *destinationPath = [homePath stringByAppendingPathComponent:@"config.json"];
+  NSString *sourcePath = [NSHomeDirectory() stringByAppendingPathComponent:@".opencodex/config.json"];
+  NSData *sourceData = [NSData dataWithContentsOfFile:sourcePath];
+  NSData *destinationData = [NSData dataWithContentsOfFile:destinationPath];
+  NSMutableDictionary *config = nil;
+  NSData *candidateData = destinationData.length > 0 ? destinationData : sourceData;
+  if (candidateData.length > 0) {
+    id parsed = [NSJSONSerialization JSONObjectWithData:candidateData options:NSJSONReadingMutableContainers error:nil];
+    if ([parsed isKindOfClass:[NSDictionary class]]) config = [parsed mutableCopy];
+  }
+  if (!config) config = [NSMutableDictionary dictionary];
+
+  NSMutableDictionary *providers = [config[@"providers"] isKindOfClass:[NSDictionary class]]
+    ? [config[@"providers"] mutableCopy] : [NSMutableDictionary dictionary];
+  providers[@"codex-chatgpt-web"] = @{
+    @"adapter": @"openai-chat",
+    @"baseUrl": @"http://127.0.0.1:17841/v1",
+    @"authMode": @"forward",
+    @"allowPrivateNetwork": @YES,
+    // Forward-auth providers intentionally do not probe /models. Keep the
+    // bridge's stable model ids configured so the post-start catalog merge
+    // and request router can decode the Codex-facing aliases.
+    @"models": @[
+      @"chatgpt-web/light",
+      @"chatgpt-web/medium",
+      @"chatgpt-web/high"
+    ],
+    @"liveModels": @NO
+  };
+  config[@"providers"] = providers;
+  if (![config[@"defaultProvider"] isKindOfClass:[NSString class]]) config[@"defaultProvider"] = @"openai";
+  if (![config[@"port"] isKindOfClass:[NSNumber class]]) config[@"port"] = @10100;
+
+  NSData *output = [NSJSONSerialization dataWithJSONObject:config options:NSJSONWritingPrettyPrinted error:nil];
+  if (output.length > 0) {
+    [output writeToFile:destinationPath atomically:YES];
+    chmod(destinationPath.fileSystemRepresentation, 0600);
+  }
+  return homePath;
+}
+
 static NSTask *LaunchToolEnhancement(NSDictionary *enhancement,
                                      void (^outputHandler)(NSString *text)) {
   NSArray<NSString *> *toolCommand = enhancement[@"toolCommand"];
@@ -428,36 +477,27 @@ static void RebuildEnhancementMenu(void) {
 
   [menu addItem:[NSMenuItem separatorItem]];
 
-  NSMenuItem *enhParent = [[NSMenuItem alloc] initWithTitle:@"✦ Enhancements"
-                                                     action:nil
-                                              keyEquivalent:@""];
-  enhParent.image = [NSImage imageWithSystemSymbolName:@"sparkles"
-                              accessibilityDescription:@"Enhancements"];
-  NSMenu *enhSubmenu = [[NSMenu alloc] init];
-
+  // Keep the always-on services at the first menu level. A nested
+  // "Enhancements" menu made them technically present but practically
+  // invisible when users clicked the ChatGPT-shaped status icon.
   for (NSDictionary *enhancement in LoadEnhancementManifest()) {
     NSDictionary *ui = enhancement[@"ui"];
     if (!ui) continue;
     if (!EnhancementEnabled(enhancement[@"id"])) continue;
     NSString *identifier = enhancement[@"id"];
     NSString *kind = ui[@"kind"];
-    NSImage *symbol = [NSImage imageWithSystemSymbolName:EnhancementSymbol(enhancement)
-                                accessibilityDescription:ui[@"label"]];
     if ([kind isEqualToString:@"web"]) {
-      NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:ui[@"label"]
-                                                    action:nil
-                                             keyEquivalent:@""];
-      item.image = symbol;
-      NSMenu *submenu = [[NSMenu alloc] init];
-      for (NSString *view in EnhancementViewOptions(enhancement)) {
-        NSMenuItem *option = MenuItemWithSymbol(EnhancementViewLabel(view),
-                                                @selector(openEnhancementAction:),
-                                                @"chevron.right");
-        option.representedObject = @[identifier, view];
-        [submenu addItem:option];
+      NSString *title = ui[@"openLabel"];
+      if ([identifier isEqualToString:@"opencodex"]) {
+        title = @"Open OpenCodex Dashboard";
+      } else if ([identifier isEqualToString:@"codex-chatgpt-web"]) {
+        title = @"Open ChatGPT Web Dashboard";
       }
-      item.submenu = submenu;
-      [enhSubmenu addItem:item];
+      NSMenuItem *item = MenuItemWithSymbol(title,
+                                            @selector(openEnhancementAction:),
+                                            EnhancementSymbol(enhancement));
+      item.representedObject = @[identifier, @"window"];
+      [menu addItem:item];
     } else {
       NSString *title = ui[@"openLabel"];
       if (!title) title = ui[@"label"];
@@ -466,27 +506,17 @@ static void RebuildEnhancementMenu(void) {
                                              EnhancementSymbol(enhancement));
       NSString *view = EnhancementViewOptions(enhancement).firstObject;
       item.representedObject = @[identifier, view];
-      [enhSubmenu addItem:item];
+      [menu addItem:item];
     }
   }
 
-  [enhSubmenu addItem:[NSMenuItem separatorItem]];
-  NSMenuItem *enhSettings = MenuItemWithSymbol(@"Enhancements Settings…",
-                                               @selector(showSettingsAction:),
-                                               @"gearshape");
-  [enhSubmenu addItem:enhSettings];
-
-  enhParent.submenu = enhSubmenu;
-  [menu addItem:enhParent];
-
-  // Keep the sign-in action visible from the first menu level. The nested
-  // web submenu remains available, but users should not have to hunt for the
-  // connection flow when the bridge has not been configured yet.
+  // Keep the sign-in action beside the dashboard action. Users should never
+  // have to open a second submenu to connect the ChatGPT Web bridge.
   for (NSDictionary *enhancement in LoadEnhancementManifest()) {
     if (![enhancement[@"id"] isEqualToString:@"codex-chatgpt-web"] ||
         !EnhancementEnabled(enhancement[@"id"]) ||
         ![enhancement[@"connectCommand"] isKindOfClass:[NSArray class]]) continue;
-    NSMenuItem *connect = MenuItemWithSymbol(@"Connect to Codex ChatGPT Web",
+    NSMenuItem *connect = MenuItemWithSymbol(@"Connect ChatGPT Web",
                                               @selector(openEnhancementAction:),
                                               @"person.crop.circle.badge.checkmark");
     connect.representedObject = @[ @"codex-chatgpt-web", @"connect" ];
@@ -560,16 +590,16 @@ static void InstallEnhancementStatusItem(void) {
   gEnhancementStatusItem = [[NSStatusBar systemStatusBar]
     statusItemWithLength:NSVariableStatusItemLength];
   if (!gEnhancementStatusItem) return;
-  NSImage *icon = [[NSWorkspace sharedWorkspace]
-    iconForFile:NSBundle.mainBundle.bundlePath];
-  [icon setSize:NSMakeSize(18.0, 18.0)];
+  // Match the ChatGPT mark used by the surrounding app. The tooltip
+  // distinguishes this service menu from the official app's own quit menu.
+  NSImage *icon = ChatGPTTemplateImage();
   if (icon) {
     gEnhancementStatusItem.button.image = icon;
     gEnhancementStatusItem.button.imageScaling = NSImageScaleProportionallyDown;
   } else {
     gEnhancementStatusItem.button.title = @"Codex";
   }
-  gEnhancementStatusItem.button.toolTip = @"Codex Enhancements";
+  gEnhancementStatusItem.button.toolTip = @"Codex — OpenCodex + ChatGPT Web";
   gEnhancementStatusItem.visible = YES;
   RebuildEnhancementMenu();
 }
@@ -583,7 +613,9 @@ static void ShowEnhancementSettings(void) {
 // ─── Enhancement lifecycle ──────────────────────────────────────
 
 static BOOL gEnhancementsStarted = NO;
+static BOOL gEnhancementsStopping = NO;
 static NSMutableArray<NSTask *> *gEnhancementTasks = nil;
+static NSMutableDictionary<NSString *, NSTask *> *gEnhancementTasksByID = nil;
 static NSMutableArray<NSTask *> *gConnectionTasks = nil;
 
 // Async-signal-safe PID tracking so a raw SIGTERM/SIGINT/SIGHUP (AppKit only
@@ -602,104 +634,123 @@ static void HandleTerminationSignal(int signalNumber) {
 // Forward declaration (defined later in this file)
 static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
 
-static BOOL StartEnhancements(void) {
-  if (gEnhancementsStarted) return YES;
-  gEnhancementsStarted = YES;
-
-  NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
-    URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
-  if (![[NSFileManager defaultManager] fileExistsAtPath:manifestURL.path]) {
-    NSLog(@"[CodexLauncher] no enhancements manifest; skipping");
-    return YES;
-  }
-
-  NSData *manifestData = [NSData dataWithContentsOfURL:manifestURL];
-  NSDictionary *manifest;
-  @try {
-    manifest = [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil];
-  } @catch (NSException *e) {
-    NSLog(@"[CodexLauncher] failed to parse enhancements manifest: %@", e.reason);
-    return YES;
-  }
-  if (!manifest) {
-    NSLog(@"[CodexLauncher] enhancements manifest is empty or invalid");
-    return YES;
-  }
-
-  NSNumber *version = manifest[@"version"];
-  if (!version || [version integerValue] != 1) {
-    NSLog(@"[CodexLauncher] unsupported manifest version %@; expected 1", version);
-    return YES;
-  }
-
-  NSArray<NSDictionary *> *enhancements = manifest[@"enhancements"];
-  if (![enhancements isKindOfClass:[NSArray class]]) {
-    NSLog(@"[CodexLauncher] enhancements is not an array");
-    return YES;
+static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
+                                     NSArray<NSString *> *command,
+                                     NSString *logSuffix,
+                                     BOOL supervise) {
+  if (![command isKindOfClass:[NSArray class]] || command.count == 0) return NO;
+  NSString *identifier = enhancement[@"id"];
+  NSString *enhDir = EnhancementDirectory(enhancement);
+  NSString *binaryPath = ResolveEnhancementBinary(enhDir, command[0]);
+  if (!binaryPath || ![[NSFileManager defaultManager] isExecutableFileAtPath:binaryPath]) {
+    NSLog(@"[CodexLauncher] enhancement %@ binary not executable at %@", identifier, command[0]);
+    return NO;
   }
 
   NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
-  NSString *enhancementsLogDir = [supportPath stringByAppendingPathComponent:@"enhancements"];
-  CreatePrivateDirectory(enhancementsLogDir, nil);
+  NSString *logDirectory = [supportPath stringByAppendingPathComponent:@"enhancements"];
+  CreatePrivateDirectory(logDirectory, nil);
+  NSString *suffix = logSuffix.length > 0 ? [NSString stringWithFormat:@"-%@", logSuffix] : @"";
+  NSString *logPath = [logDirectory stringByAppendingPathComponent:
+    [NSString stringWithFormat:@"%@%@.log", identifier, suffix]];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:logPath]) {
+    [[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
+  }
+  NSFileHandle *logHandle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+  if (!logHandle) {
+    NSLog(@"[CodexLauncher] cannot open log file for enhancement %@", identifier);
+    return NO;
+  }
+  [logHandle seekToEndOfFile];
 
-  for (NSDictionary *enhancement in enhancements) {
-    NSString *id = enhancement[@"id"];
-    NSArray<NSString *> *startCommand = enhancement[@"startCommand"];
-    if (!id || ![id isKindOfClass:[NSString class]] || !startCommand ||
-        ![startCommand isKindOfClass:[NSArray class]] || startCommand.count == 0) {
-      NSLog(@"[CodexLauncher] skipping malformed enhancement entry");
-      continue;
-    }
-    if (!EnhancementEnabled(id)) {
-      NSLog(@"[CodexLauncher] enhancement %@ disabled in settings; skipping", id);
-      continue;
-    }
+  NSTask *task = [[NSTask alloc] init];
+  task.launchPath = binaryPath;
+  task.arguments = [command subarrayWithRange:NSMakeRange(1, command.count - 1)];
+  task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
+  NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+  environment[@"CODEX_HOME"] = EnhancementCodexHome(enhancement, supportPath);
+  if ([identifier isEqualToString:@"opencodex"]) {
+    environment[@"OPENCODEX_HOME"] = PrepareOpenCodexHome(supportPath);
+  }
+  environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
+    [supportPath stringByAppendingPathComponent:@"Profile"];
+  task.environment = environment;
+  task.standardOutput = logHandle;
+  task.standardError = logHandle;
 
-    NSString *enhDir = [[[NSBundle.mainBundle.bundleURL
-      URLByAppendingPathComponent:@"Contents/Resources/enhancements"]
-      URLByAppendingPathComponent:id] path];
-    NSString *command = startCommand[0];
-    NSString *binaryPath = ResolveEnhancementBinary(enhDir, command);
-    if (![[NSFileManager defaultManager] isExecutableFileAtPath:binaryPath]) {
-      NSLog(@"[CodexLauncher] enhancement %@ binary not executable at %@", id, startCommand[0]);
-      continue;
-    }
+  @try {
+    [task launch];
+  } @catch (NSException *exception) {
+    NSLog(@"[CodexLauncher] failed to start enhancement %@: %@", identifier, exception.reason);
+    return NO;
+  }
+  if (!supervise) {
+    NSLog(@"[CodexLauncher] enhancement %@ post-start command launched (pid %d)",
+          identifier, task.processIdentifier);
+    return YES;
+  }
 
-    NSString *logPath = [enhancementsLogDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.log", id]];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:logPath] &&
-        ![[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil]) {
-      NSLog(@"[CodexLauncher] cannot create log file for enhancement %@", id);
-      continue;
-    }
-    NSFileHandle *logHandle = [NSFileHandle fileHandleForWritingAtPath:logPath];
-    if (!logHandle) {
-      NSLog(@"[CodexLauncher] cannot open log file for enhancement %@", id);
-      continue;
-    }
-    [logHandle seekToEndOfFile];
+  if (!gEnhancementTasks) gEnhancementTasks = [[NSMutableArray alloc] init];
+  if (!gEnhancementTasksByID) gEnhancementTasksByID = [[NSMutableDictionary alloc] init];
+  [gEnhancementTasks addObject:task];
+  gEnhancementTasksByID[identifier] = task;
+  if (gEnhancementPidCount < 32) gEnhancementPids[gEnhancementPidCount++] = task.processIdentifier;
 
-    NSTask *task = [[NSTask alloc] init];
-    task.launchPath = binaryPath;
-    task.arguments = [startCommand subarrayWithRange:NSMakeRange(1, startCommand.count - 1)];
-    task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
-    NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
-   environment[@"CODEX_HOME"] = EnhancementCodexHome(enhancement, supportPath);
-    environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
-      [supportPath stringByAppendingPathComponent:@"Profile"];
-    task.environment = environment;
-    task.standardOutput = logHandle;
-    task.standardError = logHandle;
-
-    @try {
-      [task launch];
-      if (!gEnhancementTasks) gEnhancementTasks = [[NSMutableArray alloc] init];
-      [gEnhancementTasks addObject:task];
-      if (gEnhancementPidCount < 32) {
-        gEnhancementPids[gEnhancementPidCount++] = task.processIdentifier;
+  NSDictionary *enhancementCopy = [enhancement copy];
+  task.terminationHandler = ^(NSTask *finishedTask) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [gEnhancementTasks removeObject:finishedTask];
+      if (gEnhancementTasksByID[identifier] == finishedTask) {
+        [gEnhancementTasksByID removeObjectForKey:identifier];
       }
-      NSLog(@"[CodexLauncher] enhancement %@ started (pid %d)", id, task.processIdentifier);
-    } @catch (NSException *e) {
-      NSLog(@"[CodexLauncher] failed to start enhancement %@: %@", id, e.reason);
+      if (gEnhancementsStopping || !gEnhancementsStarted) return;
+      NSLog(@"[CodexLauncher] enhancement %@ exited (%d); retrying in 2 seconds",
+            identifier, finishedTask.terminationStatus);
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                     dispatch_get_main_queue(), ^{
+        if (!gEnhancementsStopping && gEnhancementsStarted &&
+            !gEnhancementTasksByID[identifier]) {
+          LaunchEnhancementCommand(enhancementCopy, enhancementCopy[@"startCommand"], @"", YES);
+        }
+      });
+    });
+  };
+  NSLog(@"[CodexLauncher] enhancement %@ started (pid %d)", identifier, task.processIdentifier);
+  return YES;
+}
+
+static BOOL StartEnhancements(void) {
+  if (gEnhancementsStarted) return YES;
+  gEnhancementsStarted = YES;
+  gEnhancementsStopping = NO;
+
+  NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
+    URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
+  NSData *manifestData = [NSData dataWithContentsOfURL:manifestURL];
+  NSDictionary *manifest = manifestData
+    ? [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil] : nil;
+  NSArray<NSDictionary *> *enhancements = manifest[@"enhancements"];
+  if (![enhancements isKindOfClass:[NSArray class]]) {
+    NSLog(@"[CodexLauncher] enhancements manifest is missing or invalid");
+    return YES;
+  }
+  for (NSDictionary *enhancement in enhancements) {
+    NSString *identifier = enhancement[@"id"];
+    NSArray<NSString *> *startCommand = enhancement[@"startCommand"];
+    if (![identifier isKindOfClass:[NSString class]] ||
+        ![startCommand isKindOfClass:[NSArray class]] || startCommand.count == 0) continue;
+    if (!EnhancementEnabled(identifier)) continue;
+    LaunchEnhancementCommand(enhancement, startCommand, @"", YES);
+
+    NSArray<NSString *> *postStartCommand = enhancement[@"postStartCommand"];
+    if ([postStartCommand isKindOfClass:[NSArray class]] && postStartCommand.count > 0) {
+      NSDictionary *copy = [enhancement copy];
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
+                     dispatch_get_main_queue(), ^{
+        if (!gEnhancementsStopping && gEnhancementsStarted) {
+          LaunchEnhancementCommand(copy, postStartCommand, @"post-start", NO);
+        }
+      });
     }
   }
   return YES;
@@ -773,6 +824,8 @@ static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement) {
 }
 
 static void StopEnhancements(void) {
+  gEnhancementsStopping = YES;
+  gEnhancementsStarted = NO;
   if (!gEnhancementTasks) return;
   for (NSTask *task in gEnhancementTasks) {
     if (!task.isRunning) continue;
@@ -788,6 +841,7 @@ static void StopEnhancements(void) {
   }
   NSLog(@"[CodexLauncher] stopped %lu enhancements", (unsigned long)gEnhancementTasks.count);
   [gEnhancementTasks removeAllObjects];
+  [gEnhancementTasksByID removeAllObjects];
   for (NSTask *task in gConnectionTasks) {
     if (task.isRunning) [task terminate];
   }
@@ -1353,6 +1407,9 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   // expect a menu-bar utility to live; do not duplicate this menu in the
   // top-left application menu.
   InstallEnhancementStatusItem();
+  // Start the service layer immediately. It must not depend on the Electron
+  // window successfully launching, and each service is supervised independently.
+  StartEnhancements();
 
   if (gShowSettingsOnLaunch) [self showSettingsAction:nil];
   if (gCaptureHubOnLaunch) CaptureHubWindow();

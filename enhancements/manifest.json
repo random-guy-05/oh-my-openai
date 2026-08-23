@@ -6,6 +6,7 @@
       "id": "opencodex",
       "type": "service",
       "source": "npm:@bitkyc08/opencodex@2.12.0",
+      "overlay": "assets/opencodex-runtime",
       "config": {
         "port": 10100
       },
@@ -16,6 +17,12 @@
         "node_modules/@bitkyc08/opencodex/bin/ocx.mjs",
         "start"
       ],
+      "postStartCommand": [
+        "node_modules/bun/bin/bun.exe",
+        "run",
+        "post-start.js"
+      ],
+      "verify": ["post-start.js"],
       "ui": {
         "label": "OpenCodex Gateway",
         "kind": "web",

@@ -76,7 +76,15 @@ function validateManifest(manifest, label = "manifest") {
         `Enhancement ${enhancement.id} codexHome must be a safe directory name`);
     }
 
-    if (enhancement.type === "service") validateCommand(enhancement.startCommand, `${enhancement.id}.startCommand`);
+    if (enhancement.type === "service") {
+      validateCommand(enhancement.startCommand, `${enhancement.id}.startCommand`);
+      if (enhancement.postStartCommand) {
+        validateCommand(enhancement.postStartCommand, `${enhancement.id}.postStartCommand`);
+      }
+      if (enhancement.connectCommand) {
+        validateCommand(enhancement.connectCommand, `${enhancement.id}.connectCommand`);
+      }
+    }
     if (enhancement.toolCommand) validateCommand(enhancement.toolCommand, `${enhancement.id}.toolCommand`);
     if (enhancement.type === "tool") {
       assert(enhancement.toolCommand || enhancement.appPath,
