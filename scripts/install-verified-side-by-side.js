@@ -64,13 +64,31 @@ function restoreInstalledTarget(installed, saved, failedName) {
   if (fs.existsSync(saved)) fs.renameSync(saved, installed);
 }
 
+function preserveStaleStage(target, label) {
+  if (!fs.existsSync(target)) return;
+  const destination = path.join(backup, "stale-stages", `${label}.app`);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  try {
+    fs.renameSync(target, destination);
+  } catch (error) {
+    if (error.code !== "EXDEV") throw error;
+    copy(target, destination);
+    if (!fs.existsSync(destination)) throw new Error(`could not preserve stale stage: ${target}`);
+    fs.rmSync(target, { recursive: true, force: false });
+  }
+  console.log(`[install] preserved interrupted staging app at ${destination}`);
+}
+
 fs.mkdirSync(backupRoot, { recursive: true });
-for (const target of [stageLauncher, stageRuntime, backup]) {
+for (const target of [backup]) {
   if (fs.existsSync(target)) throw new Error(`refusing to overwrite existing path: ${target}`);
 }
 if (!fs.existsSync(sourceLauncher) || !fs.existsSync(sourceRuntime)) {
   throw new Error("verified side-by-side build output is missing");
 }
+fs.mkdirSync(backup, { recursive: true });
+preserveStaleStage(stageLauncher, "Codex-launcher-stage");
+preserveStaleStage(stageRuntime, "Codex-runtime-stage");
 
 copy(sourceLauncher, stageLauncher);
 copy(sourceRuntime, stageRuntime);
@@ -80,7 +98,6 @@ const stagedAsar = path.join(stageRuntime, "Contents", "Resources", "app.asar");
 if (sha256(stagedAsar) !== expectedAsar) throw new Error("staged runtime ASAR hash mismatch");
 
 stopCustomRuntime();
-fs.mkdirSync(backup, { recursive: true });
 const savedLauncher = path.join(backup, "Codex-launcher-previous.app");
 const savedRuntime = path.join(backup, "Codex-runtime-previous.app");
 

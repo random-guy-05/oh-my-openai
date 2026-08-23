@@ -157,6 +157,8 @@ test("verified installer supports fresh installs and recoverable rollback", () =
   assert.match(installer, /if \(fs\.existsSync\(installedLauncher\)\) fs\.renameSync/);
   assert.match(installer, /restoreInstalledTarget/);
   assert.match(installer, /failed-Codex-launcher\.app/);
+  assert.match(installer, /preserveStaleStage/);
+  assert.match(installer, /stale-stages/);
 });
 
 test("native launchers dispatch from manifest capabilities", () => {
