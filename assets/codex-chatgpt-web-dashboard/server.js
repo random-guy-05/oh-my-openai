@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -25,9 +25,12 @@ const integrationJournalPaths = [
   join(bridgeHome, "codex", "integration-journal.json"),
   join(bridgeHome, "codex", "integration-journal.recovery.json"),
 ];
+const bridgePidPath = join(bridgeHome, "bridge.pid");
 const bridgeBinary = join(enhancementRoot, "runtime", "bun");
 const bridgeCli = join(enhancementRoot, "app", "cli.js");
 
+let bridgeProcess = null;
+let bridgeStartupPromise = null;
 let setupProcess = null;
 let setupState = "idle";
 let setupExitCode = null;
@@ -138,9 +141,42 @@ async function accountRouteHealth(force = false) {
 }
 
 async function ensureBridge() {
-  // A configured bridge is owned by launchd. The dashboard only observes it;
-  // spawning a fallback here races launchd during startup/restart and can
-  // create two daemons competing for the same loopback port.
+  if (bridgeStartupPromise) return bridgeStartupPromise;
+
+  bridgeStartupPromise = (async () => {
+    mkdirSync(bridgeHome, { recursive: true, mode: 0o700 });
+    bridgeProcess = spawn(bridgeBinary, [bridgeCli, "serve"], {
+      cwd: enhancementRoot,
+      env: {
+        ...process.env,
+        CODEX_CHATGPT_WEB_HOME: bridgeHome,
+        CODEX_CHATGPT_WEB_PORT: String(bridgePort),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    bridgeProcess.stdout?.on("data", (chunk) => {
+      setupOutput = `${setupOutput}\n${chunk.toString("utf8")}`.slice(-1200);
+    });
+    bridgeProcess.stderr?.on("data", (chunk) => {
+      setupOutput = `${setupOutput}\n${chunk.toString("utf8")}`.slice(-1200);
+    });
+    bridgeProcess.once("exit", () => {
+      bridgeProcess = null;
+      try { unlinkSync(bridgePidPath); } catch {}
+    });
+    writeFileSync(bridgePidPath, `${bridgeProcess.pid}\n`, { mode: 0o600 });
+
+    const ownedProcess = bridgeProcess;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (ownedProcess?.exitCode == null && await bridgeHealth()) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (ownedProcess?.exitCode == null) ownedProcess.kill("SIGTERM");
+    throw new Error(`ChatGPT Web bridge did not become healthy on port ${bridgePort}.`);
+  })().finally(() => {
+    bridgeStartupPromise = null;
+  });
+  return bridgeStartupPromise;
 }
 
 function connectionStatus() {
@@ -317,6 +353,8 @@ ensureBridge().catch((error) => console.error(`[codex-chatgpt-web] bridge startu
 
 function shutdown() {
   setupProcess?.kill("SIGTERM");
+  bridgeProcess?.kill("SIGTERM");
+  try { unlinkSync(bridgePidPath); } catch {}
   server.stop();
   process.exit(0);
 }

@@ -10,6 +10,8 @@
       "config": {
         "port": 10100
       },
+      "healthPath": "/healthz",
+      "codexHome": "OpenCodexHome",
       "lifecycle": "launcher",
       "startCommand": [
         "node_modules/bun/bin/bun.exe",
@@ -55,6 +57,7 @@
       "config": {
         "port": 17842
       },
+      "healthPath": "/api/status",
       "codexHome": "ChatGPTWebHome",
       "lifecycle": "launcher",
       "startCommand": [

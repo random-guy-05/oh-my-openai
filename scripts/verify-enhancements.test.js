@@ -53,6 +53,8 @@ test("accepts the checked-in enhancement contract shape", () => {
   assert.deepEqual(services.map((entry) => entry.id), ["opencodex", "codex-chatgpt-web"]);
   assert.deepEqual(services.map((entry) => entry.lifecycle), ["launcher", "launcher"]);
   assert.notEqual(services[0].config.port, services[1].config.port);
+  assert.equal(opencodex.healthPath, "/healthz");
+  assert.equal(web.healthPath, "/api/status");
 });
 
 test("accepts a native app enhancement contract", () => {
@@ -176,6 +178,9 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(dashboardServer, /CODEX_HOME: codexHome/);
   assert.match(dashboardServer, /opencodex/);
   assert.match(dashboardServer, /serviceHealth\(openCodexPort, "\/healthz"\)/);
+  assert.match(dashboardServer, /bridgeProcess/);
+  assert.match(dashboardServer, /ensureBridge/);
+  assert.match(dashboardServer, /CODEX_CHATGPT_WEB_HOME/);
   assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
   assert.match(loginFlow, /--acknowledge-unofficial/);
   assert.match(loginFlow, /--restart-service/);
@@ -192,10 +197,23 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(launcher, /ActivateChromeLoginWindow/);
   assert.match(launcher, /EnhancementCodexHome/);
   assert.match(launcher, /PrepareOpenCodexHome/);
+  assert.match(launcher, /IsolatePrivateCodexPath/);
+  assert.match(launcher, /AcquireLauncherLock/);
+  assert.match(launcher, /EnhancementAlreadyHealthy/);
+  assert.match(launcher, /gEnhancementPreflightComplete/);
+  assert.match(launcher, /DescendantProcessIDs/);
+  assert.match(launcher, /TerminateProcessTree/);
+  assert.match(launcher, /providers\[@"codex-chatgpt-web"\]/);
+  assert.match(launcher, /providers\[@"codex-chatgpt-web"\]/);
   assert.match(launcher, /OPENCODEX_HOME/);
   assert.match(launcher, /codex-chatgpt-web/);
   assert.match(launcher, /NSApplicationActivateIgnoringOtherApps/);
   assert.match(launcher, /\[kind isEqualToString:@"app"\]/);
   assert.match(launcher, /\[kind isEqualToString:@"terminal"\]/);
   assert.match(launcher, /ResolveEnhancementBinary\(enhDir, command\[0\]\)/);
+  const postStart = fs.readFileSync(
+    path.join(__dirname, "..", "assets", "opencodex-runtime", "post-start.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(postStart, /\["sync-cache", "--restart-codex"\]/);
 });

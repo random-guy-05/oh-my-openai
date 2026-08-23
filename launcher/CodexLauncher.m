@@ -115,6 +115,7 @@ extern void CaptureHubWindow(void);
 static CodexLauncherDelegate *gAppDelegate = nil;
 static BOOL gShowSettingsOnLaunch = NO;
 static BOOL gCaptureHubOnLaunch = NO;
+static int gLauncherLockFD = -1;
 
 static __strong NSStatusItem *gEnhancementStatusItem = nil;
 static NSArray<NSDictionary *> *gLoadedEnhancements = nil;
@@ -206,6 +207,48 @@ static NSString *EnhancementDirectory(NSDictionary *enhancement) {
 }
 
 static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
+static BOOL AcquireLauncherLock(void);
+
+static BOOL IsWrapperManagedRoutingLine(NSString *line, NSString *supportPath) {
+  NSString *trimmed = [line stringByTrimmingCharactersInSet:
+    NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  if ([trimmed hasPrefix:@"#"] || trimmed.length == 0) return NO;
+  if ([trimmed hasPrefix:@"openai_base_url"] &&
+      ([trimmed containsString:@"127.0.0.1:10100"] ||
+       [trimmed containsString:@"localhost:10100"])) {
+    return YES;
+  }
+  return [trimmed hasPrefix:@"model_catalog_json"] &&
+    [trimmed containsString:supportPath];
+}
+
+// The wrapper may have been run by an older build that injected OpenCodex
+// routing into the private desktop config. Remove only values owned by this
+// product, preserving the user's other TOML settings and never touching
+// ~/.codex/config.toml.
+static BOOL NormalizePrivateCodexConfig(NSString *configPath, NSString *supportPath) {
+  NSData *data = [NSData dataWithContentsOfFile:configPath];
+  if (!data) return YES;
+  NSString *contents = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+  if (!contents) return NO;
+  NSMutableArray<NSString *> *kept = [NSMutableArray array];
+  __block BOOL changed = NO;
+  [contents enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
+    (void)stop;
+    if (IsWrapperManagedRoutingLine(line, supportPath)) {
+      changed = YES;
+      return;
+    }
+    [kept addObject:line];
+  }];
+  if (!changed) return YES;
+  NSString *normalized = [[kept componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+  if (![normalized writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
+    return NO;
+  }
+  chmod(configPath.fileSystemRepresentation, 0600);
+  return YES;
+}
 
 static NSString *EnhancementCodexHome(NSDictionary *enhancement, NSString *supportPath) {
   NSString *homeName = enhancement[@"codexHome"];
@@ -220,14 +263,17 @@ static NSString *EnhancementCodexHome(NSDictionary *enhancement, NSString *suppo
     [@"model = \"gpt-5.6-sol\"\n" writeToFile:configPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
     chmod(configPath.fileSystemRepresentation, 0600);
   }
+  if ([homeName isEqualToString:kCodexHomeName]) {
+    NormalizePrivateCodexConfig(configPath, supportPath);
+  }
   return homePath;
 }
 
 // OpenCodex normally reads ~/.opencodex/config.json. The side-by-side app must
 // keep its routing state isolated from the user's native Codex and from the
-// launchd-owned ChatGPT Web bridge, so give it an app-private copy and add the
-// loopback bridge as a first-class provider. This makes chatgpt-web/* models
-// routable through the same OpenCodex endpoint as the OpenCode models.
+// launchd-owned ChatGPT Web bridge, so give it an app-private copy. This
+// provider is intentionally configured only in OpenCodexHome; the native
+// ChatGPT app never sees these provider-prefixed model ids.
 static NSString *PrepareOpenCodexHome(NSString *supportPath) {
   NSString *homePath = [supportPath stringByAppendingPathComponent:@"OpenCodexHome"];
   CreatePrivateDirectory(homePath, nil);
@@ -250,9 +296,6 @@ static NSString *PrepareOpenCodexHome(NSString *supportPath) {
     @"baseUrl": @"http://127.0.0.1:17841/v1",
     @"authMode": @"forward",
     @"allowPrivateNetwork": @YES,
-    // Forward-auth providers intentionally do not probe /models. Keep the
-    // bridge's stable model ids configured so the post-start catalog merge
-    // and request router can decode the Codex-facing aliases.
     @"models": @[
       @"chatgpt-web/light",
       @"chatgpt-web/medium",
@@ -615,8 +658,12 @@ static void ShowEnhancementSettings(void) {
 static BOOL gEnhancementsStarted = NO;
 static BOOL gEnhancementsStopping = NO;
 static NSMutableArray<NSTask *> *gEnhancementTasks = nil;
+static NSMutableArray<NSTask *> *gEnhancementOneShotTasks = nil;
 static NSMutableDictionary<NSString *, NSTask *> *gEnhancementTasksByID = nil;
+static NSMutableDictionary<NSString *, NSNumber *> *gEnhancementRestartAttempts = nil;
 static NSMutableArray<NSTask *> *gConnectionTasks = nil;
+static BOOL gEnhancementPreflightRequired = NO;
+static BOOL gEnhancementPreflightComplete = YES;
 
 // Async-signal-safe PID tracking so a raw SIGTERM/SIGINT/SIGHUP (AppKit only
 // delivers applicationWillTerminate: on ordinary quit paths) still stops every
@@ -624,11 +671,69 @@ static NSMutableArray<NSTask *> *gConnectionTasks = nil;
 static pid_t gEnhancementPids[32];
 static int gEnhancementPidCount = 0;
 
+static void TrackEnhancementPid(pid_t pid) {
+  if (pid <= 0 || gEnhancementPidCount >= 32) return;
+  gEnhancementPids[gEnhancementPidCount++] = pid;
+}
+
+static void UntrackEnhancementPid(pid_t pid) {
+  if (pid <= 0) return;
+  for (int index = 0; index < gEnhancementPidCount; index++) {
+    if (gEnhancementPids[index] != pid) continue;
+    for (int move = index + 1; move < gEnhancementPidCount; move++) {
+      gEnhancementPids[move - 1] = gEnhancementPids[move];
+    }
+    gEnhancementPidCount--;
+    return;
+  }
+}
+
 static void HandleTerminationSignal(int signalNumber) {
   for (int index = 0; index < gEnhancementPidCount; index++) {
     kill(gEnhancementPids[index], SIGTERM);
   }
   _exit(128 + signalNumber);
+}
+
+static void CompleteEnhancementPreflight(BOOL success) {
+  gEnhancementPreflightComplete = YES;
+  if (!success) {
+    NSLog(@"[CodexLauncher] OpenCodex preflight failed; launching with the isolated baseline config");
+  }
+  if (!gEnhancementsStopping && gAppDelegate) {
+    [gAppDelegate performSelector:@selector(performInitialLaunch)];
+  }
+}
+
+static NSString *EnhancementPIDPath(NSString *identifier) {
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  return [[supportPath stringByAppendingPathComponent:@"enhancements"]
+    stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.pid", identifier]];
+}
+
+static void RemoveEnhancementPID(NSString *identifier) {
+  if (identifier.length == 0) return;
+  [[NSFileManager defaultManager] removeItemAtPath:EnhancementPIDPath(identifier) error:nil];
+}
+
+static BOOL EnhancementAlreadyHealthy(NSDictionary *enhancement) {
+  NSString *identifier = enhancement[@"id"];
+  NSNumber *port = enhancement[@"config"][@"port"];
+  NSString *healthPath = enhancement[@"healthPath"];
+  if (![port isKindOfClass:[NSNumber class]] ||
+      ![healthPath isKindOfClass:[NSString class]] || healthPath.length == 0 ||
+      identifier.length == 0) {
+    return NO;
+  }
+  NSData *pidData = [NSData dataWithContentsOfFile:EnhancementPIDPath(identifier)];
+  NSString *pidString = [[NSString alloc] initWithData:pidData encoding:NSUTF8StringEncoding];
+  pid_t pid = (pid_t)pidString.intValue;
+  if (pid <= 0 || kill(pid, 0) != 0) {
+    RemoveEnhancementPID(identifier);
+    return NO;
+  }
+  NSString *url = [NSString stringWithFormat:@"http://127.0.0.1:%@%@", port, healthPath];
+  return RunTool(@"/usr/bin/curl", @[@"-fsS", @"--max-time", @"1", url], nil);
 }
 
 // Forward declaration (defined later in this file)
@@ -640,6 +745,10 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
                                      BOOL supervise) {
   if (![command isKindOfClass:[NSArray class]] || command.count == 0) return NO;
   NSString *identifier = enhancement[@"id"];
+  if (supervise && logSuffix.length == 0 && EnhancementAlreadyHealthy(enhancement)) {
+    NSLog(@"[CodexLauncher] enhancement %@ is already healthy; reusing the existing service", identifier);
+    return YES;
+  }
   NSString *enhDir = EnhancementDirectory(enhancement);
   NSString *binaryPath = ResolveEnhancementBinary(enhDir, command[0]);
   if (!binaryPath || ![[NSFileManager defaultManager] isExecutableFileAtPath:binaryPath]) {
@@ -671,6 +780,9 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
   environment[@"CODEX_HOME"] = EnhancementCodexHome(enhancement, supportPath);
   if ([identifier isEqualToString:@"opencodex"]) {
     environment[@"OPENCODEX_HOME"] = PrepareOpenCodexHome(supportPath);
+  } else if ([identifier isEqualToString:@"codex-chatgpt-web"]) {
+    environment[@"CODEX_CHATGPT_WEB_HOME"] = EnhancementCodexHome(enhancement, supportPath);
+    environment[@"CODEX_CHATGPT_WEB_PORT"] = @"17841";
   }
   environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
     [supportPath stringByAppendingPathComponent:@"Profile"];
@@ -685,8 +797,19 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
     return NO;
   }
   if (!supervise) {
-    NSLog(@"[CodexLauncher] enhancement %@ post-start command launched (pid %d)",
-          identifier, task.processIdentifier);
+    if (!gEnhancementOneShotTasks) gEnhancementOneShotTasks = [[NSMutableArray alloc] init];
+    [gEnhancementOneShotTasks addObject:task];
+    TrackEnhancementPid(task.processIdentifier);
+    BOOL isPreflight = [logSuffix isEqualToString:@"preflight"];
+    [task setTerminationHandler:^(NSTask *finishedTask) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        UntrackEnhancementPid(finishedTask.processIdentifier);
+        [gEnhancementOneShotTasks removeObject:finishedTask];
+        if (isPreflight) CompleteEnhancementPreflight(finishedTask.terminationStatus == 0);
+      });
+    }];
+    NSLog(@"[CodexLauncher] enhancement %@ %@ command launched (pid %d)",
+          identifier, isPreflight ? @"preflight" : @"post-start", task.processIdentifier);
     return YES;
   }
 
@@ -694,19 +817,32 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
   if (!gEnhancementTasksByID) gEnhancementTasksByID = [[NSMutableDictionary alloc] init];
   [gEnhancementTasks addObject:task];
   gEnhancementTasksByID[identifier] = task;
-  if (gEnhancementPidCount < 32) gEnhancementPids[gEnhancementPidCount++] = task.processIdentifier;
+  TrackEnhancementPid(task.processIdentifier);
+  NSString *pidString = [NSString stringWithFormat:@"%d\n", task.processIdentifier];
+  [pidString writeToFile:EnhancementPIDPath(identifier)
+              atomically:YES
+                encoding:NSUTF8StringEncoding
+                   error:nil];
+  chmod(EnhancementPIDPath(identifier).fileSystemRepresentation, 0600);
 
   NSDictionary *enhancementCopy = [enhancement copy];
   task.terminationHandler = ^(NSTask *finishedTask) {
     dispatch_async(dispatch_get_main_queue(), ^{
       [gEnhancementTasks removeObject:finishedTask];
+      UntrackEnhancementPid(finishedTask.processIdentifier);
+      RemoveEnhancementPID(identifier);
       if (gEnhancementTasksByID[identifier] == finishedTask) {
         [gEnhancementTasksByID removeObjectForKey:identifier];
       }
       if (gEnhancementsStopping || !gEnhancementsStarted) return;
-      NSLog(@"[CodexLauncher] enhancement %@ exited (%d); retrying in 2 seconds",
-            identifier, finishedTask.terminationStatus);
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+      NSInteger attempt = gEnhancementRestartAttempts[identifier].integerValue + 1;
+      gEnhancementRestartAttempts[identifier] = @(attempt);
+      NSTimeInterval delay = 2.0;
+      for (NSInteger retry = 1; retry < attempt && delay < 30.0; retry++) delay *= 2.0;
+      if (delay > 30.0) delay = 30.0;
+      NSLog(@"[CodexLauncher] enhancement %@ exited (%d); retrying in %.0f seconds",
+            identifier, finishedTask.terminationStatus, delay);
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
         if (!gEnhancementsStopping && gEnhancementsStarted &&
             !gEnhancementTasksByID[identifier]) {
@@ -723,6 +859,9 @@ static BOOL StartEnhancements(void) {
   if (gEnhancementsStarted) return YES;
   gEnhancementsStarted = YES;
   gEnhancementsStopping = NO;
+  gEnhancementPreflightRequired = NO;
+  gEnhancementPreflightComplete = YES;
+  if (!gEnhancementRestartAttempts) gEnhancementRestartAttempts = [[NSMutableDictionary alloc] init];
 
   NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
     URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
@@ -744,11 +883,15 @@ static BOOL StartEnhancements(void) {
 
     NSArray<NSString *> *postStartCommand = enhancement[@"postStartCommand"];
     if ([postStartCommand isKindOfClass:[NSArray class]] && postStartCommand.count > 0) {
+      gEnhancementPreflightRequired = YES;
+      gEnhancementPreflightComplete = NO;
       NSDictionary *copy = [enhancement copy];
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
         if (!gEnhancementsStopping && gEnhancementsStarted) {
-          LaunchEnhancementCommand(copy, postStartCommand, @"post-start", NO);
+          if (!LaunchEnhancementCommand(copy, postStartCommand, @"preflight", NO)) {
+            CompleteEnhancementPreflight(NO);
+          }
         }
       });
     }
@@ -823,29 +966,93 @@ static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement) {
   return task;
 }
 
+static NSArray<NSNumber *> *DescendantProcessIDs(pid_t rootPID) {
+  if (rootPID <= 0) return @[];
+  NSTask *processList = [[NSTask alloc] init];
+  processList.launchPath = @"/bin/ps";
+  processList.arguments = @[@"-axo", @"pid=,ppid="];
+  NSPipe *pipe = [NSPipe pipe];
+  processList.standardOutput = pipe;
+  processList.standardError = [NSFileHandle fileHandleWithNullDevice];
+  @try {
+    [processList launch];
+  } @catch (NSException *exception) {
+    NSLog(@"[CodexLauncher] could not inspect enhancement process tree: %@", exception.reason);
+    return @[];
+  }
+  NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+  [processList waitUntilExit];
+  NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+  if (!output) return @[];
+
+  NSMutableDictionary<NSNumber *, NSMutableArray<NSNumber *> *> *children =
+    [NSMutableDictionary dictionary];
+  for (NSString *line in [output componentsSeparatedByString:@"\n"]) {
+    NSArray<NSString *> *parts = [line componentsSeparatedByCharactersInSet:
+      NSCharacterSet.whitespaceCharacterSet];
+    NSMutableArray<NSString *> *fields = [NSMutableArray array];
+    for (NSString *part in parts) if (part.length > 0) [fields addObject:part];
+    if (fields.count < 2) continue;
+    pid_t pid = (pid_t)fields[0].intValue;
+    pid_t parent = (pid_t)fields[1].intValue;
+    if (pid <= 0 || parent <= 0) continue;
+    NSNumber *parentNumber = @(parent);
+    if (!children[parentNumber]) children[parentNumber] = [NSMutableArray array];
+    [children[parentNumber] addObject:@(pid)];
+  }
+
+  NSMutableArray<NSNumber *> *queue = [NSMutableArray arrayWithObject:@(rootPID)];
+  NSMutableSet<NSNumber *> *seen = [NSMutableSet setWithObject:@(rootPID)];
+  NSMutableArray<NSNumber *> *descendants = [NSMutableArray array];
+  while (queue.count > 0) {
+    NSNumber *parent = queue.firstObject;
+    [queue removeObjectAtIndex:0];
+    for (NSNumber *child in children[parent]) {
+      if ([seen containsObject:child]) continue;
+      [seen addObject:child];
+      [descendants addObject:child];
+      [queue addObject:child];
+    }
+  }
+  return descendants;
+}
+
+static void TerminateProcessTree(NSTask *task) {
+  if (!task || task.processIdentifier <= 0) return;
+  NSArray<NSNumber *> *descendants = DescendantProcessIDs(task.processIdentifier);
+  for (NSNumber *pid in descendants) kill(pid.intValue, SIGTERM);
+  if (task.isRunning) [task terminate];
+
+  NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] + 3.0;
+  while (task.isRunning && [NSDate timeIntervalSinceReferenceDate] < deadline) {
+    usleep(50000); // 50ms
+  }
+  if (task.isRunning) {
+    kill(task.processIdentifier, SIGKILL);
+    NSLog(@"[CodexLauncher] force-killed enhancement pid %d", task.processIdentifier);
+  }
+  for (NSNumber *pid in descendants) kill(pid.intValue, SIGKILL);
+}
+
 static void StopEnhancements(void) {
   gEnhancementsStopping = YES;
   gEnhancementsStarted = NO;
-  if (!gEnhancementTasks) return;
-  for (NSTask *task in gEnhancementTasks) {
-    if (!task.isRunning) continue;
-    [task terminate];
-    NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] + 3.0;
-    while (task.isRunning && [NSDate timeIntervalSinceReferenceDate] < deadline) {
-      usleep(50000); // 50ms
-    }
-    if (task.isRunning) {
-      kill(task.processIdentifier, SIGKILL);
-      NSLog(@"[CodexLauncher] force-killed enhancement pid %d", task.processIdentifier);
-    }
+  NSMutableArray<NSTask *> *tasks = [NSMutableArray array];
+  if (gEnhancementTasks) [tasks addObjectsFromArray:gEnhancementTasks];
+  if (gEnhancementOneShotTasks) [tasks addObjectsFromArray:gEnhancementOneShotTasks];
+  for (NSTask *task in tasks) {
+    TerminateProcessTree(task);
   }
-  NSLog(@"[CodexLauncher] stopped %lu enhancements", (unsigned long)gEnhancementTasks.count);
+  NSLog(@"[CodexLauncher] stopped %lu enhancements", (unsigned long)tasks.count);
   [gEnhancementTasks removeAllObjects];
+  [gEnhancementOneShotTasks removeAllObjects];
   [gEnhancementTasksByID removeAllObjects];
-  for (NSTask *task in gConnectionTasks) {
-    if (task.isRunning) [task terminate];
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    RemoveEnhancementPID(enhancement[@"id"]);
   }
+  for (NSTask *task in [gConnectionTasks copy]) TerminateProcessTree(task);
   [gConnectionTasks removeAllObjects];
+  gEnhancementPidCount = 0;
 }
 
 static NSDictionary *RuntimeInfo(NSURL *runtimeURL) {
@@ -1074,6 +1281,20 @@ static BOOL CreatePrivateDirectory(NSString *path, NSString **failure) {
   return YES;
 }
 
+static BOOL AcquireLauncherLock(void) {
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  if (!CreatePrivateDirectory(supportPath, nil)) return NO;
+  NSString *lockPath = [supportPath stringByAppendingPathComponent:@"launcher.lock"];
+  gLauncherLockFD = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR, 0600);
+  if (gLauncherLockFD < 0) return NO;
+  if (flock(gLauncherLockFD, LOCK_EX | LOCK_NB) != 0) {
+    close(gLauncherLockFD);
+    gLauncherLockFD = -1;
+    return NO;
+  }
+  return YES;
+}
+
 static BOOL LinkSharedCodexPath(NSString *sourcePath,
                                 NSString *destinationPath,
                                 BOOL expectDirectory,
@@ -1191,6 +1412,70 @@ static BOOL LinkSharedCodexPath(NSString *sourcePath,
   return YES;
 }
 
+static BOOL IsolatePrivateCodexPath(NSString *sourcePath,
+                                    NSString *destinationPath,
+                                    BOOL expectDirectory,
+                                    NSString **failure) {
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  BOOL sourceIsDirectory = NO;
+  BOOL sourceExists = [fileManager fileExistsAtPath:sourcePath
+                                        isDirectory:&sourceIsDirectory];
+  if (sourceExists && sourceIsDirectory != expectDirectory) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The source Codex path %@ has the wrong type.", sourcePath];
+    return NO;
+  }
+
+  // Older builds linked the private runtime's sessions into ~/.codex. Detach
+  // only that private symlink before copying a snapshot, leaving the native
+  // ChatGPT app and CLI completely independent from this runtime's writers.
+  NSDictionary *attributes = [fileManager attributesOfItemAtPath:destinationPath error:nil];
+  if ([attributes[NSFileType] isEqualToString:NSFileTypeSymbolicLink]) {
+    NSError *removeError = nil;
+    if (![fileManager removeItemAtPath:destinationPath error:&removeError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The stale private Codex link %@ could not be removed.\n\n%@",
+        destinationPath, removeError.localizedDescription];
+      return NO;
+    }
+    attributes = nil;
+  }
+
+  if (attributes) {
+    BOOL destinationIsDirectory = NO;
+    if (![fileManager fileExistsAtPath:destinationPath isDirectory:&destinationIsDirectory] ||
+        destinationIsDirectory != expectDirectory) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The private Codex path %@ has the wrong type.", destinationPath];
+      return NO;
+    }
+    return YES;
+  }
+
+  if (!sourceExists) {
+    if (expectDirectory && ![fileManager createDirectoryAtPath:destinationPath
+                                       withIntermediateDirectories:YES
+                                                        attributes:@{NSFilePosixPermissions: @0700}
+                                                             error:nil]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The private Codex directory %@ could not be created.", destinationPath];
+      return NO;
+    }
+    return YES;
+  }
+
+  NSError *copyError = nil;
+  if (![fileManager copyItemAtPath:sourcePath toPath:destinationPath error:&copyError]) {
+    if (failure) *failure = [NSString stringWithFormat:
+      @"The private Codex path %@ could not be initialized.\n\n%@",
+      destinationPath, copyError.localizedDescription];
+    return NO;
+  }
+  if (expectDirectory) chmod(destinationPath.fileSystemRepresentation, 0700);
+  else chmod(destinationPath.fileSystemRepresentation, 0600);
+  return YES;
+}
+
 static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
   NSFileManager *fileManager = NSFileManager.defaultManager;
   NSString *sourceHome = [NSHomeDirectory() stringByAppendingPathComponent:@".codex"];
@@ -1236,24 +1521,32 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
     }
   }
 
-  // Keep desktop Codex threads and `codex` CLI sessions on the same rollout
-  // files under ~/.codex without sharing mutable SQLite databases.
-  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"sessions"],
-                           [codexHomePath stringByAppendingPathComponent:@"sessions"],
-                           YES,
-                           failure)) {
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSString *privateConfigPath = [codexHomePath stringByAppendingPathComponent:@"config.toml"];
+  if (!NormalizePrivateCodexConfig(privateConfigPath, supportPath)) {
+    if (failure) *failure = @"The private Codex config could not be normalized safely.";
     return NO;
   }
-  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"archived_sessions"],
-                           [codexHomePath stringByAppendingPathComponent:@"archived_sessions"],
-                           YES,
-                           failure)) {
+
+  // Keep this runtime fully independent from the native ChatGPT app. The
+  // previous symlink strategy made two app-servers write the same rollout
+  // files and was a common source of corruption and lockups.
+  if (!IsolatePrivateCodexPath([sourceHome stringByAppendingPathComponent:@"sessions"],
+                               [codexHomePath stringByAppendingPathComponent:@"sessions"],
+                               YES,
+                               failure)) {
     return NO;
   }
-  if (!LinkSharedCodexPath([sourceHome stringByAppendingPathComponent:@"session_index.jsonl"],
-                           [codexHomePath stringByAppendingPathComponent:@"session_index.jsonl"],
-                           NO,
-                           failure)) {
+  if (!IsolatePrivateCodexPath([sourceHome stringByAppendingPathComponent:@"archived_sessions"],
+                               [codexHomePath stringByAppendingPathComponent:@"archived_sessions"],
+                               YES,
+                               failure)) {
+    return NO;
+  }
+  if (!IsolatePrivateCodexPath([sourceHome stringByAppendingPathComponent:@"session_index.jsonl"],
+                               [codexHomePath stringByAppendingPathComponent:@"session_index.jsonl"],
+                               NO,
+                               failure)) {
     return NO;
   }
   return YES;
@@ -1384,6 +1677,7 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   NSArray<NSString *> *_commandLineArguments;
   NSMutableOrderedSet<NSString *> *_pendingURLs;
   BOOL _didPerformInitialLaunch;
+  NSUInteger _preflightWaitAttempts;
 }
 
 - (instancetype)initWithCommandLineArguments:(NSArray<NSString *> *)arguments {
@@ -1495,6 +1789,17 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 
 - (void)performInitialLaunch {
   if (_didPerformInitialLaunch) return;
+  if (gEnhancementPreflightRequired && !gEnhancementPreflightComplete) {
+    if (_preflightWaitAttempts++ < 80) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                     dispatch_get_main_queue(), ^{
+        [self performInitialLaunch];
+      });
+      return;
+    }
+    NSLog(@"[CodexLauncher] enhancement preflight timed out; starting Codex without waiting for OpenCodex");
+    gEnhancementPreflightComplete = YES;
+  }
   _didPerformInitialLaunch = YES;
 
   NSMutableArray<NSString *> *arguments = [_commandLineArguments mutableCopy];
@@ -1548,6 +1853,15 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     SanitizeEnvironment();
+
+    // LaunchServices can start a second hidden launcher for an incoming URL.
+    // Keep one owner for the service ports and forward that URL to the warm
+    // instance instead of creating a second OpenCodex/bridge stack.
+    if (!AcquireLauncherLock()) {
+      NSURL *forwardURL = [NSURL URLWithString:@"codex-rebuild://open"];
+      if (forwardURL) [[NSWorkspace sharedWorkspace] openURL:forwardURL];
+      return 0;
+    }
 
     signal(SIGTERM, HandleTerminationSignal);
     signal(SIGINT, HandleTerminationSignal);

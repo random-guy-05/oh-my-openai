@@ -75,6 +75,11 @@ function validateManifest(manifest, label = "manifest") {
       assert(typeof enhancement.codexHome === "string" && /^[A-Za-z0-9_-]+$/.test(enhancement.codexHome),
         `Enhancement ${enhancement.id} codexHome must be a safe directory name`);
     }
+    if (enhancement.healthPath !== undefined) {
+      assert(typeof enhancement.healthPath === "string" &&
+        enhancement.healthPath.startsWith("/") && !enhancement.healthPath.includes(".."),
+      `Enhancement ${enhancement.id} healthPath must be a safe absolute URL path`);
+    }
 
     if (enhancement.type === "service") {
       validateCommand(enhancement.startCommand, `${enhancement.id}.startCommand`);
