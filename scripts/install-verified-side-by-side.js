@@ -38,7 +38,11 @@ function customPids() {
     const match = line.match(/^\s*(\d+)\s+(.*)$/);
     if (!match) return [];
     const command = match[2];
-    return command.startsWith(runtimePrefix) || command.startsWith(launcherEnhancementsPrefix) || command === launcherExecutable
+    const isAnyCodexLauncher = /\/Contents\/MacOS\/CodexLauncher(?:\s|$)/.test(command);
+    const isAnyBundledEnhancement = command.includes("/Contents/Resources/enhancements/") &&
+      (command.includes("/opencodex/") || command.includes("/codex-chatgpt-web/"));
+    return command.startsWith(runtimePrefix) || command.startsWith(launcherEnhancementsPrefix) ||
+      command === launcherExecutable || isAnyCodexLauncher || isAnyBundledEnhancement
       ? [Number(match[1])]
       : [];
   });

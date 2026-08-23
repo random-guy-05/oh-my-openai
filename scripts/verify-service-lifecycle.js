@@ -80,6 +80,10 @@ async function main() {
   dashboard.stderr.on("data", (chunk) => output.push(chunk));
 
   try {
+    const dashboardHealth = await waitForStatus(`http://127.0.0.1:${dashboardPort}/healthz`);
+    assert.equal(dashboardHealth.status, "ok");
+    assert.equal(dashboardHealth.service, "codex-chatgpt-web-dashboard");
+    assert.equal(dashboardHealth.pid, dashboard.pid);
     const status = await waitForStatus(`http://127.0.0.1:${dashboardPort}/api/status`);
     assert.equal(status.dashboard?.service, "codex-chatgpt-web-dashboard");
     assert.equal(status.bridge?.running, true);

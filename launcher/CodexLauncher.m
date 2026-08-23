@@ -891,6 +891,8 @@ static void RemoveEnhancementPID(NSString *identifier) {
 // Forward declaration (defined later in this file).
 static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
 static void TerminateProcessTreeByPID(pid_t rootPID);
+static NSArray<NSNumber *> *DescendantProcessIDs(pid_t rootPID);
+static BOOL ProcessTreeContainsPID(pid_t rootPID, pid_t candidatePID);
 
 static void RotateEnhancementLog(NSString *identifier, NSString *suffix) {
   NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
@@ -956,6 +958,8 @@ static BOOL EnhancementAlreadyHealthy(NSDictionary *enhancement) {
     identityMatches = [health[@"status"] isEqualToString:@"ok"] &&
       [health[@"service"] isEqualToString:@"codex-chatgpt-web-dashboard"];
   }
+  pid_t healthPID = (pid_t)[health[@"pid"] intValue];
+  identityMatches = identityMatches && ProcessTreeContainsPID(pid, healthPID);
   if (!identityMatches) {
     TerminateProcessTreeByPID(pid);
     RemoveEnhancementPID(identifier);
@@ -1287,6 +1291,15 @@ static NSArray<NSNumber *> *DescendantProcessIDs(pid_t rootPID) {
   return descendants;
 }
 
+static BOOL ProcessTreeContainsPID(pid_t rootPID, pid_t candidatePID) {
+  if (rootPID <= 0 || candidatePID <= 0) return NO;
+  if (rootPID == candidatePID) return YES;
+  for (NSNumber *descendant in DescendantProcessIDs(rootPID)) {
+    if (descendant.intValue == candidatePID) return YES;
+  }
+  return NO;
+}
+
 static void TerminateProcessTree(NSTask *task) {
   if (!task || task.processIdentifier <= 0) return;
   NSArray<NSNumber *> *descendants = DescendantProcessIDs(task.processIdentifier);
@@ -1354,6 +1367,16 @@ static BOOL RequiredEnhancementsHealthy(NSString **failure) {
         @"The required service %@ has no valid health endpoint.", label];
       return NO;
     }
+    NSString *identifier = enhancement[@"id"];
+    NSTask *ownedTask = gEnhancementTasksByID[identifier];
+    pid_t ownedPID = ownedTask.isRunning
+      ? ownedTask.processIdentifier : (pid_t)[gAdoptedEnhancementPIDs[identifier] intValue];
+    if (ownedPID <= 0 || kill(ownedPID, 0) != 0) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"%@ could not be started. Another process may be using port %@. Quit other Codex test builds and try again.",
+        label, port];
+      return NO;
+    }
     NSString *url = [NSString stringWithFormat:@"http://127.0.0.1:%@%@", port, healthPath];
     NSString *output = nil;
     if (!RunTool(@"/usr/bin/curl", @[@"-fsS", @"--max-time", @"2", url], &output)) {
@@ -1368,6 +1391,13 @@ static BOOL RequiredEnhancementsHealthy(NSString **failure) {
     if (![health[@"status"] isEqualToString:@"ok"]) {
       if (failure) *failure = [NSString stringWithFormat:
         @"%@ returned an invalid health response. Codex was not opened with a broken model route.", label];
+      return NO;
+    }
+    pid_t healthPID = (pid_t)[health[@"pid"] intValue];
+    if (!ProcessTreeContainsPID(ownedPID, healthPID)) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"%@ is responding from an unrelated process on port %@. Codex was not opened with an ambiguous model route.",
+        label, port];
       return NO;
     }
   }

@@ -154,6 +154,8 @@ test("verified installer supports fresh installs and recoverable rollback", () =
   const installer = fs.readFileSync(path.join(__dirname, "install-verified-side-by-side.js"), "utf8");
   assert.match(installer, /requestedAsar \|\| sha256\(sourceAsar\)/);
   assert.match(installer, /launcherEnhancementsPrefix/);
+  assert.match(installer, /isAnyCodexLauncher/);
+  assert.match(installer, /isAnyBundledEnhancement/);
   assert.match(installer, /if \(fs\.existsSync\(installedLauncher\)\) fs\.renameSync/);
   assert.match(installer, /restoreInstalledTarget/);
   assert.match(installer, /failed-Codex-launcher\.app/);
@@ -197,6 +199,8 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(hub, /copyDiagnostics/);
   assert.match(hub, /Timer\.publish\(every: 5/);
   assert.match(launcher, /RequiredEnhancementsHealthy/);
+  assert.match(launcher, /ProcessTreeContainsPID/);
+  assert.match(launcher, /unrelated process on port/);
   assert.match(hub, /SetEnhancementRuntimeEnabled/);
   assert.match(launcher, /void SetEnhancementRuntimeEnabled/);
   assert.match(launcher, /RemoveChatGPTWebModels/);
