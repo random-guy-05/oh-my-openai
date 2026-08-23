@@ -124,6 +124,9 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /\/api\/connect/);
   assert.match(buildScript, /CODEX_REBUILD_ENHANCEMENTS_PATH/);
   assert.match(buildScript, /path\.resolve\(resourcesPath, '\.\.', '\.\.', '\.\.'/);
+  assert.match(buildScript, /getNativeStatusItemState!=null/);
+  assert.match(buildScript, /process\.platform===`darwin`&&e\.getNativeStatusItemState!=null/);
+  assert.match(buildScript, /native macOS status-item addon only understands/);
   assert.doesNotMatch(buildScript, /setApplicationMenu\(Wt\),OQ\(v\),setTimeout\(\(\)=>appendEnhancementsToApplicationMenu/);
   assert.match(buildScript, /OpenCodex Dashboard/);
   assert.match(buildScript, /Codex ChatGPT Web/);

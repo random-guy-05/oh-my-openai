@@ -555,6 +555,14 @@ function appendEnhancementsToApplicationMenu(menu, elModule) {
                 "if(process.platform===`darwin`){this.tray.on(`mouse-down`",
                 "if(process.platform===`darwin`){this.updatePersistentTrayMenu();this.tray.on(`mouse-down`"
               );
+              // The native macOS status-item addon only understands the
+              // upstream menu schema, which currently ends at Quit ChatGPT.
+              // Force the Electron tray implementation so this same
+              // right-side icon renders the enhancement submenu.
+              mainCode = mainCode.replace(
+                "process.platform===`darwin`&&e.getNativeStatusItemState!=null&&e.getComputerUseServiceProcessIdentifier!=null&&e.onNativeStatusItemMenuAction!=null",
+                "false"
+              );
               fs.writeFileSync(mainJsPath, mainCode, "utf8");
               console.log(`   [asar] successfully patched ${file} (tray + enhancements)`);
             }
