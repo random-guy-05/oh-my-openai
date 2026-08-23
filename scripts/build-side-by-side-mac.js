@@ -400,6 +400,7 @@ function getEnhancementsTrayMenu(elModule) {
 
     const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
     const subItems = [];
+    let codexChatGPTConnectAction = null;
     for (const enhancement of Array.isArray(manifest.enhancements) ? manifest.enhancements : []) {
       const ui = enhancement.ui || {};
       const label = ui.label || enhancement.id || 'Enhancement';
@@ -410,34 +411,36 @@ function getEnhancementsTrayMenu(elModule) {
       };
 
       if (ui.kind === 'web' && ui.url) {
+        const connectAction = () => {
+          try {
+            const request = net && net.request
+              ? net.request({
+                  method: 'POST',
+                  url: new URL('/api/connect', ui.url).toString()
+                })
+              : null;
+            if (request) {
+              request.on('error', () => {});
+              request.end();
+            } else {
+              return openUrl('connect');
+            }
+            if (!BrowserWindow) return openUrl('window');
+            const win = new BrowserWindow({
+              width: 1100,
+              height: 750,
+              title: label,
+              titleBarStyle: 'hiddenInset',
+              webPreferences: { nodeIntegration: false, contextIsolation: true }
+            });
+            win.loadURL(ui.url);
+          } catch { openUrl('connect'); }
+        };
+        if (enhancement.id === 'codex-chatgpt-web') codexChatGPTConnectAction = connectAction;
         const connectItem = Array.isArray(enhancement.connectCommand) && enhancement.connectCommand.length > 0
           ? [{
               label: enhancement.id === 'codex-chatgpt-web' ? 'Connect ChatGPT' : 'Connect',
-              click: () => {
-                try {
-                  const request = net && net.request
-                    ? net.request({
-                        method: 'POST',
-                        url: new URL('/api/connect', ui.url).toString()
-                      })
-                    : null;
-                  if (request) {
-                    request.on('error', () => {});
-                    request.end();
-                  } else {
-                    return openUrl('connect');
-                  }
-                  if (!BrowserWindow) return openUrl('window');
-                  const win = new BrowserWindow({
-                    width: 1100,
-                    height: 750,
-                    title: label,
-                    titleBarStyle: 'hiddenInset',
-                    webPreferences: { nodeIntegration: false, contextIsolation: true }
-                  });
-                  win.loadURL(ui.url);
-                } catch { openUrl('connect'); }
-              }
+              click: connectAction
             }]
           : [];
         subItems.push({
@@ -472,6 +475,13 @@ function getEnhancementsTrayMenu(elModule) {
     }
 
     if (subItems.length > 0) subItems.push({ type: 'separator' });
+    if (codexChatGPTConnectAction) {
+      subItems.push({
+        label: 'Connect to Codex ChatGPT Web',
+        click: codexChatGPTConnectAction
+      });
+      subItems.push({ type: 'separator' });
+    }
     subItems.push({
       label: 'Enhancements Settings…',
       click: () => { if (shell) shell.openExternal('codex-rebuild://settings'); }

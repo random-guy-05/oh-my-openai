@@ -188,7 +188,7 @@ async function handle(request) {
   if (url.pathname === "/api/status") {
     await ensureBridge();
     const health = await bridgeHealth();
-    const opencodex = await serviceHealth(openCodexPort, "/health");
+    const opencodex = await serviceHealth(openCodexPort, "/healthz");
     return json({
       dashboard: { status: "ok", port },
       opencodex,

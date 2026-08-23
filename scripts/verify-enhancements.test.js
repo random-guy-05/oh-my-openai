@@ -29,6 +29,7 @@ test("accepts the checked-in enhancement contract shape", () => {
   const result = validateManifest(checkedIn, "checked-in manifest");
   assert.deepEqual(result.ids, ["opencodex", "nerftrack", "codex-chatgpt-web"]);
   const web = checkedIn.enhancements.find((entry) => entry.id === "codex-chatgpt-web");
+  const services = checkedIn.enhancements.filter((entry) => entry.type === "service");
   assert.equal(web.type, "service");
   assert.equal(web.ui.kind, "web");
   assert.equal(web.ui.url, "http://127.0.0.1:17842");
@@ -47,6 +48,9 @@ test("accepts the checked-in enhancement contract shape", () => {
   assert.notEqual(web.enabled, false);
   assert.equal(web.toolCommand, undefined);
   assert.equal(web.appPath, undefined);
+  assert.deepEqual(services.map((entry) => entry.id), ["opencodex", "codex-chatgpt-web"]);
+  assert.deepEqual(services.map((entry) => entry.lifecycle), ["launcher", "launcher"]);
+  assert.notEqual(services[0].config.port, services[1].config.port);
 });
 
 test("accepts a native app enhancement contract", () => {
@@ -121,6 +125,7 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /codex-rebuild:enhancements-tray-v1/);
   assert.match(buildScript, /enhancement tray already integrated/);
   assert.match(buildScript, /Connect ChatGPT/);
+  assert.match(buildScript, /Connect to Codex ChatGPT Web/);
   assert.match(buildScript, /\/api\/connect/);
   assert.match(buildScript, /CODEX_REBUILD_ENHANCEMENTS_PATH/);
   assert.match(buildScript, /path\.resolve\(resourcesPath, '\.\.', '\.\.', '\.\.'/);
@@ -158,6 +163,7 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.doesNotMatch(dashboardServer, /--replace-codex-route/);
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
   assert.match(dashboardServer, /opencodex/);
+  assert.match(dashboardServer, /serviceHealth\(openCodexPort, "\/healthz"\)/);
   assert.match(dashboardServer, /osascript/);
   assert.match(dashboardServer, /setupProcess\?\.kill\("SIGTERM"\)/);
   assert.match(dashboardServer, /--acknowledge-unofficial/);

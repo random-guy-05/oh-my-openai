@@ -479,6 +479,21 @@ static void RebuildEnhancementMenu(void) {
   enhParent.submenu = enhSubmenu;
   [menu addItem:enhParent];
 
+  // Keep the sign-in action visible from the first menu level. The nested
+  // web submenu remains available, but users should not have to hunt for the
+  // connection flow when the bridge has not been configured yet.
+  for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+    if (![enhancement[@"id"] isEqualToString:@"codex-chatgpt-web"] ||
+        !EnhancementEnabled(enhancement[@"id"]) ||
+        ![enhancement[@"connectCommand"] isKindOfClass:[NSArray class]]) continue;
+    NSMenuItem *connect = MenuItemWithSymbol(@"Connect to Codex ChatGPT Web",
+                                              @selector(openEnhancementAction:),
+                                              @"person.crop.circle.badge.checkmark");
+    connect.representedObject = @[ @"codex-chatgpt-web", @"connect" ];
+    [menu addItem:connect];
+    break;
+  }
+
   [menu addItem:[NSMenuItem separatorItem]];
   NSMenuItem *settings = MenuItemWithSymbol(@"Settings…",
                                             @selector(showSettingsAction:),
