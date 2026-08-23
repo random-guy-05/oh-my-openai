@@ -22,7 +22,10 @@ function listen(server) {
   });
 }
 
-async function waitFor(url, timeoutMs = 45_000) {
+// A newly copied/signed Bun + OpenCodex tree can spend close to a minute in
+// macOS first-run verification. Match the product's bounded cold-start budget
+// so this release gate is strict without being timing-flaky on a fresh bundle.
+async function waitFor(url, timeoutMs = 120_000) {
   const deadline = Date.now() + timeoutMs;
   let reason = "not reachable";
   while (Date.now() < deadline) {

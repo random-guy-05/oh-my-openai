@@ -20,6 +20,10 @@ static NSString *const kPayloadName = @"Codex.payload";
 static NSString *const kCodexHomeName = @"CodexHome";
 static NSString *const kRuntimeBundleIdentifier = @"io.haleclipse.codexdesktop.runtime";
 static NSString *const kLauncherURLScheme = @"codex-rebuild";
+// A freshly installed, re-signed OpenCodex bundle can spend close to a minute
+// in macOS first-run verification. Keep startup fail-closed, but allow enough
+// time for that legitimate cold path before declaring the route broken.
+static const NSUInteger kRequiredServiceStartupAttempts = 480;
 
 // These are the Carbon kInternetEventClass, kAEGetURL, and keyDirectObject
 // four-character codes. Keeping the values local avoids linking Carbon solely
@@ -2163,7 +2167,12 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   (void)application;
   (void)hasVisibleWindows;
 
-  if (_didPerformInitialLaunch) [self launchWithArguments:@[]];
+  if (_didPerformInitialLaunch) {
+    [self launchWithArguments:@[]];
+  } else {
+    StartEnhancements();
+    [self performInitialLaunch];
+  }
   return NO;
 }
 
@@ -2242,13 +2251,18 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 
   NSString *requiredFailure = nil;
   if (!RequiredEnhancementsHealthy(&requiredFailure)) {
-    if (_requiredServiceWaitAttempts++ < 80) {
+    if (_requiredServiceWaitAttempts++ < kRequiredServiceStartupAttempts) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
         [self performInitialLaunch];
       });
       return;
     }
+    // Do not leave late-starting children orphaned if the bounded startup
+    // deadline is genuinely exceeded. A menu/reopen action can start a fresh,
+    // fully supervised attempt.
+    StopEnhancements();
+    _requiredServiceWaitAttempts = 0;
     ShowLaunchError(requiredFailure ?: @"A required enhancement service did not become ready.");
     return;
   }
@@ -2325,6 +2339,11 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 
 - (void)openCodexAppAction:(id)sender {
   (void)sender;
+  if (!_didPerformInitialLaunch) {
+    StartEnhancements();
+    [self performInitialLaunch];
+    return;
+  }
   [self launchWithArguments:@[]];
   NSRunningApplication *app = [NSRunningApplication runningApplicationsWithBundleIdentifier:kRuntimeBundleIdentifier].firstObject;
   if (app) {

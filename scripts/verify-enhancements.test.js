@@ -163,6 +163,11 @@ test("verified installer supports fresh installs and recoverable rollback", () =
   assert.match(installer, /stale-stages/);
 });
 
+test("provider routing gate allows the signed macOS cold-start window", () => {
+  const verifier = fs.readFileSync(path.join(__dirname, "verify-provider-routing.js"), "utf8");
+  assert.match(verifier, /timeoutMs = 120_000/);
+});
+
 test("native launchers dispatch from manifest capabilities", () => {
   const hub = fs.readFileSync(path.join(__dirname, "..", "launcher", "EnhancementHub.swift"), "utf8");
   const launcher = fs.readFileSync(path.join(__dirname, "..", "launcher", "CodexLauncher.m"), "utf8");
@@ -199,6 +204,8 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(hub, /copyDiagnostics/);
   assert.match(hub, /Timer\.publish\(every: 5/);
   assert.match(launcher, /RequiredEnhancementsHealthy/);
+  assert.match(launcher, /kRequiredServiceStartupAttempts = 480/);
+  assert.match(launcher, /StopEnhancements\(\);[\s\S]*_requiredServiceWaitAttempts = 0/);
   assert.match(launcher, /ProcessTreeContainsPID/);
   assert.match(launcher, /unrelated process on port/);
   assert.match(hub, /SetEnhancementRuntimeEnabled/);
