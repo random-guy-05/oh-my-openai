@@ -1,4 +1,18 @@
-# Codex Intel 26.803.41515 — August 10, 2026
+# Codex Intel 26.818.41509 — August 23, 2026
+
+## Product hardening
+
+- The embedded Codex runtime now routes its model selector through the
+  isolated OpenCodex catalog, exposing the custom OpenCode models without
+  modifying the official ChatGPT app.
+- The launcher owns the single right-side menu-bar surface; duplicate Electron
+  tray injection was removed so Settings opens in the existing native hub.
+- The ChatGPT Web bridge now has an app-private normalized config and a single
+  supervised process with a bounded slow-start window.
+- The launcher singleton lock is close-on-exec, so quitting and reopening the
+  app cannot be blocked by an inherited lock held by the embedded runtime.
+
+## What's new
 
 ## What's new
 

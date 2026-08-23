@@ -42,7 +42,7 @@ brew uninstall --zap --cask codex-desktop
 > with `homebrew-`. This is intentional — the cask lives alongside the build
 > scripts in the same repo.
 
-## Current build (26.803.41515)
+## Current build (26.818.41509)
 
 - **Stock runtime**: the runtime payload is the official OpenAI Intel app,
   uniquely identified (`io.haleclipse.codexdesktop.runtime`) and isolated
