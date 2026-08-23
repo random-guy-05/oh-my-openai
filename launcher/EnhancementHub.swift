@@ -88,8 +88,11 @@ struct Enhancement: Identifiable, Decodable {
   let resolvedVersion: String?
   let description: String?
   let config: Config?
+  let healthPath: String?
+  let readinessPath: String?
   let toolCommand: [String]?
   let startCommand: [String]?
+  let connectCommand: [String]?
   let appPath: String?
   let ui: UI?
 
@@ -101,6 +104,7 @@ struct Enhancement: Identifiable, Decodable {
     let label: String?
     let kind: String?
     let openLabel: String?
+    let connectLabel: String?
     let url: String?
   }
 
@@ -249,6 +253,7 @@ final class HubState: ObservableObject {
   }
 
   func canOpen(_ enhancement: Enhancement) -> Bool {
+    if enhancement.isService && isEnabled(enhancement.id) { return true }
     switch health(for: enhancement) {
     case .installed, .running: return true
     default: return false
@@ -291,15 +296,41 @@ final class HubState: ObservableObject {
 
       if enhancement.isService,
          let urlString = enhancement.ui?.url,
-         let url = URL(string: urlString) {
+         var components = URLComponents(string: urlString) {
+        components.path = enhancement.readinessPath ?? enhancement.healthPath ?? "/"
+        guard let url = components.url else {
+          health[enhancement.id] = .unavailable("Invalid health URL")
+          continue
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         request.timeoutInterval = 2.0
-        URLSession.shared.dataTask(with: request) { _, response, _ in
-          let isResponding = (response as? HTTPURLResponse)?.statusCode != nil
+        URLSession.shared.dataTask(with: request) { data, response, error in
+          let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+          var result: EnhancementHealth = .unavailable(error?.localizedDescription ?? "Service not responding")
+          if (200..<300).contains(statusCode), let data,
+             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let ready = payload["ready"] as? Bool {
+              if ready {
+                result = .running
+              } else if let account = payload["account"] as? [String: Any],
+                        account["status"] as? String != "ok" {
+                result = .unavailable("Codex account required")
+              } else if let browser = payload["browser"] as? [String: Any],
+                        browser["authenticated"] as? Bool != true {
+                result = .unavailable("ChatGPT sign-in required")
+              } else {
+                result = .unavailable("Route not ready")
+              }
+            } else if payload["status"] as? String == "ok",
+                      payload["service"] as? String != nil {
+              result = .running
+            } else {
+              result = .unavailable("Service health check failed")
+            }
+          }
           DispatchQueue.main.async {
-            self.health[enhancement.id] = isResponding ? .running : .unavailable("Service not responding")
+            self.health[enhancement.id] = result
           }
         }.resume()
       } else {
@@ -411,6 +442,28 @@ enum HubActions {
 
     // Default launcher
     launchTool(enhancement)
+  }
+
+  static func connect(_ enhancement: Enhancement) {
+    guard let urlString = enhancement.ui?.url,
+          let dashboardURL = URL(string: urlString),
+          let connectURL = URL(string: "/api/connect", relativeTo: dashboardURL)?.absoluteURL else {
+      showLaunchError("\(enhancement.label) is not configured", "The dashboard connection URL is invalid.")
+      return
+    }
+    var request = URLRequest(url: connectURL)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 5.0
+    URLSession.shared.dataTask(with: request) { _, response, error in
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      if error != nil || !(200..<300).contains(status) {
+        DispatchQueue.main.async {
+          showLaunchError("Could not start \(enhancement.label) connection",
+                          error?.localizedDescription ?? "The dashboard returned HTTP \(status).")
+        }
+      }
+    }.resume()
+    WebWindow.shared.show(title: enhancement.label, url: dashboardURL)
   }
 
   static func openTerminalForTool(_ enhancement: Enhancement, extraArguments: [String] = []) {
@@ -824,6 +877,14 @@ struct ExtensionCard: View {
           }
 
           Spacer()
+
+          if enhancement.connectCommand?.isEmpty == false {
+            Button(enhancement.ui?.connectLabel ?? "Connect") {
+              HubActions.connect(enhancement)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+          }
 
           Button {
             HubActions.open(enhancement, view: state.view(for: enhancement.id, options: enhancement.viewOptions))

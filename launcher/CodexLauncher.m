@@ -96,10 +96,8 @@ static BOOL RunTool(NSString *launchPath, NSArray<NSString *> *arguments,
 
   NSData *output = [pipe.fileHandleForReading readDataToEndOfFile];
   [task waitUntilExit];
-  if (task.terminationStatus == 0) return YES;
-
   if (diagnostic) *diagnostic = ConciseToolOutput(output);
-  return NO;
+  return task.terminationStatus == 0;
 }
 
 // ─── Enhancement UI (menu bar + settings) ───────────────────────
@@ -274,16 +272,87 @@ static BOOL ConfigurePrivateRuntimeRouting(NSString *configPath, NSString *suppo
 
   NSString *catalogPath = [supportPath stringByAppendingPathComponent:
     @"OpenCodexHome/opencodex-catalog.json"];
-  [kept addObject:[NSString stringWithFormat:
-    @"openai_base_url = \"http://127.0.0.1:10100/v1\""]];
-  [kept addObject:[NSString stringWithFormat:
-    @"model_catalog_json = \"%@\"", EscapeTOMLBasicString(catalogPath)]];
+
+  NSArray<NSString *> *routingLines = @[
+    @"openai_base_url = \"http://127.0.0.1:10100/v1\"",
+    [NSString stringWithFormat:
+      @"model_catalog_json = \"%@\"", EscapeTOMLBasicString(catalogPath)]
+  ];
+  NSUInteger firstTableIndex = NSNotFound;
+  for (NSUInteger index = 0; index < kept.count; index++) {
+    NSString *trimmed = [kept[index] stringByTrimmingCharactersInSet:
+      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([trimmed hasPrefix:@"["]) {
+      firstTableIndex = index;
+      break;
+    }
+  }
+  if (firstTableIndex == NSNotFound) {
+    [kept addObjectsFromArray:routingLines];
+  } else {
+    [kept insertObjects:routingLines
+              atIndexes:[NSIndexSet indexSetWithIndexesInRange:
+                NSMakeRange(firstTableIndex, routingLines.count)]];
+  }
 
   NSString *configured = [[kept componentsJoinedByString:@"\n"]
     stringByAppendingString:@"\n"];
   if (![configured writeToFile:configPath atomically:YES
                        encoding:NSUTF8StringEncoding error:nil]) return NO;
   chmod(configPath.fileSystemRepresentation, 0600);
+  return YES;
+}
+
+// The Codex model picker reads CODEX_HOME/models_cache.json directly. The
+// OpenCodex service owns the fresh catalog, so copy that cache into the
+// isolated runtime home on every launch. Routing config alone is not enough:
+// it can make requests reach OpenCodex while leaving the picker with the
+// seven-model native cache.
+static BOOL PrivateRuntimeModelCacheReady(NSString *supportPath) {
+  NSString *sourcePath = [supportPath stringByAppendingPathComponent:
+    @"OpenCodexHome/models_cache.json"];
+  NSData *sourceData = [NSData dataWithContentsOfFile:sourcePath];
+  if (sourceData.length == 0) return NO;
+  id parsed = [NSJSONSerialization JSONObjectWithData:sourceData options:0 error:nil];
+  return [parsed isKindOfClass:[NSDictionary class]] &&
+    [parsed[@"models"] isKindOfClass:[NSArray class]] &&
+    [parsed[@"models"] count] > 0;
+}
+
+static BOOL SynchronizePrivateRuntimeModelCache(NSString *supportPath,
+                                                NSString *codexHomePath) {
+  NSString *sourcePath = [supportPath stringByAppendingPathComponent:
+    @"OpenCodexHome/models_cache.json"];
+  NSData *sourceData = [NSData dataWithContentsOfFile:sourcePath];
+  if (sourceData.length == 0) {
+    // OpenCodex may still be warming its first catalog. Keep the existing
+    // private cache intact and let the next app launch retry the sync.
+    NSLog(@"[CodexLauncher] OpenCodex model cache is not ready at %@", sourcePath);
+    return NO;
+  }
+
+  NSError *parseError = nil;
+  id parsed = [NSJSONSerialization JSONObjectWithData:sourceData
+                                               options:0
+                                                 error:&parseError];
+  if (![parsed isKindOfClass:[NSDictionary class]] ||
+      ![parsed[@"models"] isKindOfClass:[NSArray class]] ||
+      [parsed[@"models"] count] == 0) {
+    NSLog(@"[CodexLauncher] Ignoring invalid OpenCodex model cache %@: %@",
+          sourcePath, parseError.localizedDescription ?: @"missing models array");
+    return NO;
+  }
+
+  NSString *destinationPath = [codexHomePath stringByAppendingPathComponent:
+    @"models_cache.json"];
+  if (![sourceData writeToFile:destinationPath atomically:YES]) {
+    NSLog(@"[CodexLauncher] Could not synchronize private model cache to %@",
+          destinationPath);
+    return NO;
+  }
+  chmod(destinationPath.fileSystemRepresentation, 0600);
+  NSLog(@"[CodexLauncher] Synchronized %lu models into %@",
+        (unsigned long)[parsed[@"models"] count], destinationPath);
   return YES;
 }
 
@@ -329,7 +398,9 @@ static NSString *PrepareOpenCodexHome(NSString *supportPath) {
   NSMutableDictionary *providers = [config[@"providers"] isKindOfClass:[NSDictionary class]]
     ? [config[@"providers"] mutableCopy] : [NSMutableDictionary dictionary];
   providers[@"codex-chatgpt-web"] = @{
-    @"adapter": @"openai-chat",
+    // codex-chatgpt-web implements the Responses API only. The chat adapter
+    // appends /chat/completions and guarantees a 404 from this bridge.
+    @"adapter": @"openai-responses",
     @"baseUrl": @"http://127.0.0.1:17841/v1",
     @"authMode": @"forward",
     @"allowPrivateNetwork": @YES,
@@ -557,15 +628,22 @@ static void RebuildEnhancementMenu(void) {
 
   [menu addItem:[NSMenuItem separatorItem]];
 
-  // Keep the always-on services at the first menu level. A nested
-  // "Enhancements" menu made them technically present but practically
-  // invisible when users clicked the ChatGPT-shaped status icon.
+  // Keep one visible section label while leaving the actual services at the
+  // first menu level. This avoids the old stack of nested enhancement menus
+  // without making the feature set look like unrelated menu items.
+  NSMenuItem *section = [[NSMenuItem alloc] initWithTitle:@"✦ Enhancements"
+                                                    action:nil
+                                             keyEquivalent:@""];
+  section.enabled = NO;
+  [menu addItem:section];
+  NSUInteger visibleEnhancementCount = 0;
   for (NSDictionary *enhancement in LoadEnhancementManifest()) {
     NSDictionary *ui = enhancement[@"ui"];
     if (!ui) continue;
     if (!EnhancementEnabled(enhancement[@"id"])) continue;
     NSString *identifier = enhancement[@"id"];
     NSString *kind = ui[@"kind"];
+    visibleEnhancementCount++;
     if ([kind isEqualToString:@"web"]) {
       NSString *title = ui[@"openLabel"];
       if ([identifier isEqualToString:@"opencodex"]) {
@@ -588,6 +666,13 @@ static void RebuildEnhancementMenu(void) {
       item.representedObject = @[identifier, view];
       [menu addItem:item];
     }
+  }
+  if (visibleEnhancementCount == 0) {
+    NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:@"No enhancements available"
+                                                    action:nil
+                                             keyEquivalent:@""];
+    empty.enabled = NO;
+    [menu addItem:empty];
   }
 
   // Keep the sign-in action beside the dashboard action. Users should never
@@ -676,6 +761,11 @@ static void InstallEnhancementStatusItem(void) {
   if (icon) {
     gEnhancementStatusItem.button.image = icon;
     gEnhancementStatusItem.button.imageScaling = NSImageScaleProportionallyDown;
+    // The official ChatGPT app can be running beside this wrapper and owns a
+    // nearly identical status icon. Keep the familiar mark, but label this
+    // item so users cannot accidentally open ChatGPT's "Quit ChatGPT" menu.
+    gEnhancementStatusItem.button.title = @" Codex";
+    gEnhancementStatusItem.button.imagePosition = NSImageLeft;
   } else {
     gEnhancementStatusItem.button.title = @"Codex";
   }
@@ -698,6 +788,7 @@ static NSMutableArray<NSTask *> *gEnhancementTasks = nil;
 static NSMutableArray<NSTask *> *gEnhancementOneShotTasks = nil;
 static NSMutableDictionary<NSString *, NSTask *> *gEnhancementTasksByID = nil;
 static NSMutableDictionary<NSString *, NSNumber *> *gEnhancementRestartAttempts = nil;
+static NSMutableDictionary<NSString *, NSNumber *> *gAdoptedEnhancementPIDs = nil;
 static NSMutableArray<NSTask *> *gConnectionTasks = nil;
 static BOOL gEnhancementPreflightRequired = NO;
 static BOOL gEnhancementPreflightComplete = YES;
@@ -753,6 +844,27 @@ static void RemoveEnhancementPID(NSString *identifier) {
   [[NSFileManager defaultManager] removeItemAtPath:EnhancementPIDPath(identifier) error:nil];
 }
 
+// Forward declaration (defined later in this file).
+static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
+static void TerminateProcessTreeByPID(pid_t rootPID);
+
+static void RotateEnhancementLog(NSString *identifier, NSString *suffix) {
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSString *directory = [supportPath stringByAppendingPathComponent:@"enhancements"];
+  CreatePrivateDirectory(directory, nil);
+  NSString *name = suffix.length > 0
+    ? [NSString stringWithFormat:@"%@-%@.log", identifier, suffix]
+    : [NSString stringWithFormat:@"%@.log", identifier];
+  NSString *path = [directory stringByAppendingPathComponent:name];
+  NSString *previous = [path stringByAppendingString:@".previous"];
+  NSFileManager *manager = NSFileManager.defaultManager;
+  [manager removeItemAtPath:previous error:nil];
+  if ([manager fileExistsAtPath:path]) {
+    [manager moveItemAtPath:path toPath:previous error:nil];
+  }
+  [manager createFileAtPath:path contents:nil attributes:@{NSFilePosixPermissions: @0600}];
+}
+
 static BOOL EnhancementAlreadyHealthy(NSDictionary *enhancement) {
   NSString *identifier = enhancement[@"id"];
   NSNumber *port = enhancement[@"config"][@"port"];
@@ -769,8 +881,46 @@ static BOOL EnhancementAlreadyHealthy(NSDictionary *enhancement) {
     RemoveEnhancementPID(identifier);
     return NO;
   }
+  NSArray<NSString *> *command = enhancement[@"startCommand"];
+  NSString *expectedBinary = command.count > 0
+    ? ResolveEnhancementBinary(EnhancementDirectory(enhancement), command[0]) : nil;
+  NSString *processCommand = nil;
+  if (expectedBinary.length == 0 ||
+      !RunTool(@"/bin/ps", @[@"-p", [NSString stringWithFormat:@"%d", pid],
+                              @"-o", @"command="], &processCommand) ||
+      ![processCommand containsString:expectedBinary]) {
+    NSLog(@"[CodexLauncher] refusing to adopt %@ pid %d because its executable does not match %@",
+          identifier, pid, expectedBinary ?: @"the bundled service");
+    RemoveEnhancementPID(identifier);
+    return NO;
+  }
   NSString *url = [NSString stringWithFormat:@"http://127.0.0.1:%@%@", port, healthPath];
-  return RunTool(@"/usr/bin/curl", @[@"-fsS", @"--max-time", @"1", url], nil);
+  NSString *healthOutput = nil;
+  if (!RunTool(@"/usr/bin/curl", @[@"-fsS", @"--max-time", @"2", url], &healthOutput)) {
+    TerminateProcessTreeByPID(pid);
+    RemoveEnhancementPID(identifier);
+    return NO;
+  }
+  NSData *healthData = [healthOutput dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *health = healthData.length > 0
+    ? [NSJSONSerialization JSONObjectWithData:healthData options:0 error:nil] : nil;
+  BOOL identityMatches = NO;
+  if ([identifier isEqualToString:@"opencodex"]) {
+    identityMatches = [health[@"status"] isEqualToString:@"ok"] &&
+      [health[@"service"] isEqualToString:@"opencodex"];
+  } else if ([identifier isEqualToString:@"codex-chatgpt-web"]) {
+    identityMatches = [health[@"status"] isEqualToString:@"ok"] &&
+      [health[@"service"] isEqualToString:@"codex-chatgpt-web-dashboard"];
+  }
+  if (!identityMatches) {
+    TerminateProcessTreeByPID(pid);
+    RemoveEnhancementPID(identifier);
+    return NO;
+  }
+  if (!gAdoptedEnhancementPIDs) gAdoptedEnhancementPIDs = [[NSMutableDictionary alloc] init];
+  gAdoptedEnhancementPIDs[identifier] = @(pid);
+  TrackEnhancementPid(pid);
+  return YES;
 }
 
 // Forward declaration (defined later in this file)
@@ -818,6 +968,12 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
   if ([identifier isEqualToString:@"opencodex"]) {
     environment[@"OPENCODEX_HOME"] = PrepareOpenCodexHome(supportPath);
   } else if ([identifier isEqualToString:@"codex-chatgpt-web"]) {
+    // The bridge reads the account owned by this side-by-side Codex runtime.
+    // Browser/session state remains in a separate bridge home. Never copy the
+    // official ~/.codex OAuth file: duplicated refresh tokens can invalidate
+    // either application while both are running.
+    environment[@"CODEX_HOME"] =
+      [supportPath stringByAppendingPathComponent:kCodexHomeName];
     environment[@"CODEX_CHATGPT_WEB_HOME"] = EnhancementCodexHome(enhancement, supportPath);
     environment[@"CODEX_CHATGPT_WEB_PORT"] = @"17841";
   }
@@ -874,6 +1030,11 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
       if (gEnhancementsStopping || !gEnhancementsStarted) return;
       NSInteger attempt = gEnhancementRestartAttempts[identifier].integerValue + 1;
       gEnhancementRestartAttempts[identifier] = @(attempt);
+      if (attempt > 5) {
+        NSLog(@"[CodexLauncher] enhancement %@ stopped after 5 failed restart attempts; relaunch Codex to retry",
+              identifier);
+        return;
+      }
       NSTimeInterval delay = 2.0;
       for (NSInteger retry = 1; retry < attempt && delay < 30.0; retry++) delay *= 2.0;
       if (delay > 30.0) delay = 30.0;
@@ -888,6 +1049,12 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
       });
     });
   };
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(60.0 * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+    if (task.isRunning && gEnhancementTasksByID[identifier] == task) {
+      gEnhancementRestartAttempts[identifier] = @0;
+    }
+  });
   NSLog(@"[CodexLauncher] enhancement %@ started (pid %d)", identifier, task.processIdentifier);
   return YES;
 }
@@ -899,6 +1066,8 @@ static BOOL StartEnhancements(void) {
   gEnhancementPreflightRequired = NO;
   gEnhancementPreflightComplete = YES;
   if (!gEnhancementRestartAttempts) gEnhancementRestartAttempts = [[NSMutableDictionary alloc] init];
+  [gEnhancementRestartAttempts removeAllObjects];
+  if (!gAdoptedEnhancementPIDs) gAdoptedEnhancementPIDs = [[NSMutableDictionary alloc] init];
 
   NSURL *manifestURL = [NSBundle.mainBundle.bundleURL
     URLByAppendingPathComponent:@"Contents/Resources/enhancements/manifest.json"];
@@ -916,6 +1085,9 @@ static BOOL StartEnhancements(void) {
     if (![identifier isKindOfClass:[NSString class]] ||
         ![startCommand isKindOfClass:[NSArray class]] || startCommand.count == 0) continue;
     if (!EnhancementEnabled(identifier)) continue;
+    RotateEnhancementLog(identifier, @"");
+    RotateEnhancementLog(identifier, @"preflight");
+    RotateEnhancementLog(identifier, @"connect");
     LaunchEnhancementCommand(enhancement, startCommand, @"", YES);
 
     NSArray<NSString *> *postStartCommand = enhancement[@"postStartCommand"];
@@ -948,7 +1120,13 @@ static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement) {
 
   NSString *id = enhancement[@"id"];
   NSString *enhDir = EnhancementDirectory(enhancement);
-  NSString *binary = ResolveEnhancementBinary(enhDir, connectCommand[0]);
+  BOOL dashboardManagedConnection = [id isEqualToString:@"codex-chatgpt-web"];
+  NSString *binary = dashboardManagedConnection
+    ? @"/usr/bin/curl" : ResolveEnhancementBinary(enhDir, connectCommand[0]);
+  NSArray<NSString *> *connectionArguments = dashboardManagedConnection
+    ? @[@"-fsS", @"--max-time", @"5", @"-X", @"POST",
+        @"http://127.0.0.1:17842/api/connect"]
+    : [connectCommand subarrayWithRange:NSMakeRange(1, connectCommand.count - 1)];
   if (!binary) {
     NSLog(@"[CodexLauncher] connection binary not found for %@: %@", id, connectCommand[0]);
     return nil;
@@ -971,10 +1149,16 @@ static NSTask *LaunchConnectionEnhancement(NSDictionary *enhancement) {
 
   NSTask *task = [[NSTask alloc] init];
   task.launchPath = binary;
-  task.arguments = [connectCommand subarrayWithRange:NSMakeRange(1, connectCommand.count - 1)];
+  task.arguments = connectionArguments;
   task.currentDirectoryURL = [NSURL fileURLWithPath:enhDir isDirectory:YES];
   NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
-   environment[@"CODEX_HOME"] = EnhancementCodexHome(enhancement, supportPath);
+  environment[@"CODEX_HOME"] = EnhancementCodexHome(enhancement, supportPath);
+  if ([id isEqualToString:@"codex-chatgpt-web"]) {
+    environment[@"CODEX_HOME"] =
+      [supportPath stringByAppendingPathComponent:kCodexHomeName];
+    environment[@"CODEX_CHATGPT_WEB_HOME"] = EnhancementCodexHome(enhancement, supportPath);
+    environment[@"CODEX_CHATGPT_WEB_PORT"] = @"17841";
+  }
   environment[@"CODEX_ELECTRON_USER_DATA_PATH"] =
     [supportPath stringByAppendingPathComponent:@"Profile"];
   task.environment = environment;
@@ -1071,6 +1255,19 @@ static void TerminateProcessTree(NSTask *task) {
   for (NSNumber *pid in descendants) kill(pid.intValue, SIGKILL);
 }
 
+static void TerminateProcessTreeByPID(pid_t rootPID) {
+  if (rootPID <= 0 || kill(rootPID, 0) != 0) return;
+  NSArray<NSNumber *> *descendants = DescendantProcessIDs(rootPID);
+  for (NSNumber *pid in descendants) kill(pid.intValue, SIGTERM);
+  kill(rootPID, SIGTERM);
+  NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] + 3.0;
+  while (kill(rootPID, 0) == 0 && [NSDate timeIntervalSinceReferenceDate] < deadline) {
+    usleep(50000);
+  }
+  if (kill(rootPID, 0) == 0) kill(rootPID, SIGKILL);
+  for (NSNumber *pid in descendants) kill(pid.intValue, SIGKILL);
+}
+
 static void StopEnhancements(void) {
   gEnhancementsStopping = YES;
   gEnhancementsStarted = NO;
@@ -1080,6 +1277,11 @@ static void StopEnhancements(void) {
   for (NSTask *task in tasks) {
     TerminateProcessTree(task);
   }
+  for (NSNumber *pid in gAdoptedEnhancementPIDs.allValues) {
+    TerminateProcessTreeByPID(pid.intValue);
+    UntrackEnhancementPid(pid.intValue);
+  }
+  [gAdoptedEnhancementPIDs removeAllObjects];
   NSLog(@"[CodexLauncher] stopped %lu enhancements", (unsigned long)tasks.count);
   [gEnhancementTasks removeAllObjects];
   [gEnhancementOneShotTasks removeAllObjects];
@@ -1522,10 +1724,10 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
   NSFileManager *fileManager = NSFileManager.defaultManager;
   NSString *sourceHome = [NSHomeDirectory() stringByAppendingPathComponent:@".codex"];
 
-  // Carry the existing account and user configuration into the isolated home
-  // once. Runtime databases stay private so the desktop app and CLI can keep
-  // independent SQLite writers, while conversation rollouts are shared below.
-  for (NSString *name in @[@"auth.json", @"config.toml"]) {
+  // Seed user preferences once, but never duplicate OAuth credentials. The
+  // side-by-side runtime owns an independent login so refresh-token rotation
+  // cannot sign the official Codex app out (or vice versa).
+  for (NSString *name in @[@"config.toml"]) {
     NSString *sourcePath = [sourceHome stringByAppendingPathComponent:name];
     NSString *destinationPath = [codexHomePath stringByAppendingPathComponent:name];
     if ([fileManager fileExistsAtPath:destinationPath]) continue;
@@ -1573,6 +1775,10 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
     if (failure) *failure = @"The private Codex model catalog route could not be configured safely.";
     return NO;
   }
+  // The OpenCodex post-start sync can finish just after the runtime launch
+  // gate. The delegate waits for a ready source cache; this non-fatal retry
+  // keeps a slow first sync from preventing Codex from opening.
+  SynchronizePrivateRuntimeModelCache(supportPath, codexHomePath);
 
   // Keep this runtime fully independent from the native ChatGPT app. The
   // previous symlink strategy made two app-servers write the same rollout
@@ -1651,6 +1857,12 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
     NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:
       runtimePath,
       [@"--user-data-dir=" stringByAppendingString:profilePath],
+      // The private, re-signed runtime must not prompt for the official
+      // ChatGPT keychain item on every rebuild. Its profile is already
+      // isolated under CodexDesktop-Rebuild, so use Chromium's local store
+      // for runtime-only secrets and keep startup non-interactive.
+      @"--password-store=basic",
+      @"--use-mock-keychain",
       nil];
     [arguments addObjectsFromArray:forwardedArguments];
 
@@ -1724,6 +1936,8 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   NSMutableOrderedSet<NSString *> *_pendingURLs;
   BOOL _didPerformInitialLaunch;
   NSUInteger _preflightWaitAttempts;
+  NSUInteger _modelCacheWaitAttempts;
+  BOOL _modelRefreshRestartPending;
 }
 
 - (instancetype)initWithCommandLineArguments:(NSArray<NSString *> *)arguments {
@@ -1743,10 +1957,9 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   // establishes the isolated profile before Electron's singleton lock.
   ClaimLauncherURLScheme();
 
-  // Keep the enhancements in the right-side Codex status item, where users
-  // expect a menu-bar utility to live; do not duplicate this menu in the
-  // top-left application menu.
-  InstallEnhancementStatusItem();
+  // The embedded Codex runtime owns the visible tray item. Its upstream
+  // Electron menu is patched to include the enhancements, while the native
+  // launcher menu remains available only as a fallback for older builds.
   // Start the service layer immediately. It must not depend on the Electron
   // window successfully launching, and each service is supervised independently.
   StartEnhancements();
@@ -1793,6 +2006,11 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 
   if ([urlString containsString:@"analytics"] || [urlString containsString:@"usage"]) {
     ShowEnhancementAnalytics();
+    return;
+  }
+
+  if ([components.host caseInsensitiveCompare:@"refresh-models"] == NSOrderedSame) {
+    [self restartRuntimeForModelRefresh];
     return;
   }
 
@@ -1846,6 +2064,22 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
     NSLog(@"[CodexLauncher] enhancement preflight timed out; starting Codex without waiting for OpenCodex");
     gEnhancementPreflightComplete = YES;
   }
+
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSString *codexHomePath = [supportPath stringByAppendingPathComponent:kCodexHomeName];
+  if (gEnhancementPreflightRequired &&
+      !PrivateRuntimeModelCacheReady(supportPath) &&
+      _modelCacheWaitAttempts++ < 80) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+      [self performInitialLaunch];
+    });
+    return;
+  }
+  if (gEnhancementPreflightRequired &&
+      !SynchronizePrivateRuntimeModelCache(supportPath, codexHomePath)) {
+    NSLog(@"[CodexLauncher] model cache was not ready before the startup deadline; using the last private cache");
+  }
   _didPerformInitialLaunch = YES;
 
   NSMutableArray<NSString *> *arguments = [_commandLineArguments mutableCopy];
@@ -1862,6 +2096,37 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
     return;
   }
   ActivateRuntimeApplication(0);
+}
+
+- (void)restartRuntimeForModelRefresh {
+  if (_modelRefreshRestartPending) return;
+  _modelRefreshRestartPending = YES;
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  SynchronizePrivateRuntimeModelCache(
+    supportPath, [supportPath stringByAppendingPathComponent:kCodexHomeName]);
+  for (NSRunningApplication *application in
+       [NSRunningApplication runningApplicationsWithBundleIdentifier:kRuntimeBundleIdentifier]) {
+    if (!application.terminated) [application terminate];
+  }
+  [self completeRuntimeModelRefreshRestart:@0];
+}
+
+- (void)completeRuntimeModelRefreshRestart:(NSNumber *)attemptNumber {
+  NSUInteger attempt = attemptNumber.unsignedIntegerValue;
+  if (RuntimeIsRunning()) {
+    if (attempt < 24) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                     dispatch_get_main_queue(), ^{
+        [self completeRuntimeModelRefreshRestart:@(attempt + 1)];
+      });
+      return;
+    }
+    NSLog(@"[CodexLauncher] private runtime did not quit for model refresh; leaving it running");
+    _modelRefreshRestartPending = NO;
+    return;
+  }
+  _modelRefreshRestartPending = NO;
+  [self launchWithArguments:@[]];
 }
 
 // ─── Enhancement menu/settings actions ─────────────────────────

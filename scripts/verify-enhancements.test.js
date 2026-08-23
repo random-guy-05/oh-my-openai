@@ -54,7 +54,8 @@ test("accepts the checked-in enhancement contract shape", () => {
   assert.deepEqual(services.map((entry) => entry.lifecycle), ["launcher", "launcher"]);
   assert.notEqual(services[0].config.port, services[1].config.port);
   assert.equal(opencodex.healthPath, "/healthz");
-  assert.equal(web.healthPath, "/api/status");
+  assert.equal(web.healthPath, "/healthz");
+  assert.equal(web.readinessPath, "/api/status");
 });
 
 test("accepts a native app enhancement contract", () => {
@@ -136,7 +137,9 @@ test("packaged tray integration does not depend on developer-machine paths", () 
   assert.match(buildScript, /getNativeStatusItemState!=null/);
   assert.match(buildScript, /process\.platform===`darwin`&&e\.getNativeStatusItemState!=null/);
   assert.match(buildScript, /native macOS status-item addon only understands/);
-  assert.match(buildScript, /useEmbeddedElectronTray = false/);
+  assert.match(buildScript, /useEmbeddedElectronTray = true/);
+  assert.match(buildScript, /disabled upstream Quit ChatGPT status item/);
+  assert.match(buildScript, /upstreamNativeStatusItemPattern/);
   assert.doesNotMatch(buildScript, /setApplicationMenu\(Wt\),OQ\(v\),setTimeout\(\(\)=>appendEnhancementsToApplicationMenu/);
   assert.match(buildScript, /OpenCodex Dashboard/);
   assert.match(buildScript, /Codex ChatGPT Web/);
@@ -152,12 +155,33 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(launcher, /ConfigurePrivateRuntimeRouting/);
   assert.match(launcher, /openai_base_url/);
   assert.match(launcher, /model_catalog_json/);
+  assert.match(launcher, /firstTableIndex/);
+  assert.match(launcher, /insertObjects:routingLines/);
+  assert.match(launcher, /SynchronizePrivateRuntimeModelCache/);
+  assert.match(launcher, /--password-store=basic/);
+  assert.match(launcher, /--use-mock-keychain/);
+  assert.match(launcher, /PrivateRuntimeModelCacheReady/);
+  assert.match(launcher, /OpenCodexHome\/models_cache\.json/);
+  assert.match(launcher, /models_cache\.json/);
+  assert.match(launcher, /button\.title = @" Codex"/);
+  assert.match(launcher, /section\.enabled = NO/);
+  assert.match(launcher, /✦ Enhancements/);
+  assert.doesNotMatch(launcher, /InstallEnhancementStatusItem\(\);/);
   assert.match(launcher, /O_CLOEXEC/);
+  const catalogHook = fs.readFileSync(
+    path.join(__dirname, "..", "assets", "opencodex-runtime", "post-start.js"),
+    "utf8",
+  );
+  assert.match(catalogHook, /waitForOpenCodexCache/);
+  assert.match(catalogHook, /OpenCodex's catalog/);
+  assert.match(catalogHook, /runtimeCachePath/);
   assert.match(hub, /enhancement\.kind == "web"/);
   assert.match(hub, /enhancement\.kind == "app"/);
   assert.match(hub, /enhancement\.kind == "terminal"/);
   assert.doesNotMatch(hub, /enhancement\.id == "(?:opencodex|codex-chatgpt-web)"/);
   assert.match(hub, /WebWindow\.shared\.show\(title: enhancement\.label/);
+  assert.match(hub, /static func connect\(_ enhancement: Enhancement\)/);
+  assert.match(hub, /enhancement\.connectCommand\?\.isEmpty == false/);
   assert.match(hub, /WKNavigationDelegate/);
   assert.match(hub, /NSWorkspace\.shared\.open\(url\)/);
   const dashboard = fs.readFileSync(
@@ -178,8 +202,12 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(loginFlow, /--browser-only/);
   assert.doesNotMatch(dashboardServer, /--replace-codex-route/);
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
-  assert.match(dashboardServer, /syncCodexAuth/);
+  assert.doesNotMatch(dashboardServer, /syncCodexAuth|sourceAuthPath|copyFileSync/);
   assert.match(dashboardServer, /accountRouteHealth/);
+  assert.match(dashboardServer, /browserSessionHealth/);
+  assert.match(dashboardServer, /ready,/);
+  assert.match(dashboardServer, /refreshModelCatalogs/);
+  assert.match(dashboardServer, /codex-rebuild:\/\/refresh-models/);
   assert.match(dashboardServer, /CODEX_HOME: codexHome/);
   assert.match(dashboardServer, /opencodex/);
   assert.match(dashboardServer, /serviceHealth\(openCodexPort, "\/healthz"\)/);
@@ -199,6 +227,9 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(dashboardServer, /login\.js/);
   assert.match(launcher, /connectCommand/);
   assert.match(launcher, /LaunchConnectionEnhancement/);
+  assert.match(launcher, /dashboardManagedConnection/);
+  assert.match(launcher, /127\.0\.0\.1:17842\/api\/connect/);
+  assert.match(launcher, /restartRuntimeForModelRefresh/);
   assert.match(launcher, /ActivateChromeLoginWindow/);
   assert.match(launcher, /EnhancementCodexHome/);
   assert.match(launcher, /PrepareOpenCodexHome/);
@@ -209,7 +240,9 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(launcher, /DescendantProcessIDs/);
   assert.match(launcher, /TerminateProcessTree/);
   assert.match(launcher, /providers\[@"codex-chatgpt-web"\]/);
-  assert.match(launcher, /providers\[@"codex-chatgpt-web"\]/);
+  assert.match(launcher, /@"adapter": @"openai-responses"/);
+  assert.doesNotMatch(launcher, /@\[@"auth\.json", @"config\.toml"\]/);
+  assert.match(launcher, /stringByAppendingPathComponent:kCodexHomeName/);
   assert.match(launcher, /OPENCODEX_HOME/);
   assert.match(launcher, /codex-chatgpt-web/);
   assert.match(launcher, /NSApplicationActivateIgnoringOtherApps/);
@@ -221,4 +254,8 @@ test("native launchers dispatch from manifest capabilities", () => {
     "utf8",
   );
   assert.doesNotMatch(postStart, /\["sync-cache", "--restart-codex"\]/);
+  assert.match(postStart, /waitForChatGPTWebReadiness/);
+  assert.match(postStart, /status\?\.ready === true/);
+  assert.match(postStart, /!model\.slug\.startsWith\("codex-chatgpt-web\/"\)/);
+  assert.match(postStart, /join\(runtimeHome, "models_cache\.json"\)/);
 });

@@ -26,6 +26,8 @@
     "install:side-by-side": "node scripts/install-verified-side-by-side.js",
     "check-update": "node scripts/check-update.js",
     "doctor": "node scripts/verify-enhancements.js && node scripts/verify-release-metadata.js",
+    "verify:provider-routing": "node scripts/verify-provider-routing.js",
+    "verify:service-lifecycle": "node scripts/verify-service-lifecycle.js",
     "test": "node --test scripts/*.test.js",
     "release:check": "node scripts/verify-release-metadata.js --strict",
     "bump-version": "node scripts/bump-version.js",

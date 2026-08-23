@@ -455,6 +455,7 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
         description: enhancement.description || undefined,
         config: enhancement.config || {},
         healthPath: enhancement.healthPath || undefined,
+        readinessPath: enhancement.readinessPath || undefined,
         codexHome: enhancement.codexHome || undefined,
       };
       if (enhancement.type === "service") {

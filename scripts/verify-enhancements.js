@@ -80,6 +80,11 @@ function validateManifest(manifest, label = "manifest") {
         enhancement.healthPath.startsWith("/") && !enhancement.healthPath.includes(".."),
       `Enhancement ${enhancement.id} healthPath must be a safe absolute URL path`);
     }
+    if (enhancement.readinessPath !== undefined) {
+      assert(typeof enhancement.readinessPath === "string" &&
+        enhancement.readinessPath.startsWith("/") && !enhancement.readinessPath.includes(".."),
+      `Enhancement ${enhancement.id} readinessPath must be a safe absolute URL path`);
+    }
 
     if (enhancement.type === "service") {
       validateCommand(enhancement.startCommand, `${enhancement.id}.startCommand`);

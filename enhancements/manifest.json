@@ -57,7 +57,8 @@
       "config": {
         "port": 17842
       },
-      "healthPath": "/api/status",
+      "healthPath": "/healthz",
+      "readinessPath": "/api/status",
       "codexHome": "ChatGPTWebHome",
       "lifecycle": "launcher",
       "startCommand": [

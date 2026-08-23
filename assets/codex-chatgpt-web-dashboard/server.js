@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -19,8 +19,6 @@ const bridgeHome = process.env.CODEX_CHATGPT_WEB_HOME || join(process.env.HOME |
 const bridgeConfigPath = join(bridgeHome, "config.json");
 const codexHome = process.env.CODEX_HOME || join(process.env.HOME || "", ".codex");
 const codexConfigPath = join(codexHome, "config.toml");
-const sourceCodexHome = join(homedir(), ".codex");
-const sourceAuthPath = join(sourceCodexHome, "auth.json");
 const codexAuthPath = join(codexHome, "auth.json");
 const integrationJournalPaths = [
   join(bridgeHome, "codex", "integration-journal.json"),
@@ -29,6 +27,7 @@ const integrationJournalPaths = [
 const bridgePidPath = join(bridgeHome, "bridge.pid");
 const bridgeBinary = join(enhancementRoot, "runtime", "bun");
 const bridgeCli = join(enhancementRoot, "app", "cli.js");
+const openCodexRoot = resolve(enhancementRoot, "..", "opencodex");
 
 let bridgeProcess = null;
 let bridgeStartupPromise = null;
@@ -63,10 +62,27 @@ function bridgeConfigured() {
   return existsSync(bridgeConfigPath);
 }
 
+function browserSessionHealth() {
+  try {
+    const config = JSON.parse(readFileSync(bridgeConfigPath, "utf8"));
+    const statePath = config?.storageStatePath;
+    if (typeof statePath !== "string" || !existsSync(statePath)) {
+      return { authenticated: false, message: "ChatGPT Web sign-in has not been completed." };
+    }
+    const verificationPath = `${statePath}.verified.json`;
+    const verification = JSON.parse(readFileSync(verificationPath, "utf8"));
+    if (verification?.version !== 1 || verification?.authenticated !== true) {
+      return { authenticated: false, message: "ChatGPT Web session has not been verified." };
+    }
+    return { authenticated: true, verifiedAt: verification.verifiedAt || null };
+  } catch {
+    return { authenticated: false, message: "ChatGPT Web sign-in has not been verified." };
+  }
+}
+
 function ensurePrivateCodexHome() {
   mkdirSync(codexHome, { recursive: true, mode: 0o700 });
   ensurePrivateBridgeConfig();
-  syncCodexAuth();
   if (!existsSync(codexConfigPath)) {
     writeFileSync(codexConfigPath, 'model = "gpt-5.6-sol"\n', { mode: 0o600 });
   }
@@ -131,33 +147,10 @@ function ensurePrivateBridgeConfig() {
   chmodSync(bridgeConfigPath, 0o600);
 }
 
-function syncCodexAuth() {
-  if (resolve(codexHome) === resolve(sourceCodexHome) || !existsSync(sourceAuthPath)) return;
-  try {
-    const source = JSON.parse(readFileSync(sourceAuthPath, "utf8"));
-    const sourceAccessToken = source?.tokens?.access_token;
-    if (typeof sourceAccessToken !== "string" || sourceAccessToken.length < 20) return;
-    let currentAccessToken = null;
-    if (existsSync(codexAuthPath)) {
-      try {
-        currentAccessToken = JSON.parse(readFileSync(codexAuthPath, "utf8"))?.tokens?.access_token;
-      } catch {}
-    }
-    if (currentAccessToken !== sourceAccessToken) {
-      copyFileSync(sourceAuthPath, codexAuthPath);
-      chmodSync(codexAuthPath, 0o600);
-      console.log("[codex-chatgpt-web] synchronized account auth into the isolated Codex home");
-    }
-  } catch (error) {
-    console.warn(`[codex-chatgpt-web] account auth could not be synchronized: ${error.message}`);
-  }
-}
-
 async function accountRouteHealth(force = false) {
   if (!force && accountHealthCache.result && Date.now() - accountHealthCache.checkedAt < 10_000) {
     return accountHealthCache.result;
   }
-  syncCodexAuth();
   let accessToken;
   try {
     accessToken = JSON.parse(readFileSync(codexAuthPath, "utf8"))?.tokens?.access_token;
@@ -288,10 +281,55 @@ function startConnection() {
         return;
       }
       setupState = "ready";
-      setupOutput = `${setupOutput}\nVerified ChatGPT account access (${account.modelCount} models available). Connection flow finished with success.`.slice(-1200);
+      setupOutput = `${setupOutput}\nVerified ChatGPT account access (${account.modelCount} models available). Refreshing the Codex model picker…`.slice(-1200);
+      const refresh = await refreshModelCatalogs();
+      if (!refresh.ok) {
+        setupState = "failed";
+        setupExitCode = 1;
+        setupOutput = `${setupOutput}\nConnection succeeded, but the model catalog refresh failed: ${refresh.error}`.slice(-1200);
+        return;
+      }
+      setupOutput = `${setupOutput}\nConnection complete. Restarting only this private Codex runtime to load the verified models.`.slice(-1200);
+      const opener = spawn("/usr/bin/open", ["codex-rebuild://refresh-models"], {
+        stdio: "ignore",
+      });
+      opener.unref();
     })();
   });
   return connectionStatus();
+}
+
+function refreshModelCatalogs() {
+  return new Promise((resolveResult) => {
+    const bun = join(openCodexRoot, "node_modules", "bun", "bin", "bun.exe");
+    const script = join(openCodexRoot, "post-start.js");
+    if (!existsSync(bun) || !existsSync(script)) {
+      resolveResult({ ok: false, error: "Bundled OpenCodex refresh tools are missing." });
+      return;
+    }
+    const child = spawn(bun, ["run", script], {
+      cwd: openCodexRoot,
+      env: {
+        ...process.env,
+        CODEX_HOME: join(resolve(bridgeHome, ".."), "OpenCodexHome"),
+        OPENCODEX_HOME: join(resolve(bridgeHome, ".."), "OpenCodexHome"),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const errors = [];
+    child.stderr?.on("data", (chunk) => errors.push(chunk));
+    const timer = setTimeout(() => child.kill("SIGTERM"), 30_000);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      resolveResult({ ok: false, error: error.message });
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      resolveResult(code === 0
+        ? { ok: true }
+        : { ok: false, error: Buffer.concat(errors).toString("utf8").trim() || `refresh exited with ${code ?? "unknown"}` });
+    });
+  });
 }
 
 async function serviceHealth(portNumber, pathName) {
@@ -349,19 +387,33 @@ function contentType(filePath) {
 
 async function handle(request) {
   const url = new URL(request.url);
+  if (url.pathname === "/healthz") {
+    return json({
+      status: "ok",
+      service: "codex-chatgpt-web-dashboard",
+      version: "2.1.11",
+      pid: process.pid,
+      port,
+    });
+  }
   if (url.pathname === "/api/status") {
     await ensureBridge();
     const health = await bridgeHealth();
     const opencodex = await serviceHealth(openCodexPort, "/healthz");
+    const account = await accountRouteHealth();
+    const browser = browserSessionHealth();
+    const ready = Boolean(health) && opencodex.running && account.status === "ok" && browser.authenticated;
     return json({
-      dashboard: { status: "ok", port },
+      dashboard: { status: "ok", service: "codex-chatgpt-web-dashboard", port },
       opencodex,
       bridge: {
         configured: bridgeConfigured(),
         running: Boolean(health),
         health,
       },
-      account: await accountRouteHealth(),
+      account,
+      browser,
+      ready,
       connection: connectionStatus(),
       links: {
         chatgpt: "https://chatgpt.com",

@@ -29,7 +29,8 @@ async function refreshStatus() {
     const accountReady = account.status === "ok";
     const opencodexRunning = data.opencodex?.running === true;
     const connection = data.connection || {};
-    const webReady = connection.state === "ready";
+    const webReady = data.browser?.authenticated === true;
+    const routeReady = data.ready === true;
     dashboardValue.textContent = "Online";
     dashboardValue.className = "metric-value good";
     opencodexValue.textContent = opencodexRunning ? "Running" : "Not running";
@@ -38,8 +39,8 @@ async function refreshStatus() {
     bridgeValue.textContent = running ? "Running" : "Not running";
     bridgeValue.className = `metric-value ${running ? "good" : "warn"}`;
     bridgeDetail.textContent = running ? `127.0.0.1:${data.bridge.health.port || 17841}` : "Open setup or run doctor";
-    configValue.textContent = data.bridge.configured ? "Ready" : "Needs setup";
-    configValue.className = `metric-value ${data.bridge.configured ? "good" : "warn"}`;
+    configValue.textContent = routeReady ? "Usable" : data.bridge.configured ? "Needs attention" : "Needs setup";
+    configValue.className = `metric-value ${routeReady ? "good" : "warn"}`;
     lastUpdated.textContent = `Updated ${formatTime()}`;
     if (connection.running || connection.state === "starting" || connection.state === "running") {
       setPill("checking", "Connecting ChatGPT");
@@ -52,14 +53,14 @@ async function refreshStatus() {
       connectionMessage.textContent = `${detail} Use Connect ChatGPT to try again.`;
       connectButton.disabled = false;
       connectButton.innerHTML = "Connect ChatGPT <span>↗</span>";
-    } else if (running && accountReady && webReady) {
+    } else if (routeReady) {
       setPill("connected", "ChatGPT connected");
       connectionMessage.textContent = `ChatGPT Web is connected and account access is verified (${account.modelCount} models available).`;
       connectButton.disabled = false;
       connectButton.innerHTML = "Reconnect ChatGPT <span>↗</span>";
     } else if (running && !accountReady) {
       setPill("warn", "Account not connected");
-      connectionMessage.textContent = account.message || "The local bridge is running, but Codex account access has not been verified.";
+      connectionMessage.textContent = account.message || "Sign into this Codex app once; its account is isolated from the official ChatGPT app.";
       connectButton.disabled = false;
       connectButton.innerHTML = "Connect ChatGPT <span>↗</span>";
     } else if (running && accountReady) {

@@ -353,10 +353,12 @@ async function main() {
       path.join(uniqueRuntimeResources, "Assets.car"));
 
     const runtimeAsar = path.join(uniqueRuntimeResources, "app.asar");
-    // The native launcher owns the single right-side menu-bar item. Keep the
-    // Electron runtime untouched so it cannot grow a duplicate menu surface.
-    const useEmbeddedElectronTray = false;
-    if (useEmbeddedElectronTray && fs.existsSync(runtimeAsar)) {
+    // The native launcher owns the single right-side menu-bar item. The
+    // upstream runtime also creates a macOS status item whose menu ends at
+    // "Quit ChatGPT"; disable that item in the packaged runtime so clicks do
+    // not land on a second, incomplete menu.
+    const useEmbeddedElectronTray = true;
+    if (fs.existsSync(runtimeAsar)) {
       console.log("   [asar] integrating optional embedded tray menu");
       const npxBin = fs.existsSync("/usr/local/bin/npx") ? "/usr/local/bin/npx" : "npx";
       const extractAsarDir = path.join(temporaryDirectory, "_extracted_asar");
@@ -369,10 +371,40 @@ async function main() {
           if (file.startsWith("main-") && file.endsWith(".js")) {
             const mainJsPath = path.join(viteBuildDir, file);
             let mainCode = fs.readFileSync(mainJsPath, "utf8");
+            const upstreamNativeStatusItemPattern =
+              "process.platform===`darwin`&&e.getNativeStatusItemState!=null&&e.getComputerUseServiceProcessIdentifier!=null&&e.onNativeStatusItemMenuAction!=null";
+            if (!useEmbeddedElectronTray && mainCode.includes(upstreamNativeStatusItemPattern)) {
+              mainCode = mainCode.replace(upstreamNativeStatusItemPattern, "false");
+              fs.writeFileSync(mainJsPath, mainCode, "utf8");
+              console.log(`   [asar] disabled upstream Quit ChatGPT status item in ${file}`);
+            }
 
 const helperFn = `
 /* codex-rebuild:enhancements-tray-v1 */
 function getEnhancementsTrayMenu(elModule) {
+  // Keep the tray template deliberately small and synchronous. The runtime
+  // tray is created during Electron startup; filesystem/manifest work in the
+  // menu factory can make macOS discard the whole context menu if it throws.
+  // The launcher owns these deep links and resolves the current manifest when
+  // an item is activated.
+  const el = elModule || {};
+  const shell = el.shell || (el.default && el.default.shell);
+  const openEnhancement = (id, view) => {
+    if (shell) shell.openExternal(
+      'codex-rebuild://enhancement?id=' + encodeURIComponent(id) + '&view=' + encodeURIComponent(view)
+    );
+  };
+  return [
+    { label: '✦ Enhancements', enabled: false },
+    { label: 'Open OpenCodex Dashboard', click: () => openEnhancement('opencodex', 'window') },
+    { label: 'Open ChatGPT Web Dashboard', click: () => openEnhancement('codex-chatgpt-web', 'window') },
+    { label: 'Connect ChatGPT Web', click: () => openEnhancement('codex-chatgpt-web', 'connect') },
+    { type: 'separator' },
+    { label: 'Enhancements Settings…', click: () => {
+      if (shell) shell.openExternal('codex-rebuild://settings');
+    } }
+  ];
+
   const fallback = (shell) => ({
     label: '✦ Enhancements',
     submenu: [{
@@ -560,7 +592,7 @@ function appendEnhancementsToApplicationMenu(menu, elModule) {
             } else if (useEmbeddedElectronTray && mainCode.includes(targetPattern)) {
               mainCode = helperFn + "\n" + mainCode.replace(
                 targetPattern,
-                "return[...h,...h.length>0?[{type:`separator`}]:[],getEnhancementsTrayMenu(l),{type:`separator`}"
+                "return[...h,...h.length>0?[{type:`separator`}]:[],...getEnhancementsTrayMenu(l),{type:`separator`}"
               );
               mainCode = mainCode.replace(
                 "updatePersistentTrayMenu(){process.platform===`linux`&&this.tray.setContextMenu",
@@ -568,7 +600,11 @@ function appendEnhancementsToApplicationMenu(menu, elModule) {
               );
               mainCode = mainCode.replace(
                 "if(process.platform===`darwin`){this.tray.on(`mouse-down`",
-                "if(process.platform===`darwin`){this.updatePersistentTrayMenu();this.tray.on(`mouse-down`"
+                "if(process.platform===`darwin`){this.updatePersistentTrayMenu();setTimeout(()=>this.updatePersistentTrayMenu(),1000);this.tray.on(`mouse-down`"
+              );
+              mainCode = mainCode.replace(
+                "this.tray.on(`click`,()=>{this.consumeIgnoredNativeTrayClick()||this.openNativeTrayMenu()})",
+                "this.tray.on(`click`,()=>{this.updatePersistentTrayMenu();this.consumeIgnoredNativeTrayClick()||this.openNativeTrayMenu()})"
               );
               // The native macOS status-item addon only understands the
               // upstream menu schema, which currently ends at Quit ChatGPT.
