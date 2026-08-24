@@ -332,7 +332,7 @@ function startConnection() {
 
 function refreshModelCatalogs() {
   return new Promise((resolveResult) => {
-    const bun = join(openCodexRoot, "node_modules", "bun", "bin", "bun.exe");
+    const bun = join(openCodexRoot, "node_modules", "bun", "bin", "bun");
     const script = join(openCodexRoot, "post-start.js");
     if (!existsSync(bun) || !existsSync(script)) {
       resolveResult({ ok: false, error: "Bundled OpenCodex refresh tools are missing." });
@@ -347,7 +347,9 @@ function refreshModelCatalogs() {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const output = [];
     const errors = [];
+    child.stdout?.on("data", (chunk) => output.push(chunk));
     child.stderr?.on("data", (chunk) => errors.push(chunk));
     const timer = setTimeout(() => child.kill("SIGTERM"), 30_000);
     child.once("error", (error) => {
@@ -356,9 +358,33 @@ function refreshModelCatalogs() {
     });
     child.once("exit", (code) => {
       clearTimeout(timer);
-      resolveResult(code === 0
-        ? { ok: true }
-        : { ok: false, error: Buffer.concat(errors).toString("utf8").trim() || `refresh exited with ${code ?? "unknown"}` });
+      if (code !== 0) {
+        resolveResult({
+          ok: false,
+          error: Buffer.concat([...output, ...errors]).toString("utf8").trim()
+            || `refresh exited with ${code ?? "unknown"}`,
+        });
+        return;
+      }
+      const cachePath = join(resolve(bridgeHome, ".."), "OpenCodexHome", "models_cache.json");
+      let publishedWebModels = 0;
+      try {
+        const cache = JSON.parse(readFileSync(cachePath, "utf8"));
+        publishedWebModels = Array.isArray(cache?.models)
+          ? cache.models.filter((model) => typeof model?.slug === "string"
+            && model.slug.startsWith("codex-chatgpt-web/")).length
+          : 0;
+      } catch {
+        publishedWebModels = 0;
+      }
+      if (publishedWebModels === 0) {
+        resolveResult({
+          ok: false,
+          error: `refresh completed without publishing ChatGPT Web models (${cachePath})`,
+        });
+        return;
+      }
+      resolveResult({ ok: true, publishedWebModels });
     });
   });
 }

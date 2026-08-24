@@ -10,7 +10,7 @@ const { spawn } = require("node:child_process");
 
 const appPath = path.resolve(process.argv[2] || "out/side-by-side-mac-x64/Codex.app");
 const enhancementRoot = path.join(appPath, "Contents/Resources/enhancements/opencodex");
-const bun = path.join(enhancementRoot, "node_modules/bun/bin/bun.exe");
+const bun = path.join(enhancementRoot, "node_modules/bun/bin/bun");
 const ocx = path.join(enhancementRoot, "node_modules/@bitkyc08/opencodex/bin/ocx.mjs");
 assert.ok(fs.existsSync(bun), `Missing bundled Bun runtime: ${bun}`);
 assert.ok(fs.existsSync(ocx), `Missing bundled OpenCodex CLI: ${ocx}`);
@@ -50,19 +50,32 @@ async function main() {
 
   const requests = [];
   const upstream = http.createServer((request, response) => {
-    requests.push({ method: request.method, url: request.url });
+    requests.push({
+      method: request.method,
+      url: request.url,
+      authorization: request.headers.authorization,
+    });
     request.resume();
     request.once("end", () => {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        id: "resp_route_probe",
-        object: "response",
-        created_at: Math.floor(Date.now() / 1000),
-        status: "completed",
-        model: "chatgpt-web/light",
-        output: [],
-        usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
-      }));
+      if (request.url === "/v1/chat/completions") {
+        response.end(JSON.stringify({
+          id: "chat_route_probe",
+          object: "chat.completion",
+          choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }));
+      } else {
+        response.end(JSON.stringify({
+          id: "resp_route_probe",
+          object: "response",
+          created_at: Math.floor(Date.now() / 1000),
+          status: "completed",
+          model: "chatgpt-web/light",
+          output: [],
+          usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
+        }));
+      }
     });
   });
   const upstreamPort = await listen(upstream);
@@ -81,6 +94,14 @@ async function main() {
         authMode: "forward",
         allowPrivateNetwork: true,
         models: ["chatgpt-web/light"],
+        liveModels: false,
+      },
+      "key-probe": {
+        adapter: "openai-chat",
+        baseUrl: `http://127.0.0.1:${upstreamPort}/v1`,
+        authMode: "key",
+        apiKey: "provider-key",
+        models: ["model"],
         liveModels: false,
       },
     },
@@ -119,7 +140,21 @@ async function main() {
       `Responses adapter did not call /v1/responses; observed ${JSON.stringify(requests)}`);
     assert.ok(!requests.some((request) => request.url.includes("chat/completions")),
       `Responses provider incorrectly called chat/completions: ${JSON.stringify(requests)}`);
-    console.log(`[ok] OpenCodex forwarded POST /v1/responses to the Responses-only provider (HTTP ${response.status})`);
+    const keyResponse = await fetch(`http://127.0.0.1:${gatewayPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer incoming-codex-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model: "key-probe/model", input: "key auth probe", stream: false }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const keyBody = await keyResponse.text();
+    assert.ok(keyResponse.status < 500, `OpenCodex key route returned ${keyResponse.status}: ${keyBody}`);
+    const keyRequest = requests.find((request) => request.url === "/v1/chat/completions");
+    assert.equal(keyRequest?.authorization, "Bearer provider-key",
+      `Key-auth provider received the incoming Codex bearer: ${JSON.stringify(requests)}`);
+    console.log(`[ok] Responses routing and key-auth isolation passed (HTTP ${response.status}/${keyResponse.status})`);
   } catch (error) {
     const diagnostic = Buffer.concat(output).toString("utf8").trim();
     if (diagnostic) error.message = `${error.message}\nOpenCodex output:\n${diagnostic}`;

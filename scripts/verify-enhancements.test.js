@@ -42,7 +42,7 @@ test("accepts the checked-in enhancement contract shape", () => {
   ]);
   const opencodex = checkedIn.enhancements.find((entry) => entry.id === "opencodex");
   assert.deepEqual(opencodex.postStartCommand, [
-    "node_modules/bun/bin/bun.exe",
+    "node_modules/bun/bin/bun",
     "run",
     "post-start.js",
   ]);
@@ -251,6 +251,7 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(dashboardServer, /browserSessionHealth/);
   assert.match(dashboardServer, /ready,/);
   assert.match(dashboardServer, /refreshModelCatalogs/);
+  assert.match(dashboardServer, /publishedWebModels/);
   assert.match(dashboardServer, /codex-rebuild:\/\/refresh-models/);
   assert.match(dashboardServer, /CODEX_HOME: codexHome/);
   assert.match(dashboardServer, /opencodex/);
@@ -301,6 +302,10 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.doesNotMatch(postStart, /\["sync-cache", "--restart-codex"\]/);
   assert.match(postStart, /waitForChatGPTWebReadiness/);
   assert.match(postStart, /status\?\.ready === true/);
+  assert.match(postStart, /Array\.isArray\(config\)/);
+  assert.match(postStart, /Array\.isArray\(providers\)/);
+  assert.match(postStart, /const bridgeCache = readJson\(bridgeCachePath\);/);
+  assert.match(postStart, /publishing .* cached models/);
   assert.match(postStart, /!model\.slug\.startsWith\("codex-chatgpt-web\/"\)/);
   assert.match(postStart, /join\(runtimeHome, "models_cache\.json"\)/);
 });

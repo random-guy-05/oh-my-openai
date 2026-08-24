@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = import.meta.dir;
-const bun = join(root, "node_modules/bun/bin/bun.exe");
+const bun = join(root, "node_modules/bun/bin/bun");
 const ocx = join(root, "node_modules/@bitkyc08/opencodex/bin/ocx.mjs");
 // Refresh the OpenCodex catalog without restarting any Codex app-server.
 // `--restart-codex` is intentionally not used here: the upstream restart
@@ -36,11 +36,26 @@ const openCodexHome = join(dirname(codexHome), "OpenCodexHome");
 const openCodexCachePath = join(openCodexHome, "models_cache.json");
 const runtimeHome = join(dirname(codexHome), "CodexHome");
 
+function normalizeOpenCodexConfig() {
+  const configPath = join(openCodexHome, "config.json");
+  const config = readJson(configPath);
+  if (!config || typeof config !== "object" || Array.isArray(config)) return;
+  const providers = config.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)
+      || !providers["codex-chatgpt-web"]) return;
+  if (typeof config.defaultProvider !== "string" || config.defaultProvider === "openai") {
+    config.defaultProvider = "codex-chatgpt-web";
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  }
+}
+normalizeOpenCodexConfig();
+
 function updateCatalog(path, bridgeModels) {
   const document = readJson(path);
   if (!document || !Array.isArray(document.models)) return;
-  // Never leave stale ChatGPT Web entries selectable. They are published only
-  // after the bridge and the private Codex account route both pass readiness.
+  // Never leave stale ChatGPT Web entries selectable. A cached model list is
+  // safe to publish before sign-in completes; request readiness is enforced by
+  // the bridge and the private Codex account route at send time.
   document.models = document.models.filter((model) =>
     typeof model?.slug !== "string" || !model.slug.startsWith("codex-chatgpt-web/"));
   const existing = new Set(document.models.map((model) => model?.slug).filter(Boolean));
@@ -102,14 +117,14 @@ async function waitForOpenCodexCache() {
 }
 
 const webReadiness = await waitForChatGPTWebReadiness();
-const bridgeCache = webReadiness.ready ? readJson(bridgeCachePath) : null;
+const bridgeCache = readJson(bridgeCachePath);
 const bridgeModels = Array.isArray(bridgeCache?.models)
   ? bridgeCache.models.filter((model) =>
     typeof model?.slug === "string" && model.slug.startsWith("chatgpt-web/"))
   : [];
 console.log(webReadiness.ready
   ? `[opencodex] ChatGPT Web route ready; publishing ${bridgeModels.length} models`
-  : `[opencodex] ChatGPT Web models hidden: ${webReadiness.reason || "route is not ready"}`);
+  : `[opencodex] ChatGPT Web route not ready; publishing ${bridgeModels.length} cached models: ${webReadiness.reason || "route is not ready"}`);
 
 updateCatalog(join(codexHome, "opencodex-catalog.json"), bridgeModels);
 

@@ -15,13 +15,13 @@
       "codexHome": "OpenCodexHome",
       "lifecycle": "launcher",
       "startCommand": [
-        "node_modules/bun/bin/bun.exe",
+        "node_modules/bun/bin/bun",
         "run",
         "node_modules/@bitkyc08/opencodex/bin/ocx.mjs",
         "start"
       ],
       "postStartCommand": [
-        "node_modules/bun/bin/bun.exe",
+        "node_modules/bun/bin/bun",
         "run",
         "post-start.js"
       ],
