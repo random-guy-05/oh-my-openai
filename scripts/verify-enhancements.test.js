@@ -42,7 +42,7 @@ test("accepts the checked-in enhancement contract shape", () => {
   ]);
   const opencodex = checkedIn.enhancements.find((entry) => entry.id === "opencodex");
   assert.deepEqual(opencodex.postStartCommand, [
-    "node_modules/bun/bin/bun.exe",
+    "node_modules/bun/bin/bun",
     "run",
     "post-start.js",
   ]);

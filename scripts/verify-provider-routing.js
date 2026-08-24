@@ -10,7 +10,7 @@ const { spawn } = require("node:child_process");
 
 const appPath = path.resolve(process.argv[2] || "out/side-by-side-mac-x64/Codex.app");
 const enhancementRoot = path.join(appPath, "Contents/Resources/enhancements/opencodex");
-const bun = path.join(enhancementRoot, "node_modules/bun/bin/bun.exe");
+const bun = path.join(enhancementRoot, "node_modules/bun/bin/bun");
 const ocx = path.join(enhancementRoot, "node_modules/@bitkyc08/opencodex/bin/ocx.mjs");
 assert.ok(fs.existsSync(bun), `Missing bundled Bun runtime: ${bun}`);
 assert.ok(fs.existsSync(ocx), `Missing bundled OpenCodex CLI: ${ocx}`);

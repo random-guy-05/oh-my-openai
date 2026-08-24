@@ -332,7 +332,7 @@ function startConnection() {
 
 function refreshModelCatalogs() {
   return new Promise((resolveResult) => {
-    const bun = join(openCodexRoot, "node_modules", "bun", "bin", "bun.exe");
+    const bun = join(openCodexRoot, "node_modules", "bun", "bin", "bun");
     const script = join(openCodexRoot, "post-start.js");
     if (!existsSync(bun) || !existsSync(script)) {
       resolveResult({ ok: false, error: "Bundled OpenCodex refresh tools are missing." });

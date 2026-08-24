@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = import.meta.dir;
-const bun = join(root, "node_modules/bun/bin/bun.exe");
+const bun = join(root, "node_modules/bun/bin/bun");
 const ocx = join(root, "node_modules/@bitkyc08/opencodex/bin/ocx.mjs");
 // Refresh the OpenCodex catalog without restarting any Codex app-server.
 // `--restart-codex` is intentionally not used here: the upstream restart
@@ -35,6 +35,18 @@ const bridgeCachePath = join(bridgeHome, "models_cache.json");
 const openCodexHome = join(dirname(codexHome), "OpenCodexHome");
 const openCodexCachePath = join(openCodexHome, "models_cache.json");
 const runtimeHome = join(dirname(codexHome), "CodexHome");
+
+function normalizeOpenCodexConfig() {
+  const configPath = join(openCodexHome, "config.json");
+  const config = readJson(configPath);
+  if (config && typeof config === "object") {
+    if (!config.defaultProvider || config.defaultProvider === "openai") {
+      config.defaultProvider = "codex-chatgpt-web";
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    }
+  }
+}
+normalizeOpenCodexConfig();
 
 function updateCatalog(path, bridgeModels) {
   const document = readJson(path);

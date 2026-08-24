@@ -466,7 +466,10 @@ static NSString *PrepareOpenCodexHome(NSString *supportPath) {
     @"liveModels": @NO
   };
   config[@"providers"] = providers;
-  if (![config[@"defaultProvider"] isKindOfClass:[NSString class]]) config[@"defaultProvider"] = @"openai";
+  if (![config[@"defaultProvider"] isKindOfClass:[NSString class]] ||
+      [config[@"defaultProvider"] isEqualToString:@"openai"]) {
+    config[@"defaultProvider"] = @"codex-chatgpt-web";
+  }
   if (![config[@"port"] isKindOfClass:[NSNumber class]]) config[@"port"] = @10100;
 
   NSData *output = [NSJSONSerialization dataWithJSONObject:config options:NSJSONWritingPrettyPrinted error:nil];
