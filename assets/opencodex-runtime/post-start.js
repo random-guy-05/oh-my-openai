@@ -43,8 +43,24 @@ function normalizeOpenCodexConfig() {
   const providers = config.providers;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)
       || !providers["codex-chatgpt-web"]) return;
+  let changed = false;
+  const nativeProvider = providers.openai && typeof providers.openai === "object"
+    ? providers.openai : {};
+  if (nativeProvider.disabled !== true || nativeProvider.authMode !== "key"
+      || Object.hasOwn(nativeProvider, "codexAccountMode")
+      || Object.hasOwn(nativeProvider, "apiKey")) {
+    nativeProvider.disabled = true;
+    nativeProvider.authMode = "key";
+    delete nativeProvider.codexAccountMode;
+    delete nativeProvider.apiKey;
+    providers.openai = nativeProvider;
+    changed = true;
+  }
   if (typeof config.defaultProvider !== "string" || config.defaultProvider === "openai") {
     config.defaultProvider = "codex-chatgpt-web";
+    changed = true;
+  }
+  if (changed) {
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   }
 }
@@ -56,8 +72,12 @@ function updateCatalog(path, bridgeModels) {
   // Never leave stale ChatGPT Web entries selectable. A cached model list is
   // safe to publish before sign-in completes; request readiness is enforced by
   // the bridge and the private Codex account route at send time.
-  document.models = document.models.filter((model) =>
-    typeof model?.slug !== "string" || !model.slug.startsWith("codex-chatgpt-web/"));
+  document.models = document.models.filter((model) => {
+    const slug = model?.slug;
+    return typeof slug === "string"
+      && slug.includes("/")
+      && !slug.startsWith("codex-chatgpt-web/");
+  });
   const existing = new Set(document.models.map((model) => model?.slug).filter(Boolean));
   for (const source of bridgeModels) {
     const slug = `codex-chatgpt-web/${source.slug.replaceAll("/", "-")}`;

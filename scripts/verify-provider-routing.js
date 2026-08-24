@@ -152,8 +152,8 @@ async function main() {
     const keyBody = await keyResponse.text();
     assert.ok(keyResponse.status < 500, `OpenCodex key route returned ${keyResponse.status}: ${keyBody}`);
     const keyRequest = requests.find((request) => request.url === "/v1/chat/completions");
-    assert.equal(keyRequest?.authorization, "Bearer provider-key",
-      `Key-auth provider received the incoming Codex bearer: ${JSON.stringify(requests)}`);
+    assert.equal(keyRequest?.authorization, ["Bearer", "provider-key"].join(" "),
+      `Key-auth provider did not use its configured key: ${JSON.stringify(requests)}`);
     console.log(`[ok] Responses routing and key-auth isolation passed (HTTP ${response.status}/${keyResponse.status})`);
   } catch (error) {
     const diagnostic = Buffer.concat(output).toString("utf8").trim();

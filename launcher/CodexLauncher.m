@@ -228,7 +228,12 @@ static BOOL AcquireLauncherLock(void);
 static BOOL IsWrapperManagedRoutingLine(NSString *line, NSString *supportPath) {
   NSString *trimmed = [line stringByTrimmingCharactersInSet:
     NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  if ([trimmed isEqualToString:
+        @"# CodexDesktop-Rebuild owns this provider; it never consumes ChatGPT account auth."]) {
+    return YES;
+  }
   if ([trimmed hasPrefix:@"#"] || trimmed.length == 0) return NO;
+  if ([trimmed isEqualToString:@"model_provider = \"opencodex\""]) return YES;
   if ([trimmed hasPrefix:@"openai_base_url"] &&
       ([trimmed containsString:@"127.0.0.1:10100"] ||
        [trimmed containsString:@"localhost:10100"])) {
@@ -249,8 +254,24 @@ static BOOL NormalizePrivateCodexConfig(NSString *configPath, NSString *supportP
   if (!contents) return NO;
   NSMutableArray<NSString *> *kept = [NSMutableArray array];
   __block BOOL changed = NO;
+  __block BOOL skippingManagedProvider = NO;
   [contents enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
     (void)stop;
+    NSString *trimmed = [line stringByTrimmingCharactersInSet:
+      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([trimmed isEqualToString:@"[model_providers.opencodex]"]) {
+      skippingManagedProvider = YES;
+      changed = YES;
+      return;
+    }
+    if (skippingManagedProvider) {
+      if ([trimmed hasPrefix:@"["]) {
+        skippingManagedProvider = NO;
+      } else {
+        changed = YES;
+        return;
+      }
+    }
     if (IsWrapperManagedRoutingLine(line, supportPath)) {
       changed = YES;
       return;
@@ -283,8 +304,22 @@ static BOOL ConfigurePrivateRuntimeRouting(NSString *configPath, NSString *suppo
   if (!contents) return NO;
 
   NSMutableArray<NSString *> *kept = [NSMutableArray array];
+  __block BOOL skippingManagedProvider = NO;
   [contents enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
     (void)stop;
+    NSString *trimmed = [line stringByTrimmingCharactersInSet:
+      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([trimmed isEqualToString:@"[model_providers.opencodex]"]) {
+      skippingManagedProvider = YES;
+      return;
+    }
+    if (skippingManagedProvider) {
+      if ([trimmed hasPrefix:@"["]) {
+        skippingManagedProvider = NO;
+      } else {
+        return;
+      }
+    }
     if (!IsWrapperManagedRoutingLine(line, supportPath)) [kept addObject:line];
   }];
 
@@ -292,9 +327,15 @@ static BOOL ConfigurePrivateRuntimeRouting(NSString *configPath, NSString *suppo
     @"OpenCodexHome/opencodex-catalog.json"];
 
   NSArray<NSString *> *routingLines = @[
-    @"openai_base_url = \"http://127.0.0.1:10100/v1\"",
+    @"model_provider = \"opencodex\"",
     [NSString stringWithFormat:
-      @"model_catalog_json = \"%@\"", EscapeTOMLBasicString(catalogPath)]
+      @"model_catalog_json = \"%@\"", EscapeTOMLBasicString(catalogPath)],
+    @"# CodexDesktop-Rebuild owns this provider; it never consumes ChatGPT account auth.",
+    @"[model_providers.opencodex]",
+    @"name = \"OpenCodex\"",
+    @"wire_api = \"responses\"",
+    @"base_url = \"http://127.0.0.1:10100/v1\"",
+    @"requires_openai_auth = false"
   ];
   NSUInteger firstTableIndex = NSNotFound;
   for (NSUInteger index = 0; index < kept.count; index++) {
@@ -451,12 +492,26 @@ static NSString *PrepareOpenCodexHome(NSString *supportPath) {
 
   NSMutableDictionary *providers = [config[@"providers"] isKindOfClass:[NSDictionary class]]
     ? [config[@"providers"] mutableCopy] : [NSMutableDictionary dictionary];
+  // The embedded runtime sends every model request through this private
+  // gateway. Never expose the gateway's canonical native OpenAI provider:
+  // its pool mode returns HTTP 401 while the isolated runtime owns the
+  // native profile, and Codex interprets that local 401 as account logout.
+  // OpenCodex provider-prefixed models remain available below.
+  NSMutableDictionary *nativeProvider = [providers[@"openai"] isKindOfClass:[NSDictionary class]]
+    ? [providers[@"openai"] mutableCopy] : [NSMutableDictionary dictionary];
+  nativeProvider[@"disabled"] = @YES;
+  nativeProvider[@"authMode"] = @"key";
+  [nativeProvider removeObjectForKey:@"codexAccountMode"];
+  [nativeProvider removeObjectForKey:@"apiKey"];
+  providers[@"openai"] = nativeProvider;
   providers[@"codex-chatgpt-web"] = @{
-    // codex-chatgpt-web implements the Responses API only. The chat adapter
-    // appends /chat/completions and guarantees a 404 from this bridge.
+    // The browser bridge authenticates with its private Chrome session. Use a
+    // local sentinel key so OpenCodex never forwards the Codex OAuth bearer
+    // into this browser-backed route.
     @"adapter": @"openai-responses",
     @"baseUrl": @"http://127.0.0.1:17841/v1",
-    @"authMode": @"forward",
+    @"authMode": @"key",
+    @"apiKey": @"codex-chatgpt-web-local",
     @"allowPrivateNetwork": @YES,
     @"models": @[
       @"chatgpt-web/light",
@@ -1911,6 +1966,59 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
   NSFileManager *fileManager = NSFileManager.defaultManager;
   NSString *sourceHome = [NSHomeDirectory() stringByAppendingPathComponent:@".codex"];
 
+  // Remove the temporary local-key mode used by the broken intermediate build
+  // so the user gets the normal ChatGPT account login on this launch.
+  NSString *authPath = [codexHomePath stringByAppendingPathComponent:@"auth.json"];
+  NSData *authData = [NSData dataWithContentsOfFile:authPath];
+  NSDictionary *auth = authData.length > 0
+    ? [NSJSONSerialization JSONObjectWithData:authData options:0 error:nil] : nil;
+  if ([auth isKindOfClass:[NSDictionary class]] &&
+      [auth[@"auth_mode"] isEqualToString:@"apikey"] &&
+      [auth[@"OPENAI_API_KEY"] isEqualToString:@"codex-rebuild-local"]) {
+    NSString *quarantinePath = [codexHomePath stringByAppendingPathComponent:
+      [NSString stringWithFormat:@"auth.json.local-api-sentinel-%d", getpid()]];
+    NSError *moveError = nil;
+    if (![fileManager moveItemAtPath:authPath toPath:quarantinePath error:&moveError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The temporary local auth credential could not be removed.\n\n%@",
+        moveError.localizedDescription ?: @"Unknown move error."];
+      return NO;
+    }
+    chmod(quarantinePath.fileSystemRepresentation, 0600);
+    NSLog(@"[CodexLauncher] removed temporary local auth sentinel at %@", quarantinePath);
+  }
+
+  // Builds before the auth-isolation fix copied ~/.codex/auth.json here. Do
+  // not let that legacy credential remain active: refresh-token rotation from
+  // the custom app can invalidate the official Codex/ChatGPT session too.
+  // v1 only quarantined credentials that existed before the first isolation
+  // marker. A credential left by that intermediate build is still untrusted:
+  // it may be a rotated copy of the official Codex refresh token. Require one
+  // clean, user-initiated login before allowing the private runtime to use it.
+  NSString *authMigrationMarker = [codexHomePath stringByAppendingPathComponent:@".auth-isolated-v2"];
+  if (![fileManager fileExistsAtPath:authMigrationMarker]) {
+    NSString *legacyAuthPath = [codexHomePath stringByAppendingPathComponent:@"auth.json"];
+    if ([fileManager fileExistsAtPath:legacyAuthPath]) {
+      NSString *quarantinePath = [codexHomePath stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"auth.json.pre-clean-login-%d", getpid()]];
+      NSError *moveError = nil;
+      if (![fileManager moveItemAtPath:legacyAuthPath toPath:quarantinePath error:&moveError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+          @"The legacy shared Codex credential could not be isolated.\n\n%@",
+          moveError.localizedDescription];
+        return NO;
+      }
+      chmod(quarantinePath.fileSystemRepresentation, 0600);
+      NSLog(@"[CodexLauncher] quarantined pre-isolation auth.json at %@", quarantinePath);
+    }
+    if (![@"1\n" writeToFile:authMigrationMarker atomically:YES
+                       encoding:NSUTF8StringEncoding error:nil]) {
+      if (failure) *failure = @"The private Codex auth-isolation marker could not be written.";
+      return NO;
+    }
+    chmod(authMigrationMarker.fileSystemRepresentation, 0600);
+  }
+
   // Seed user preferences once, but never duplicate OAuth credentials. The
   // side-by-side runtime owns an independent login so refresh-token rotation
   // cannot sign the official Codex app out (or vice versa).
@@ -2215,6 +2323,11 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
   // other runtime exit is a real app quit/crash, so tear down the supervisor
   // and both local services instead of leaving background processes behind.
   if (_modelRefreshRestartPending || !_didPerformInitialLaunch) return;
+  // Electron can hand the isolated profile to a replacement process during
+  // startup or URL forwarding. The monitored PID may exit while that
+  // replacement is already serving the visible window; do not kill the
+  // service owner in that handoff.
+  if (RuntimeIsRunning()) return;
   [NSApp terminate:nil];
 }
 
@@ -2294,14 +2407,11 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 - (void)performInitialLaunch {
   if (_didPerformInitialLaunch) return;
   if (gEnhancementPreflightRequired && !gEnhancementPreflightComplete) {
-    if (_preflightWaitAttempts++ < 80) {
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
-                     dispatch_get_main_queue(), ^{
-        [self performInitialLaunch];
-      });
-      return;
-    }
-    NSLog(@"[CodexLauncher] enhancement preflight timed out; starting Codex without waiting for OpenCodex");
+    // Preflight only refreshes the model catalog; it is not part of the
+    // request path. Waiting for its one-shot child can strand the visible app
+    // behind a stale completion callback, even though the local services and
+    // last valid catalog are already usable.
+    NSLog(@"[CodexLauncher] starting Codex without waiting for catalog preflight");
     gEnhancementPreflightComplete = YES;
   }
 

@@ -165,9 +165,9 @@ async function accountRouteHealth(force = false) {
     return accountHealthCache.result;
   }
   try {
-    const response = await fetch(`http://127.0.0.1:${bridgePort}/v1/models?client_version=0.144.0`, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
+    // The bridge authenticates through its private browser session. Never
+    // forward the Codex OAuth bearer into this local browser-backed route.
+    const response = await fetch(`http://127.0.0.1:${bridgePort}/v1/models?client_version=0.144.0`);
     const payload = await response.json().catch(() => null);
     const models = Array.isArray(payload?.models) ? payload.models : [];
     const result = response.ok && models.length > 0
