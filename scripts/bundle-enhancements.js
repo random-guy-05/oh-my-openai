@@ -238,6 +238,17 @@ function parseNpmSpec(spec) {
 function installNpmPackages(specs, stagingDir, planOnly) {
   const command = ["npm", "install", "--prefix", stagingDir, ...specs, "--no-audit", "--no-fund"];
   if (planOnly) return command;
+  // npm 11 requires install-time scripts to be explicitly allowlisted. The
+  // OpenCodex package depends on Bun's postinstall downloader, so seed the
+  // isolated staging project with the narrow allowlist before installing.
+  fs.mkdirSync(stagingDir, { recursive: true });
+  const packageJson = path.join(stagingDir, "package.json");
+  if (!fs.existsSync(packageJson)) {
+    fs.writeFileSync(packageJson, JSON.stringify({
+      private: true,
+      allowScripts: { bun: true },
+    }, null, 2) + "\n");
+  }
   execFileSync("npm", ["install", "--prefix", stagingDir, ...specs, "--no-audit", "--no-fund"], {
     cwd: PROJECT_ROOT,
     stdio: "inherit",
@@ -317,6 +328,18 @@ async function resolveSource(enhancement, stagingDir, planOnly) {
   return { kind: "github", install: null, ...info };
 }
 
+function normalizeOpenCodexBunEntrypoint(enhancement, stagingDir) {
+  if (enhancement.id !== "opencodex") return;
+  const bunDir = path.join(stagingDir, "node_modules", "bun", "bin");
+  const bunPath = path.join(bunDir, "bun");
+  const bunExePath = path.join(bunDir, "bun.exe");
+  // Bun's npm package uses the .exe filename for its downloaded Mach-O binary
+  // on macOS as well; keep the manifest's portable `bin/bun` command stable.
+  if (!fs.existsSync(bunPath) && fs.existsSync(bunExePath)) {
+    fs.symlinkSync("bun.exe", bunPath);
+  }
+}
+
 function verifyPaths(enhancement, enhancementDir, platform, paths) {
   const checks = [];
   for (const rel of paths) {
@@ -373,6 +396,7 @@ async function bundleEnhancements(runtimeApp, { planOnly = false, platform = "ma
 
       const resolved = await resolveSource(enhancement, stagingDir, planOnly);
       action.resolved = resolved.install || resolved.url;
+      normalizeOpenCodexBunEntrypoint(enhancement, stagingDir);
 
       if (enhancement.overlay) {
         action.overlay = enhancement.overlay;
