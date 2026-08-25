@@ -470,6 +470,42 @@ static NSString *EnhancementCodexHome(NSDictionary *enhancement, NSString *suppo
   return homePath;
 }
 
+// The browser-only ChatGPT Web bridge authenticates from its managed Chrome
+// storage state. An auth.json in ChatGPTWebHome is an obsolete OAuth session
+// from older bridge builds; allowing it to refresh can rotate a token owned by
+// the official ChatGPT app. Quarantine it before any enhancement starts.
+static BOOL QuarantineLegacyChatGPTWebAuth(NSString *supportPath, NSString **failure) {
+  NSFileManager *fileManager = NSFileManager.defaultManager;
+  NSString *homePath = [supportPath stringByAppendingPathComponent:@"ChatGPTWebHome"];
+  if (!CreatePrivateDirectory(homePath, failure)) return NO;
+
+  NSString *authPath = [homePath stringByAppendingPathComponent:@"auth.json"];
+  if ([fileManager fileExistsAtPath:authPath]) {
+    NSString *quarantinePath = [homePath stringByAppendingPathComponent:
+      [NSString stringWithFormat:@"auth.json.browser-only-quarantine-%d", getpid()]];
+    NSError *moveError = nil;
+    if (![fileManager moveItemAtPath:authPath toPath:quarantinePath error:&moveError]) {
+      if (failure) *failure = [NSString stringWithFormat:
+        @"The legacy ChatGPT Web OAuth credential could not be isolated.\n\n%@",
+        moveError.localizedDescription ?: @"Unknown move error."];
+      return NO;
+    }
+    chmod(quarantinePath.fileSystemRepresentation, 0600);
+    NSLog(@"[CodexLauncher] quarantined legacy ChatGPT Web auth at %@", quarantinePath);
+  }
+
+  NSString *markerPath = [homePath stringByAppendingPathComponent:@".auth-isolated-v4"];
+  if (![fileManager fileExistsAtPath:markerPath]) {
+    if (![ @"1\n" writeToFile:markerPath atomically:YES
+                          encoding:NSUTF8StringEncoding error:nil]) {
+      if (failure) *failure = @"The ChatGPT Web auth-isolation marker could not be written.";
+      return NO;
+    }
+    chmod(markerPath.fileSystemRepresentation, 0600);
+  }
+  return YES;
+}
+
 // OpenCodex normally reads ~/.opencodex/config.json. The side-by-side app must
 // keep its routing state isolated from the user's native Codex and from the
 // launchd-owned ChatGPT Web bridge, so give it an app-private copy. This
@@ -1181,7 +1217,27 @@ static BOOL LaunchEnhancementCommand(NSDictionary *enhancement,
 }
 
 static BOOL StartEnhancements(void) {
-  if (gEnhancementsStarted) return YES;
+  NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
+  NSString *authFailure = nil;
+  if (!QuarantineLegacyChatGPTWebAuth(supportPath, &authFailure)) {
+    NSLog(@"[CodexLauncher] refusing to start enhancements: %@",
+          authFailure ?: @"legacy ChatGPT Web auth could not be isolated");
+    return NO;
+  }
+  if (gEnhancementsStarted) {
+    // A failed cold launch must remain retryable. The old early return left
+    // the supervisor believing the stack was live even when a service process
+    // never started, so reopen/refresh could never recover it.
+    for (NSDictionary *enhancement in LoadEnhancementManifest()) {
+      NSString *identifier = enhancement[@"id"];
+      if (!EnhancementEnabled(identifier) ||
+          ![enhancement[@"type"] isEqualToString:@"service"] ||
+          ![enhancement[@"startCommand"] isKindOfClass:[NSArray class]]) continue;
+      if (gEnhancementTasksByID[identifier] || gAdoptedEnhancementPIDs[identifier]) continue;
+      LaunchEnhancementCommand(enhancement, enhancement[@"startCommand"], @"", YES);
+    }
+    return YES;
+  }
   gEnhancementsStarted = YES;
   gEnhancementsStopping = NO;
   gEnhancementPreflightRequired = NO;
