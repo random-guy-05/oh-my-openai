@@ -258,6 +258,8 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
   assert.doesNotMatch(dashboardServer, /syncCodexAuth|sourceAuthPath|copyFileSync/);
   assert.match(dashboardServer, /accountRouteHealth/);
+  assert.match(dashboardServer, /verified-browser-session/);
+  assert.match(dashboardServer, /chatgpt-web\/light/);
   assert.doesNotMatch(dashboardServer, /isolated Codex runtime has no ChatGPT account credential/);
   assert.doesNotMatch(dashboardServer, /headers:\s*\{\s*authorization:/);
   assert.match(dashboardServer, /browserSessionHealth/);
@@ -281,6 +283,8 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(loginFlow, /remote-allow-origins/);
   assert.match(loginFlow, /composerSelector/);
   assert.match(loginFlow, /loggedOutMarker/);
+  assert.match(loginFlow, /temporary window is expected to be logged out at first/);
+  assert.doesNotMatch(loginFlow, /if \(state\?\.loggedOut\) \{\s*throw new Error/);
   assert.match(loginFlow, /login-profile/);
   assert.match(dashboardServer, /login\.js/);
   assert.match(launcher, /connectCommand/);

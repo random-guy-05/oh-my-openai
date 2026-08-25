@@ -211,10 +211,10 @@ async function waitForComposer(client, sessionId) {
   while (Date.now() < deadline) {
     try {
       const state = await evaluate(client, sessionId, expression);
-      if (state?.loggedOut) {
-        throw new Error("ChatGPT is not signed in in the connection profile. Sign in to ChatGPT in that window, then Connect again.");
-      }
-      if (state?.composerVisible && state?.pageReady) {
+      // The temporary window is expected to be logged out at first. Keep it
+      // open so the user can complete their own ChatGPT sign-in; throwing here
+      // closed the window before credentials could be entered.
+      if (!state?.loggedOut && state?.composerVisible && state?.pageReady) {
         authenticatedSince ??= Date.now();
         if (Date.now() - authenticatedSince >= 2_000) return;
       } else {

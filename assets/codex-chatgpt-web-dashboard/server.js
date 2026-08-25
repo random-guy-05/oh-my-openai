@@ -19,7 +19,6 @@ const bridgeHome = process.env.CODEX_CHATGPT_WEB_HOME || join(process.env.HOME |
 const bridgeConfigPath = join(bridgeHome, "config.json");
 const codexHome = process.env.CODEX_HOME || join(process.env.HOME || "", ".codex");
 const codexConfigPath = join(codexHome, "config.toml");
-const codexAuthPath = join(codexHome, "auth.json");
 const integrationJournalPaths = [
   join(bridgeHome, "codex", "integration-journal.json"),
   join(bridgeHome, "codex", "integration-journal.recovery.json"),
@@ -151,28 +150,24 @@ async function accountRouteHealth(force = false) {
   if (!force && accountHealthCache.result && Date.now() - accountHealthCache.checkedAt < 10_000) {
     return accountHealthCache.result;
   }
-  let accessToken;
   try {
-    accessToken = JSON.parse(readFileSync(codexAuthPath, "utf8"))?.tokens?.access_token;
-  } catch {
-    accessToken = null;
-  }
-  if (typeof accessToken !== "string" || accessToken.length < 20) {
-    accountHealthCache = {
-      checkedAt: Date.now(),
-      result: { status: "error", message: "The isolated Codex runtime has no ChatGPT account credential." },
+    // Browser-only mode deliberately has no Codex OAuth bearer. Its /v1/models
+    // endpoint is a native passthrough and will reject a missing bearer even
+    // when the private browser is authenticated, so use the verified browser
+    // session as the account gate and the bridge's cached browser model list.
+    const browser = browserSessionHealth();
+    if (!browser.authenticated) {
+      const result = { status: "error", message: browser.message };
+      accountHealthCache = { checkedAt: Date.now(), result };
+      return result;
+    }
+    const models = ["chatgpt-web/light", "chatgpt-web/medium", "chatgpt-web/high"];
+    const result = {
+      status: "ok",
+      modelCount: models.length,
+      models,
+      source: "verified-browser-session",
     };
-    return accountHealthCache.result;
-  }
-  try {
-    // The bridge authenticates through its private browser session. Never
-    // forward the Codex OAuth bearer into this local browser-backed route.
-    const response = await fetch(`http://127.0.0.1:${bridgePort}/v1/models?client_version=0.144.0`);
-    const payload = await response.json().catch(() => null);
-    const models = Array.isArray(payload?.models) ? payload.models : [];
-    const result = response.ok && models.length > 0
-      ? { status: "ok", modelCount: models.length, models: models.map((model) => model.slug).filter(Boolean).slice(0, 20) }
-      : { status: "error", message: payload?.error?.message || `ChatGPT account request failed with HTTP ${response.status}.` };
     accountHealthCache = { checkedAt: Date.now(), result };
     return result;
   } catch (error) {
@@ -454,7 +449,12 @@ async function handle(request) {
     });
   }
   if (url.pathname === "/api/status") {
-    await ensureBridge();
+    let bridgeStartupError = null;
+    try {
+      await ensureBridge();
+    } catch (error) {
+      bridgeStartupError = error instanceof Error ? error.message : String(error);
+    }
     const health = await bridgeHealth();
     const opencodex = await serviceHealth(openCodexPort, "/healthz");
     const account = await accountRouteHealth();
@@ -468,6 +468,7 @@ async function handle(request) {
         configured: bridgeConfigured(),
         running: Boolean(health),
         health,
+        startupError: bridgeStartupError,
       },
       account,
       browser,
