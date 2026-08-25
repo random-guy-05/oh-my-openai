@@ -40,10 +40,26 @@ function normalizeOpenCodexConfig() {
   const configPath = join(openCodexHome, "config.json");
   const config = readJson(configPath);
   if (!config || typeof config !== "object" || Array.isArray(config)) return;
+  let changed = false;
+  for (const key of [
+    "activeCodexAccountId",
+    "accountId",
+    "codexAccountMode",
+    "accessToken",
+    "refreshToken",
+    "idToken",
+    "authToken",
+  ]) {
+    if (!Object.hasOwn(config, key)) continue;
+    delete config[key];
+    changed = true;
+  }
   const providers = config.providers;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)
-      || !providers["codex-chatgpt-web"]) return;
-  let changed = false;
+      || !providers["codex-chatgpt-web"]) {
+    if (changed) writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    return;
+  }
   const nativeProvider = providers.openai && typeof providers.openai === "object"
     ? providers.openai : {};
   if (nativeProvider.disabled !== true || nativeProvider.authMode !== "key"

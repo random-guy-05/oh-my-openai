@@ -210,8 +210,15 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(hub, /static func connect\(_ enhancement: Enhancement\)/);
   assert.match(hub, /enhancement\.connectCommand\?\.isEmpty == false/);
   assert.match(hub, /copyDiagnostics/);
+  assert.match(hub, /healthRefreshInFlight/);
+  assert.match(hub, /case "connect": return "Connect ChatGPT"/);
   assert.match(hub, /Timer\.publish\(every: 5/);
   assert.match(launcher, /RequiredEnhancementsHealthy/);
+  assert.match(launcher, /failed cold launch must remain retryable/);
+  assert.match(launcher, /TerminateProcessTreeAsync/);
+  assert.match(launcher, /POSIX_SPAWN_SETPGROUP/);
+  assert.match(launcher, /TerminatePrimaryRuntime/);
+  assert.match(launcher, /kill\(-gPrimaryRuntimePID, SIGTERM\)/);
   assert.match(launcher, /kRequiredServiceStartupAttempts = 480/);
   assert.match(launcher, /disableAutomaticTermination/);
   assert.match(launcher, /disableSuddenTermination/);
@@ -251,6 +258,7 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(dashboardServer, /ensurePrivateCodexHome/);
   assert.doesNotMatch(dashboardServer, /syncCodexAuth|sourceAuthPath|copyFileSync/);
   assert.match(dashboardServer, /accountRouteHealth/);
+  assert.doesNotMatch(dashboardServer, /isolated Codex runtime has no ChatGPT account credential/);
   assert.doesNotMatch(dashboardServer, /headers:\s*\{\s*authorization:/);
   assert.match(dashboardServer, /browserSessionHealth/);
   assert.match(dashboardServer, /ready,/);
@@ -293,9 +301,15 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(launcher, /@"adapter": @"openai-responses"/);
   assert.match(launcher, /@"authMode": @"key"/);
   assert.match(launcher, /@"apiKey": @"codex-chatgpt-web-local"/);
+  assert.match(launcher, /activeCodexAccountId/);
+  assert.match(launcher, /refreshToken/);
+  assert.match(launcher, /OPENAI_ACCESS_TOKEN/);
   assert.match(launcher, /nativeProvider\[@"disabled"\] = @YES/);
   assert.match(launcher, /nativeProvider\[@"authMode"\] = @"key"/);
   assert.match(launcher, /\.auth-isolated-v2/);
+  assert.match(launcher, /\.auth-isolated-v3/);
+  assert.match(launcher, /auth\.json\.pre-opencodex-reset/);
+  assert.match(launcher, /stale private ChatGPT auth/);
   assert.match(launcher, /quarantined pre-isolation auth\.json/);
   assert.doesNotMatch(launcher, /sourceHome\.stringByAppendingPathComponent\(\@"auth\.json"\)/);
   assert.match(launcher, /never duplicate OAuth credentials/);
@@ -313,6 +327,8 @@ test("native launchers dispatch from manifest capabilities", () => {
   );
   assert.doesNotMatch(postStart, /\["sync-cache", "--restart-codex"\]/);
   assert.match(postStart, /nativeProvider\.disabled = true/);
+  assert.match(postStart, /activeCodexAccountId/);
+  assert.match(postStart, /refreshToken/);
   assert.match(postStart, /slug\.includes\("\/"\)/);
   assert.match(postStart, /waitForChatGPTWebReadiness/);
   assert.match(postStart, /status\?\.ready === true/);
@@ -324,6 +340,3 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(postStart, /!slug\.startsWith\("codex-chatgpt-web\/"\)/);
   assert.match(postStart, /join\(runtimeHome, "models_cache\.json"\)/);
 });
-  assert.match(launcher, /\.auth-isolated-v3/);
-  assert.match(launcher, /auth\.json\.pre-opencodex-reset/);
-  assert.match(launcher, /stale private ChatGPT auth/);

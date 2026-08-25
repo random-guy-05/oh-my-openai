@@ -60,7 +60,12 @@ static void SanitizeEnvironment(void) {
         [key isEqualToString:@"ELECTRON_RUN_AS_NODE"] ||
         [key isEqualToString:@"ELECTRON_NO_ASAR"] ||
         [key isEqualToString:@"ELECTRON_FORCE_IS_PACKAGED"] ||
-        [key isEqualToString:@"NODE_OPTIONS"]) {
+        [key isEqualToString:@"NODE_OPTIONS"] ||
+        [key isEqualToString:@"OPENAI_API_KEY"] ||
+        [key isEqualToString:@"OPENAI_ACCESS_TOKEN"] ||
+        [key isEqualToString:@"OPENAI_REFRESH_TOKEN"] ||
+        [key isEqualToString:@"CODEX_AUTH_TOKEN"] ||
+        [key isEqualToString:@"CHATGPT_SESSION_TOKEN"]) {
       unsetenv(key.UTF8String);
     }
   }
@@ -526,6 +531,17 @@ static NSString *PrepareOpenCodexHome(NSString *supportPath) {
   }
   if (!config) config = [NSMutableDictionary dictionary];
 
+  // OpenCodex may have copied account-selection state from an older build or
+  // from ~/.opencodex. Keep the private provider config account-neutral:
+  // browser sign-in belongs only to ChatGPTWebHome and native OAuth belongs
+  // only to the official app's ~/.codex/auth.json.
+  for (NSString *key in @[
+    @"activeCodexAccountId", @"accountId", @"codexAccountMode",
+    @"accessToken", @"refreshToken", @"idToken", @"authToken"
+  ]) {
+    [config removeObjectForKey:key];
+  }
+
   NSMutableDictionary *providers = [config[@"providers"] isKindOfClass:[NSDictionary class]]
     ? [config[@"providers"] mutableCopy] : [NSMutableDictionary dictionary];
   // The embedded runtime sends every model request through this private
@@ -968,6 +984,13 @@ static void HandleTerminationSignal(int signalNumber) {
   for (int index = 0; index < gEnhancementPidCount; index++) {
     kill(gEnhancementPids[index], SIGTERM);
   }
+  // The runtime owns Chromium helpers and the app-server. Put it in its own
+  // process group so a launcher signal cannot leave profile-locking children
+  // behind to race the next launch.
+  if (gPrimaryRuntimePID > 0) {
+    kill(-gPrimaryRuntimePID, SIGTERM);
+    kill(gPrimaryRuntimePID, SIGTERM);
+  }
   _exit(128 + signalNumber);
 }
 
@@ -997,6 +1020,8 @@ static BOOL CreatePrivateDirectory(NSString *path, NSString **failure);
 static void TerminateProcessTreeByPID(pid_t rootPID);
 static NSArray<NSNumber *> *DescendantProcessIDs(pid_t rootPID);
 static BOOL ProcessTreeContainsPID(pid_t rootPID, pid_t candidatePID);
+static void TerminateProcessTreeAsync(NSTask *task);
+static void TerminatePrimaryRuntime(void);
 
 static void RotateEnhancementLog(NSString *identifier, NSString *suffix) {
   NSString *supportPath = [NSHomeDirectory() stringByAppendingPathComponent:kSupportDirectory];
@@ -1454,6 +1479,26 @@ static void TerminateProcessTreeByPID(pid_t rootPID) {
   for (NSNumber *pid in descendants) kill(pid.intValue, SIGKILL);
 }
 
+static void TerminatePrimaryRuntime(void) {
+  pid_t pid = gPrimaryRuntimePID;
+  gPrimaryRuntimePID = 0;
+  if (gPrimaryRuntimeExitSource) {
+    dispatch_source_cancel(gPrimaryRuntimeExitSource);
+    gPrimaryRuntimeExitSource = nil;
+  }
+  if (pid <= 0) return;
+  kill(-pid, SIGTERM);
+  TerminateProcessTreeByPID(pid);
+}
+
+static void TerminateProcessTreeAsync(NSTask *task) {
+  pid_t rootPID = task.processIdentifier;
+  if (rootPID <= 0) return;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    TerminateProcessTreeByPID(rootPID);
+  });
+}
+
 static void StopEnhancements(void) {
   gEnhancementsStopping = YES;
   gEnhancementsStarted = NO;
@@ -1572,10 +1617,13 @@ void SetEnhancementRuntimeEnabled(const char *identifierCString, int enabledValu
   }
 
   NSTask *task = gEnhancementTasksByID[identifier];
-  if (task) TerminateProcessTree(task);
+  if (task) TerminateProcessTreeAsync(task);
   NSNumber *adoptedPID = gAdoptedEnhancementPIDs[identifier];
   if (adoptedPID) {
-    TerminateProcessTreeByPID(adoptedPID.intValue);
+    pid_t adoptedProcessID = adoptedPID.intValue;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      TerminateProcessTreeByPID(adoptedProcessID);
+    });
     UntrackEnhancementPid(adoptedPID.intValue);
     [gAdoptedEnhancementPIDs removeObjectForKey:identifier];
   }
@@ -2075,6 +2123,36 @@ static BOOL SeedPrivateCodexHome(NSString *codexHomePath, NSString **failure) {
     chmod(authMigrationMarker.fileSystemRepresentation, 0600);
   }
 
+  // v2 protected fresh installs, but it intentionally preserved a credential
+  // created after the first migration. OpenCodex does not need ChatGPT OAuth;
+  // clear one last persisted private session so an old/rotated refresh token
+  // cannot continue invalidating the official ChatGPT app's session. After
+  // this marker, a user-initiated private login is preserved normally.
+  NSString *authIsolationResetMarker = [codexHomePath
+    stringByAppendingPathComponent:@".auth-isolated-v3"];
+  if (![fileManager fileExistsAtPath:authIsolationResetMarker]) {
+    NSString *privateAuthPath = [codexHomePath stringByAppendingPathComponent:@"auth.json"];
+    if ([fileManager fileExistsAtPath:privateAuthPath]) {
+      NSString *quarantinePath = [codexHomePath stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"auth.json.pre-opencodex-reset-%d", getpid()]];
+      NSError *moveError = nil;
+      if (![fileManager moveItemAtPath:privateAuthPath toPath:quarantinePath error:&moveError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+          @"The stale private ChatGPT credential could not be isolated.\n\n%@",
+          moveError.localizedDescription ?: @"Unknown move error."];
+        return NO;
+      }
+      chmod(quarantinePath.fileSystemRepresentation, 0600);
+      NSLog(@"[CodexLauncher] quarantined stale private ChatGPT auth at %@", quarantinePath);
+    }
+    if (![ @"1\n" writeToFile:authIsolationResetMarker atomically:YES
+                         encoding:NSUTF8StringEncoding error:nil]) {
+      if (failure) *failure = @"The private OpenCodex auth reset marker could not be written.";
+      return NO;
+    }
+    chmod(authIsolationResetMarker.fileSystemRepresentation, 0600);
+  }
+
   // Seed user preferences once, but never duplicate OAuth credentials. The
   // side-by-side runtime owns an independent login so refresh-token rotation
   // cannot sign the official Codex app out (or vice versa).
@@ -2165,6 +2243,9 @@ static void MonitorPrimaryRuntime(pid_t pid) {
   gPrimaryRuntimeExitSource = source;
   dispatch_source_set_event_handler(source, ^{
     int status = 0;
+    // The root exited; its app-server/helpers may still be alive in the
+    // runtime's private process group.
+    kill(-pid, SIGTERM);
     waitpid(pid, &status, WNOHANG);
     if (gPrimaryRuntimePID != pid) return;
     gPrimaryRuntimePID = 0;
@@ -2259,8 +2340,14 @@ static BOOL LaunchRuntime(NSArray<NSString *> *forwardedArguments, NSString **fa
 
     BOOL shouldMonitorAsPrimary = !RuntimeIsRunning();
     pid_t childPid = 0;
+    posix_spawnattr_t spawnAttributes;
+    posix_spawnattr_init(&spawnAttributes);
+    short spawnFlags = POSIX_SPAWN_SETPGROUP;
+    posix_spawnattr_setflags(&spawnAttributes, spawnFlags);
+    posix_spawnattr_setpgroup(&spawnAttributes, 0);
     int spawnResult = posix_spawn(&childPid, runtimePath.fileSystemRepresentation,
-                                  NULL, NULL, childArgv, environ);
+                                  NULL, &spawnAttributes, childArgv, environ);
+    posix_spawnattr_destroy(&spawnAttributes);
     for (NSUInteger index = 0; index < arguments.count; index++) free(childArgv[index]);
     free(childArgv);
 
@@ -2362,6 +2449,7 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
   StopEnhancements();
+  TerminatePrimaryRuntime();
   [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
   [[NSAppleEventManager sharedAppleEventManager]
     removeEventHandlerForEventClass:kCodexInternetEventClass
@@ -2473,6 +2561,9 @@ static void ActivateRuntimeApplication(NSUInteger attempt) {
 
   NSString *requiredFailure = nil;
   if (!RequiredEnhancementsHealthy(&requiredFailure)) {
+    // Reconcile the supervisor state before waiting; this respawns a service
+    // whose initial launch failed or whose process exited before registration.
+    StartEnhancements();
     if (_requiredServiceWaitAttempts++ < kRequiredServiceStartupAttempts) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
@@ -2649,33 +2740,3 @@ int main(int argc, const char *argv[]) {
     return 0;
   }
 }
-  // v2 protected fresh installs, but it intentionally preserved a credential
-  // created after the first migration. OpenCodex does not need ChatGPT OAuth;
-  // clear one last persisted private session so an old/rotated refresh token
-  // cannot continue invalidating the official ChatGPT app's session. After
-  // this marker, a user-initiated private login is preserved normally.
-  NSString *authIsolationResetMarker = [codexHomePath
-    stringByAppendingPathComponent:@".auth-isolated-v3"];
-  if (![fileManager fileExistsAtPath:authIsolationResetMarker]) {
-    NSString *privateAuthPath = [codexHomePath stringByAppendingPathComponent:@"auth.json"];
-    if ([fileManager fileExistsAtPath:privateAuthPath]) {
-      NSString *quarantinePath = [codexHomePath stringByAppendingPathComponent:
-        [NSString stringWithFormat:@"auth.json.pre-opencodex-reset-%d", getpid()]];
-      NSError *moveError = nil;
-      if (![fileManager moveItemAtPath:privateAuthPath toPath:quarantinePath error:&moveError]) {
-        if (failure) *failure = [NSString stringWithFormat:
-          @"The stale private ChatGPT credential could not be isolated.\n\n%@",
-          moveError.localizedDescription ?: @"Unknown move error."];
-        return NO;
-      }
-      chmod(quarantinePath.fileSystemRepresentation, 0600);
-      NSLog(@"[CodexLauncher] quarantined stale private ChatGPT auth at %@", quarantinePath);
-    }
-    if (![ @"1\n" writeToFile:authIsolationResetMarker atomically:YES
-                         encoding:NSUTF8StringEncoding error:nil]) {
-      if (failure) *failure = @"The private OpenCodex auth reset marker could not be written.";
-      return NO;
-    }
-    chmod(authIsolationResetMarker.fileSystemRepresentation, 0600);
-  }
-
