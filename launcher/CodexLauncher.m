@@ -2593,3 +2593,33 @@ int main(int argc, const char *argv[]) {
     return 0;
   }
 }
+  // v2 protected fresh installs, but it intentionally preserved a credential
+  // created after the first migration. OpenCodex does not need ChatGPT OAuth;
+  // clear one last persisted private session so an old/rotated refresh token
+  // cannot continue invalidating the official ChatGPT app's session. After
+  // this marker, a user-initiated private login is preserved normally.
+  NSString *authIsolationResetMarker = [codexHomePath
+    stringByAppendingPathComponent:@".auth-isolated-v3"];
+  if (![fileManager fileExistsAtPath:authIsolationResetMarker]) {
+    NSString *privateAuthPath = [codexHomePath stringByAppendingPathComponent:@"auth.json"];
+    if ([fileManager fileExistsAtPath:privateAuthPath]) {
+      NSString *quarantinePath = [codexHomePath stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"auth.json.pre-opencodex-reset-%d", getpid()]];
+      NSError *moveError = nil;
+      if (![fileManager moveItemAtPath:privateAuthPath toPath:quarantinePath error:&moveError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+          @"The stale private ChatGPT credential could not be isolated.\n\n%@",
+          moveError.localizedDescription ?: @"Unknown move error."];
+        return NO;
+      }
+      chmod(quarantinePath.fileSystemRepresentation, 0600);
+      NSLog(@"[CodexLauncher] quarantined stale private ChatGPT auth at %@", quarantinePath);
+    }
+    if (![ @"1\n" writeToFile:authIsolationResetMarker atomically:YES
+                         encoding:NSUTF8StringEncoding error:nil]) {
+      if (failure) *failure = @"The private OpenCodex auth reset marker could not be written.";
+      return NO;
+    }
+    chmod(authIsolationResetMarker.fileSystemRepresentation, 0600);
+  }
+

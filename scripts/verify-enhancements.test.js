@@ -324,3 +324,6 @@ test("native launchers dispatch from manifest capabilities", () => {
   assert.match(postStart, /!slug\.startsWith\("codex-chatgpt-web\/"\)/);
   assert.match(postStart, /join\(runtimeHome, "models_cache\.json"\)/);
 });
+  assert.match(launcher, /\.auth-isolated-v3/);
+  assert.match(launcher, /auth\.json\.pre-opencodex-reset/);
+  assert.match(launcher, /stale private ChatGPT auth/);
