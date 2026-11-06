@@ -44,3 +44,8 @@ resources/codex
 resources/codex.exe
 .claude/
 .release-staging/
+
+# Local AI-tooling state
+graphify-out/
+.opencode/
+AGENTS.md
